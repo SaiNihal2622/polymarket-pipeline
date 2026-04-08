@@ -55,8 +55,10 @@ class PipelineV2:
         self.running = True
         mode = "[red bold]LIVE[/red bold]" if not config.DRY_RUN else "[yellow]DRY RUN[/yellow]"
         console.print(Panel(f"Pipeline V2 Starting  |  Mode: {mode}", style="bright_green"))
+        console.print(f"  Bankroll: ${config.BANKROLL_USD:.0f} | Max bet: ${config.MAX_BET_USD} | Daily limit: ${config.DAILY_LOSS_LIMIT_USD}")
         console.print(f"  Niche filter: ${config.MIN_VOLUME_USD:,.0f} - ${config.MAX_VOLUME_USD:,.0f} volume")
-        console.print(f"  Materiality threshold: {config.MATERIALITY_THRESHOLD}")
+        console.print(f"  Materiality threshold: {config.MATERIALITY_THRESHOLD} | Edge threshold: {config.EDGE_THRESHOLD}")
+        console.print(f"  Consensus: {'ON (' + str(config.CONSENSUS_PASSES) + ' passes)' if config.CONSENSUS_ENABLED else 'OFF'}")
         console.print(f"  Speed target: {config.SPEED_TARGET_SECONDS}s")
         console.print()
 
@@ -105,13 +107,23 @@ class PipelineV2:
                     )
 
                     signal = detect_edge_v2(market, classification, event)
+
+                    # Log consensus disagreements for transparency
+                    if not classification.consensus_agreed:
+                        console.print(
+                            f"  [yellow]SKIP[/yellow] consensus disagreed "
+                            f"on \"{market.question[:40]}...\" — {classification.reasoning[:60]}"
+                        )
+
                     if signal:
                         self.stats["signals_found"] += 1
                         await self.signal_queue.put(signal)
+                        consensus_tag = "[bright_green]✓CON[/bright_green]" if signal.consensus_agreed else ""
                         console.print(
-                            f"  [bright_green]SIGNAL[/bright_green] "
+                            f"  [bright_green]SIGNAL[/bright_green] {consensus_tag} "
                             f"[{event.source}] {classification.direction.upper()} "
                             f"mat:{classification.materiality:.2f} "
+                            f"comp:{signal.composite_score:.2f} "
                             f"→ {signal.side} ${signal.bet_amount} "
                             f"on \"{market.question[:40]}...\" "
                             f"({signal.total_latency_ms}ms)"

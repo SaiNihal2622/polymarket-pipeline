@@ -79,9 +79,14 @@ def match_news_to_markets_broad(
     category_keywords = {
         "ai": ["ai", "openai", "gpt", "anthropic", "claude", "llm", "chatgpt", "gemini", "artificial intelligence"],
         "crypto": ["bitcoin", "ethereum", "solana", "crypto", "blockchain", "defi", "token", "btc", "eth"],
-        "politics": ["trump", "biden", "congress", "senate", "election", "tariff", "fed", "white house"],
-        "technology": ["apple", "google", "microsoft", "nvidia", "tech", "software", "startup"],
-        "science": ["spacex", "nasa", "climate", "research", "discovery"],
+        "politics": ["trump", "biden", "congress", "senate", "election", "tariff", "fed", "white house", "sanctions", "legislation"],
+        "technology": ["apple", "google", "microsoft", "nvidia", "tech", "software", "startup", "meta", "tesla"],
+        "science": ["spacex", "nasa", "climate", "research", "discovery", "mars", "starship"],
+        "sports": ["ipl", "cricket", "nba", "nfl", "soccer", "football", "basketball", "tennis", "ufc", "f1",
+                    "champions league", "premier league", "playoffs", "world cup", "match", "tournament"],
+        "entertainment": ["oscars", "grammy", "emmy", "box office", "movie", "film", "netflix", "disney", "album", "streaming"],
+        "finance": ["fed", "interest rate", "inflation", "gdp", "recession", "stock", "s&p", "nasdaq", "treasury", "earnings"],
+        "world": ["war", "nato", "united nations", "ceasefire", "invasion", "geopolitical"],
     }
 
     matched_categories = set()

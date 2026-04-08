@@ -2,14 +2,10 @@ from __future__ import annotations
 
 import json
 
-import anthropic
-
 import config
 from scraper import NewsItem
 from markets import Market
-
-
-client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+from classifier import _call_llm
 
 SCORING_PROMPT = """You are a prediction market analyst. Your job is to estimate the probability that a specific market question will resolve YES, based on recent news headlines.
 
@@ -58,13 +54,7 @@ def score_market(market: Market, news: list[NewsItem]) -> dict:
     )
 
     try:
-        response = client.messages.create(
-            model=config.CLAUDE_MODEL,
-            max_tokens=500,
-            temperature=0.2,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        text = response.content[0].text.strip()
+        text = _call_llm(prompt, temperature=0.2, max_tokens=500)
 
         # Extract JSON from response (handle markdown code blocks)
         if "```" in text:
@@ -72,6 +62,11 @@ def score_market(market: Market, news: list[NewsItem]) -> dict:
             if text.startswith("json"):
                 text = text[4:]
             text = text.strip()
+
+        start_idx = text.find("{")
+        end_idx = text.rfind("}") + 1
+        if start_idx >= 0 and end_idx > start_idx:
+            text = text[start_idx:end_idx]
 
         result = json.loads(text)
         result["confidence"] = max(0.0, min(1.0, float(result["confidence"])))

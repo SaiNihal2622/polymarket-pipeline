@@ -173,16 +173,37 @@ def _infer_category(question: str, tags: list) -> str:
     tag_str = " ".join(str(t).lower() for t in tags)
     combined = f"{q} {tag_str}"
 
-    if any(kw in combined for kw in ["ai", "artificial intelligence", "openai", "chatgpt", "llm", "google ai", "anthropic"]):
+    if any(kw in combined for kw in ["ai", "artificial intelligence", "openai", "chatgpt", "llm", "google ai", "anthropic", "gpt"]):
         return "ai"
-    if any(kw in combined for kw in ["bitcoin", "ethereum", "crypto", "blockchain", "defi", "token"]):
+    if any(kw in combined for kw in ["bitcoin", "ethereum", "crypto", "blockchain", "defi", "token", "btc", "eth", "solana"]):
         return "crypto"
-    if any(kw in combined for kw in ["election", "president", "congress", "senate", "trump", "biden", "political"]):
+    if any(kw in combined for kw in ["election", "president", "congress", "senate", "trump", "biden", "political", "governor", "vote", "ballot", "legislation"]):
         return "politics"
-    if any(kw in combined for kw in ["spacex", "nasa", "climate", "research", "study", "discovery"]):
+    if any(kw in combined for kw in [
+        "ipl", "cricket", "nba", "nfl", "soccer", "football", "basketball",
+        "tennis", "ufc", "mma", "f1", "formula", "olympics", "world cup",
+        "champions league", "premier league", "playoffs", "super bowl",
+        "match", "tournament", "championship", "season", "batting", "bowling",
+    ]):
+        return "sports"
+    if any(kw in combined for kw in [
+        "oscars", "grammy", "emmy", "box office", "movie", "film", "album",
+        "netflix", "disney", "spotify", "streaming", "celebrity", "award",
+        "concert", "tour", "entertainment",
+    ]):
+        return "entertainment"
+    if any(kw in combined for kw in [
+        "fed", "interest rate", "inflation", "gdp", "unemployment", "recession",
+        "stock", "s&p", "nasdaq", "dow", "treasury", "yield", "bond",
+        "earnings", "revenue", "ipo",
+    ]):
+        return "finance"
+    if any(kw in combined for kw in ["spacex", "nasa", "climate", "research", "study", "discovery", "mars", "starship"]):
         return "science"
-    if any(kw in combined for kw in ["tech", "apple", "google", "microsoft", "software", "startup"]):
+    if any(kw in combined for kw in ["tech", "apple", "google", "microsoft", "software", "startup", "nvidia", "meta", "tesla"]):
         return "technology"
+    if any(kw in combined for kw in ["war", "nato", "sanctions", "united nations", "geopolitical", "invasion", "ceasefire"]):
+        return "world"
     return "other"
 
 

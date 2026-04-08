@@ -1,6 +1,8 @@
 """
 Polymarket WebSocket subscriber — live price feed + niche market filtering.
 Maintains a live snapshot of tracked markets and detects momentum shifts.
+
+Fixed WS protocol: uses assets_ids field, PING keepalive every 10s.
 """
 from __future__ import annotations
 
@@ -89,6 +91,16 @@ class MarketWatcher:
         except Exception as e:
             log.warning(f"[watcher] Market refresh error: {e}")
 
+    def _get_all_token_ids(self) -> list[str]:
+        """Collect all token IDs from tracked markets for WS subscription."""
+        token_ids = []
+        for m in self.tracked_markets:
+            for t in m.tokens:
+                tid = t.get("token_id", "")
+                if tid:
+                    token_ids.append(tid)
+        return token_ids
+
     async def _connect_websocket(self):
         """Connect to Polymarket WebSocket for live price updates."""
         try:
@@ -97,59 +109,127 @@ class MarketWatcher:
             log.warning("[watcher] websockets not installed — using polling fallback")
             return
 
+        backoff = 1
         while True:
             try:
                 async with websockets.connect(config.POLYMARKET_WS_HOST) as ws:
                     self._ws_connected = True
                     log.info("[watcher] WebSocket connected")
 
-                    # Subscribe to tracked markets
-                    for market in self.tracked_markets:
-                        for token in market.tokens:
-                            tid = token.get("token_id")
-                            if tid:
-                                sub = {"type": "subscribe", "channel": "price", "market": tid}
-                                await ws.send(json.dumps(sub))
+                    # Subscribe to tracked markets using correct format
+                    token_ids = self._get_all_token_ids()
+                    if token_ids:
+                        # Subscribe in batches (avoid giant messages)
+                        batch_size = 50
+                        for i in range(0, len(token_ids), batch_size):
+                            batch = token_ids[i:i + batch_size]
+                            sub_msg = {
+                                "assets_ids": batch,
+                                "type": "market",
+                            }
+                            await ws.send(json.dumps(sub_msg))
+                        log.info(f"[watcher] Subscribed to {len(token_ids)} tokens")
+                    else:
+                        log.warning("[watcher] No token IDs to subscribe to")
 
-                    # Listen for updates
-                    while True:
-                        try:
-                            msg = await asyncio.wait_for(ws.recv(), timeout=10)
-                            self.stats["ws_messages"] += 1
-                            data = json.loads(msg)
-                            self._handle_ws_message(data)
-                        except asyncio.TimeoutError:
-                            # Send ping
-                            await ws.ping()
+                    # Start keepalive ping task
+                    ping_task = asyncio.create_task(self._ws_ping(ws))
+                    backoff = 1
+
+                    try:
+                        # Listen for updates
+                        while True:
+                            try:
+                                msg = await asyncio.wait_for(ws.recv(), timeout=15)
+
+                                # Ignore PONG responses
+                                if msg == "PONG":
+                                    continue
+
+                                self.stats["ws_messages"] += 1
+
+                                try:
+                                    data = json.loads(msg)
+                                    self._handle_ws_message(data)
+                                except json.JSONDecodeError:
+                                    # Non-JSON message (could be control frame)
+                                    pass
+
+                            except asyncio.TimeoutError:
+                                # No message in 15s — connection may be stale
+                                pass
+                    finally:
+                        ping_task.cancel()
 
             except Exception as e:
                 self._ws_connected = False
-                log.warning(f"[watcher] WebSocket error: {e}, reconnecting in 5s")
-                await asyncio.sleep(5)
+                log.warning(f"[watcher] WebSocket error: {e}, reconnecting in {backoff}s")
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30)
+
+    async def _ws_ping(self, ws):
+        """Send PING every 10 seconds to keep WebSocket alive."""
+        while True:
+            try:
+                await asyncio.sleep(10)
+                await ws.send("PING")
+            except Exception:
+                break
 
     def _handle_ws_message(self, data: dict):
         """Process a WebSocket price update."""
-        msg_type = data.get("type", "")
-        if msg_type not in ("price_change", "last_trade_price"):
-            return
+        # Handle array of events
+        events = data if isinstance(data, list) else [data]
 
-        market_id = data.get("market", data.get("condition_id", ""))
-        price = data.get("price")
+        for event in events:
+            msg_type = event.get("event_type", event.get("type", ""))
+            asset_id = event.get("asset_id", event.get("market", ""))
 
-        if not market_id or price is None:
-            return
+            if msg_type == "price_change":
+                # price_changes is an array: [{"asset_id": "...", "price": "0.55"}, ...]
+                price_changes = event.get("price_changes", [])
+                for pc in price_changes:
+                    pc_asset = pc.get("asset_id", "")
+                    pc_price = pc.get("price")
+                    if pc_asset and pc_price is not None:
+                        self._update_snapshot(pc_asset, float(pc_price))
+                continue
 
-        # Find matching snapshot
+            elif msg_type == "last_trade_price":
+                price = event.get("price")
+            elif msg_type == "book":
+                # Full orderbook — extract best bid as price proxy
+                bids = event.get("bids", [])
+                asks = event.get("asks", [])
+                if bids:
+                    best_bid = float(bids[0].get("price", 0))
+                    best_ask = float(asks[0].get("price", 1)) if asks else best_bid
+                    price = (best_bid + best_ask) / 2  # mid-price
+                else:
+                    continue
+            else:
+                continue
+
+            if not asset_id or price is None:
+                continue
+
+            self._update_snapshot(asset_id, float(price))
+
+    def _update_snapshot(self, asset_id: str, price: float):
+        """Update a market snapshot with a new price from WebSocket."""
         for cid, snap in self.snapshots.items():
             token_ids = [t.get("token_id", "") for t in snap.market.tokens]
-            if market_id in token_ids or market_id == cid:
+            if asset_id in token_ids or asset_id == cid:
                 now = datetime.now(timezone.utc)
                 elapsed = (now - snap.last_update).total_seconds()
                 snap.prev_price = snap.last_price
-                snap.last_price = float(price)
+                snap.last_price = price
                 snap.last_update = now
                 if elapsed > 0:
                     snap.momentum = (snap.last_price - snap.prev_price) / (elapsed / 60)
+                # Update market object price too
+                snap.market.yes_price = price
+                snap.market.no_price = 1.0 - price
                 self.stats["price_updates"] += 1
                 break
 
@@ -194,7 +274,10 @@ if __name__ == "__main__":
         watcher = MarketWatcher()
         await watcher.refresh_markets()
         print(f"Tracking {len(watcher.tracked_markets)} niche markets:")
+        token_count = sum(len(m.tokens) for m in watcher.tracked_markets)
+        print(f"Total token IDs for WS: {token_count}")
         for m in watcher.tracked_markets[:10]:
-            print(f"  [{m.category}] ${m.volume:,.0f} | YES:{m.yes_price:.2f} | {m.question[:60]}")
+            tids = [t.get("token_id", "")[:20] for t in m.tokens]
+            print(f"  [{m.category}] ${m.volume:,.0f} | YES:{m.yes_price:.2f} | {m.question[:50]} tokens:{len(tids)}")
 
     asyncio.run(_test())
