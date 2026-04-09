@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Polymarket Pipeline — Live Terminal Dashboard
-Bloomberg Terminal aesthetic. Runs the real pipeline on a loop.
+Polymarket Pipeline V3 — Live Terminal Dashboard
+Shows: news feed, matched markets, classifications, signals, trade log, accuracy stats.
 """
 from __future__ import annotations
 
@@ -19,11 +19,6 @@ from rich import box
 
 import config
 import logger
-from scraper import scrape_all
-from markets import fetch_active_markets, filter_by_categories, Market
-from scorer import score_market, filter_news_for_market
-from edge import detect_edge
-from executor import execute_trade
 
 console = Console()
 
@@ -34,75 +29,7 @@ WARN = "yellow"
 LOSS = "red"
 WIN = "bright_green"
 MUTED = "dim white"
-
-
-class PipelineState:
-    """Track live pipeline state across scan cycles."""
-
-    def __init__(self):
-        self.run_number = 0
-        self.markets_scanned = 0
-        self.headlines_found = 0
-        self.signals_found = 0
-        self.trades_executed = 0
-        self.latest_signals = []
-        self.latest_markets = []
-        self.latest_headlines = []
-        self.latest_scores = {}
-        self.scanning = False
-        self.scan_status = "Initializing..."
-
-
-state = PipelineState()
-
-
-def run_scan_cycle():
-    """Execute one full pipeline scan and update state."""
-    state.run_number += 1
-    state.scanning = True
-    state.scan_status = "Scraping news..."
-
-    # Step 1: Scrape news
-    news = scrape_all()
-    state.headlines_found = len(news)
-    state.latest_headlines = [
-        {"headline": n.headline, "source": n.source, "age": f"{n.age_hours():.1f}h"}
-        for n in news[:8]
-    ]
-
-    # Step 2: Fetch markets
-    state.scan_status = "Fetching markets..."
-    all_markets = fetch_active_markets(limit=100)
-    markets = filter_by_categories(all_markets)[:12]
-    state.markets_scanned = len(markets)
-    state.latest_markets = markets
-
-    # Step 3: Score and detect edge
-    signals = []
-    scores = {}
-    for i, market in enumerate(markets):
-        state.scan_status = f"Scoring [{i + 1}/{len(markets)}] {market.question[:40]}..."
-        relevant = filter_news_for_market(market, news)
-        result = score_market(market, relevant)
-        scores[market.condition_id] = result
-
-        headlines_str = "\n".join(n.headline for n in relevant[:5])
-        signal = detect_edge(market, result["confidence"], result["reasoning"], headlines_str)
-        if signal:
-            trade_result = execute_trade(signal)
-            signals.append({
-                "market": market,
-                "score": result,
-                "trade": trade_result,
-            })
-        time.sleep(0.3)
-
-    state.latest_signals = signals
-    state.latest_scores = scores
-    state.signals_found = len(signals)
-    state.trades_executed = len(signals)
-    state.scanning = False
-    state.scan_status = "Idle — waiting for next cycle"
+CYAN = "bright_cyan"
 
 
 def make_layout() -> Layout:
@@ -113,15 +40,15 @@ def make_layout() -> Layout:
         Layout(name="footer", size=3),
     )
     layout["body"].split_row(
-        Layout(name="left", ratio=1),
-        Layout(name="right", ratio=2),
+        Layout(name="left", ratio=2),
+        Layout(name="right", ratio=3),
     )
     layout["left"].split_column(
-        Layout(name="status", ratio=1),
-        Layout(name="performance", ratio=1),
+        Layout(name="status", ratio=2),
+        Layout(name="accuracy", ratio=3),
     )
     layout["right"].split_column(
-        Layout(name="scanner", ratio=2),
+        Layout(name="news_feed", ratio=2),
         Layout(name="trades", ratio=3),
     )
     return layout
@@ -133,9 +60,13 @@ def render_header() -> Panel:
     grid.add_column(justify="left", ratio=1)
     grid.add_column(justify="center", ratio=2)
     grid.add_column(justify="right", ratio=1)
+
+    mode = "LIVE" if not config.DRY_RUN else "DRY RUN"
+    provider = config.LLM_PROVIDER.upper()
+
     grid.add_row(
-        Text(" POLYMARKET PIPELINE", style="bold bright_green"),
-        Text("NEWS SCRAPER + AI CONFIDENCE SCORER + AUTO TRADER", style=DIM),
+        Text(" POLYMARKET PIPELINE V3", style="bold bright_green"),
+        Text(f"CONSENSUS TRADING  |  {provider}  |  {mode}", style=DIM),
         Text(f"{now} ", style=MUTED),
     )
     return Panel(grid, style="bright_green", box=box.HEAVY)
@@ -146,237 +77,202 @@ def render_status() -> Panel:
     table.add_column("label", style=MUTED, width=18)
     table.add_column("value", style=ACCENT)
 
-    if state.scanning:
-        status_dot = "[yellow]◌[/yellow]"
-        status_text = f"{status_dot} SCANNING"
-    elif state.run_number > 0:
-        status_dot = "[bright_green]●[/bright_green]"
-        status_text = f"{status_dot} ACTIVE"
+    mode = f"[{WIN}]LIVE[/{WIN}]" if not config.DRY_RUN else f"[{WARN}]DRY RUN[/{WARN}]"
+    provider = config.LLM_PROVIDER.upper()
+    if provider == "GEMINI":
+        model = config.GEMINI_MODEL
+    elif provider == "OLLAMA":
+        model = config.CLASSIFICATION_MODEL
     else:
-        status_dot = "[yellow]○[/yellow]"
-        status_text = f"{status_dot} STARTING"
+        model = config.CLASSIFICATION_MODEL
 
-    mode = "[bright_green]LIVE[/bright_green]" if not config.DRY_RUN else f"[{WARN}]DRY RUN[/{WARN}]"
+    stats = logger.get_trade_stats()
+    latency = logger.get_latency_stats()
+    daily_spent = abs(logger.get_daily_pnl())
 
-    table.add_row("Pipeline", status_text)
-    table.add_row("Scan Cycle", f"#{state.run_number}" if state.run_number > 0 else "—")
-    table.add_row("Activity", f"[{DIM}]{state.scan_status[:30]}[/{DIM}]")
-    table.add_row("Markets Scanned", str(state.markets_scanned) if state.run_number > 0 else "—")
-    table.add_row("Headlines Found", str(state.headlines_found) if state.run_number > 0 else "—")
-    table.add_row("Signals / Trades", f"{state.signals_found} / {state.trades_executed}" if state.run_number > 0 else "— / —")
-    table.add_row("", "")
-    table.add_row("Edge Threshold", f">= {config.EDGE_THRESHOLD:.0%}")
-    table.add_row("Max Bet", f"${config.MAX_BET_USD:.2f}")
-    table.add_row("Daily Limit", f"${config.DAILY_LOSS_LIMIT_USD:.2f}")
     table.add_row("Mode", mode)
+    table.add_row("LLM", f"{provider} / {model}")
+    table.add_row("Consensus", f"{'ON' if config.CONSENSUS_ENABLED else 'OFF'} ({config.CONSENSUS_PASSES} passes)")
+    table.add_row("Bankroll", f"${config.BANKROLL_USD:.0f}")
+    table.add_row("Max Bet", f"${config.MAX_BET_USD}")
+    table.add_row("Daily Limit", f"${config.DAILY_LOSS_LIMIT_USD}")
+    table.add_row("Daily Exposure", f"[{WARN}]${daily_spent:.2f}[/{WARN}]")
+    table.add_row("", "")
+    table.add_row("Edge Threshold", f"{config.EDGE_THRESHOLD:.0%}")
+    table.add_row("Mat. Threshold", f"{config.MATERIALITY_THRESHOLD}")
+    table.add_row("Total Signals", f"[{ACCENT}]{stats['total_trades']}[/{ACCENT}]")
+
+    if latency["count"] > 0:
+        table.add_row("Avg Latency", f"{latency['avg_total_ms']}ms")
 
     return Panel(table, title="[bold]PIPELINE STATUS[/bold]", border_style="bright_green", box=box.ROUNDED)
 
 
-def render_performance() -> Panel:
+def render_accuracy() -> Panel:
+    cal = logger.get_calibration_stats()
     stats = logger.get_trade_stats()
-    trades = logger.get_recent_trades(limit=100)
-    daily_spent = abs(logger.get_daily_pnl())
-
-    total = stats["total_trades"]
-    by_status = stats["by_status"]
-    dry_runs = by_status.get("dry_run", 0)
-    executed = by_status.get("executed", 0)
-    errors = sum(v for k, v in by_status.items() if k.startswith("error"))
-
-    total_wagered = sum(t.get("amount_usd", 0) for t in trades)
-    avg_edge = sum(t.get("edge", 0) for t in trades) / max(len(trades), 1) * 100
 
     table = Table(show_header=False, box=None, padding=(0, 1), expand=True)
     table.add_column("label", style=MUTED, width=18)
     table.add_column("value")
 
-    table.add_row("Total Signals", f"[{ACCENT}]{total}[/{ACCENT}]")
-    table.add_row("Dry Runs", f"[{WARN}]{dry_runs}[/{WARN}]")
-    table.add_row("Executed", f"[{WIN}]{executed}[/{WIN}]")
-    if errors:
-        table.add_row("Errors", f"[{LOSS}]{errors}[/{LOSS}]")
-    table.add_row("", "")
-    table.add_row("Daily Exposure", f"[{ACCENT}]${daily_spent:.2f}[/{ACCENT}]")
-    table.add_row("Total Wagered", f"[{ACCENT}]${total_wagered:.2f}[/{ACCENT}]")
-    table.add_row("Avg Edge", f"[{ACCENT}]{avg_edge:.1f}%[/{ACCENT}]")
-    table.add_row("", "")
+    if cal["total"] > 0:
+        acc = cal["accuracy"]
+        acc_style = WIN if acc >= 55 else (WARN if acc >= 45 else LOSS)
+        table.add_row("Calibrated Trades", str(cal["total"]))
+        table.add_row("Accuracy", f"[{acc_style}]{acc:.1f}%[/{acc_style}]")
 
-    if trades:
-        best = max(t.get("edge", 0) for t in trades)
-        table.add_row("Best Edge", f"[{WIN}]{best:.1%}[/{WIN}]")
+        table.add_row("", "")
+        table.add_row("[bold]By Classification[/bold]", "")
+        for cls, pct in cal.get("by_classification", {}).items():
+            style = WIN if pct >= 55 else (WARN if pct >= 45 else LOSS)
+            table.add_row(f"  {cls}", f"[{style}]{pct:.1f}%[/{style}]")
 
-    return Panel(table, title="[bold]PERFORMANCE[/bold]", border_style="bright_cyan", box=box.ROUNDED)
+        table.add_row("", "")
+        table.add_row("[bold]By Source[/bold]", "")
+        for src, pct in cal.get("by_source", {}).items():
+            style = WIN if pct >= 55 else (WARN if pct >= 45 else LOSS)
+            table.add_row(f"  {src}", f"[{style}]{pct:.1f}%[/{style}]")
+    else:
+        by_status = stats.get("by_status", {})
+        dry_runs = by_status.get("dry_run", 0)
+        executed = by_status.get("executed", 0)
+
+        table.add_row("Dry Run Signals", f"[{WARN}]{dry_runs}[/{WARN}]")
+        table.add_row("Live Trades", f"[{ACCENT}]{executed}[/{ACCENT}]")
+        table.add_row("", "")
+        table.add_row(f"[{DIM}]Accuracy tracking[/{DIM}]", "")
+        table.add_row(f"[{DIM}]starts after markets[/{DIM}]", "")
+        table.add_row(f"[{DIM}]resolve.[/{DIM}]", "")
+
+    return Panel(table, title="[bold]ACCURACY & PERFORMANCE[/bold]", border_style=CYAN, box=box.ROUNDED)
 
 
-def render_scanner() -> Panel:
-    content = Table(show_header=True, box=box.SIMPLE_HEAD, expand=True, padding=(0, 1))
-    content.add_column("Market", max_width=38)
-    content.add_column("Mkt$", justify="right", width=5)
-    content.add_column("Claude", justify="right", width=6, style=ACCENT)
-    content.add_column("Edge", justify="right", width=6)
-    content.add_column("Side", justify="center", width=5)
-    content.add_column("Bet", justify="right", width=7)
-    content.add_column("Status", justify="center", width=9)
+def render_news_feed() -> Panel:
+    events = logger.get_recent_news_events(limit=12)
 
-    if not state.latest_markets:
-        content.add_row(f"[{DIM}]Waiting for first scan...[/{DIM}]", "", "", "", "", "", "")
-        return Panel(content, title="[bold]MARKET SCANNER[/bold]  ·  Claude Confidence vs Market Odds", border_style="bright_green", box=box.ROUNDED)
+    table = Table(show_header=True, box=box.SIMPLE_HEAD, expand=True, padding=(0, 1))
+    table.add_column("Time", width=8, style=MUTED)
+    table.add_column("Src", width=5, style=CYAN)
+    table.add_column("Headline", ratio=4)
+    table.add_column("Lat.", justify="right", width=6, style=DIM)
 
-    # Show signals first
-    signal_questions = set()
-    for sig in state.latest_signals[:5]:
-        m = sig["market"]
-        s = sig["score"]
-        t = sig["trade"]
-        signal_questions.add(m.question)
-        edge_pct = f"{s['edge']:.0%}"
-        side_style = WIN if t["side"] == "YES" else "bright_magenta"
+    if not events:
+        table.add_row(f"[{DIM}]Waiting for news...[/{DIM}]", "", "", "")
+    else:
+        for e in events:
+            ts = e.get("received_at", e.get("created_at", ""))
+            if ts:
+                try:
+                    t = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                    time_str = t.strftime("%H:%M:%S")
+                except (ValueError, AttributeError):
+                    time_str = ts[:8]
+            else:
+                time_str = "?"
 
-        status = t.get("status", "dry_run")
-        if status == "dry_run":
-            status_str = f"[{WARN}]DRY RUN[/{WARN}]"
-        elif status == "executed":
-            status_str = f"[{WIN}]FILLED[/{WIN}]"
-        else:
-            status_str = f"[{DIM}]{status[:9]}[/{DIM}]"
+            source = e.get("source", "?")[:5]
+            headline = e.get("headline", "")[:65]
+            lat = e.get("latency_ms", 0)
+            lat_str = f"{lat}ms" if lat else ""
 
-        content.add_row(
-            m.question[:38],
-            f"{m.yes_price:.2f}",
-            f"{s['confidence']:.2f}",
-            f"[{WIN}]{edge_pct}[/{WIN}]",
-            f"[{side_style}]{t['side']}[/{side_style}]",
-            f"${t['amount']:.0f}",
-            status_str,
-        )
+            table.add_row(time_str, source, headline, lat_str)
 
-    # Fill with non-signal markets
-    for m in state.latest_markets:
-        if m.question in signal_questions:
-            continue
-        if len(content.rows) >= 8:
-            break
-        score = state.latest_scores.get(m.condition_id, {})
-        confidence = score.get("confidence", 0.5)
-        edge = abs(confidence - m.yes_price)
-        content.add_row(
-            f"[{DIM}]{m.question[:38]}[/{DIM}]",
-            f"[{DIM}]{m.yes_price:.2f}[/{DIM}]",
-            f"[{DIM}]{confidence:.2f}[/{DIM}]",
-            f"[{DIM}]{edge:.0%}[/{DIM}]",
-            f"[{DIM}]—[/{DIM}]",
-            f"[{DIM}]—[/{DIM}]",
-            f"[{DIM}]no edge[/{DIM}]",
-        )
-
-    return Panel(content, title="[bold]MARKET SCANNER[/bold]  ·  Claude Confidence vs Market Odds", border_style="bright_green", box=box.ROUNDED)
+    return Panel(table, title="[bold]NEWS FEED[/bold]  ·  Latest headlines matched to markets", border_style=ACCENT, box=box.ROUNDED)
 
 
 def render_trades() -> Panel:
-    trades = logger.get_recent_trades(limit=10)
+    trades = logger.get_recent_trades(limit=12)
 
     table = Table(show_header=True, box=box.SIMPLE_HEAD, expand=True, padding=(0, 1))
-    table.add_column("Time", width=16, style=MUTED)
-    table.add_column("Market", max_width=38)
-    table.add_column("Side", justify="center", width=5)
-    table.add_column("Bet", justify="right", width=7)
-    table.add_column("Edge", justify="right", width=6)
-    table.add_column("Claude", justify="right", width=6)
-    table.add_column("Mkt$", justify="right", width=5)
-    table.add_column("Status", justify="center", width=9)
+    table.add_column("Time", width=8, style=MUTED)
+    table.add_column("Market", max_width=30)
+    table.add_column("Dir", justify="center", width=5)
+    table.add_column("Mat", justify="right", width=4)
+    table.add_column("Side", justify="center", width=4)
+    table.add_column("Bet", justify="right", width=6)
+    table.add_column("Edge", justify="right", width=5)
+    table.add_column("Status", justify="center", width=8)
 
     if not trades:
-        table.add_row(f"[{DIM}]No trades yet — pipeline scanning...[/{DIM}]", "", "", "", "", "", "", "")
+        table.add_row(f"[{DIM}]No signals yet — pipeline classifying...[/{DIM}]", "", "", "", "", "", "", "")
     else:
         for t in trades:
-            side_style = WIN if t["side"] == "YES" else "bright_magenta"
-            status = t["status"]
+            ts = t.get("created_at", "")[:8]
+            question = t.get("market_question", "")[:30]
+            classification = t.get("classification", "?")
+            materiality = t.get("materiality", 0)
+
+            dir_style = WIN if classification == "bullish" else (LOSS if classification == "bearish" else DIM)
+            side = t.get("side", "?")
+            side_style = WIN if side == "YES" else "bright_magenta"
+
+            status = t.get("status", "?")
             if status == "dry_run":
-                status_str = f"[{WARN}]DRY RUN[/{WARN}]"
+                status_str = f"[{WARN}]DRY[/{WARN}]"
             elif status == "executed":
-                status_str = f"[{WIN}]FILLED[/{WIN}]"
-            elif status.startswith("error"):
-                status_str = f"[{LOSS}]ERROR[/{LOSS}]"
-            elif status == "rejected_daily_limit":
+                status_str = f"[{WIN}]LIVE[/{WIN}]"
+            elif "limit" in status:
                 status_str = f"[{LOSS}]LIMIT[/{LOSS}]"
+            elif status.startswith("error"):
+                status_str = f"[{LOSS}]ERR[/{LOSS}]"
             else:
-                status_str = f"[{DIM}]{status[:9]}[/{DIM}]"
+                status_str = f"[{DIM}]{status[:8]}[/{DIM}]"
+
+            mat_str = f"{materiality:.2f}" if materiality else "?"
+            edge_str = f"{t.get('edge', 0):.0%}"
 
             table.add_row(
-                t["created_at"][:16],
-                t["market_question"][:38],
-                f"[{side_style}]{t['side']}[/{side_style}]",
-                f"${t['amount_usd']:.2f}",
-                f"{t['edge']:.0%}",
-                f"{t['claude_score']:.2f}",
-                f"{t['market_price']:.2f}",
+                ts,
+                question,
+                f"[{dir_style}]{classification[:5]}[/{dir_style}]",
+                mat_str,
+                f"[{side_style}]{side}[/{side_style}]",
+                f"${t.get('amount_usd', 0):.2f}",
+                edge_str,
                 status_str,
             )
 
-    return Panel(table, title="[bold]TRADE LOG[/bold]  ·  Bets Placed by Pipeline", border_style="bright_cyan", box=box.ROUNDED)
+    return Panel(table, title="[bold]SIGNALS & TRADES[/bold]  ·  Consensus-filtered signals", border_style=CYAN, box=box.ROUNDED)
 
 
 def render_footer() -> Panel:
     grid = Table.grid(expand=True)
     grid.add_column(justify="left", ratio=2)
-    grid.add_column(justify="center", ratio=3)
+    grid.add_column(justify="center", ratio=2)
     grid.add_column(justify="right", ratio=2)
 
-    if state.latest_headlines:
-        h = state.latest_headlines[0]
-        headline_text = f"[{ACCENT}]>[/{ACCENT}] [{MUTED}]{h['source']}:[/{MUTED}] {h['headline'][:80]}"
-    else:
-        headline_text = f"[{DIM}]Waiting for news feed...[/{DIM}]"
-
     stats = logger.get_trade_stats()
-    mode = "LIVE" if not config.DRY_RUN else "DRY"
+    latency = logger.get_latency_stats()
 
     grid.add_row(
-        headline_text,
-        f"[{DIM}]Ctrl+C to exit[/{DIM}]",
-        f"[{DIM}]{mode}[/{DIM}]  |  Signals: [{ACCENT}]{stats['total_trades']}[/{ACCENT}] ",
+        f" [{ACCENT}]Signals: {stats['total_trades']}[/{ACCENT}]  |  "
+        f"[{DIM}]Avg latency: {latency.get('avg_total_ms', 0)}ms[/{DIM}]",
+        f"[{DIM}]Ctrl+C to exit  |  Refreshes every 2s[/{DIM}]",
+        f"[{DIM}]Bankroll: ${config.BANKROLL_USD:.0f}  |  Provider: {config.LLM_PROVIDER.upper()}[/{DIM}] ",
     )
     return Panel(grid, style="bright_green", box=box.HEAVY)
 
 
-def run_dashboard(scan_interval: float = 60.0):
-    """Launch the live dashboard. Scans on a configurable interval."""
+def run_dashboard():
+    """Launch the live monitoring dashboard. Reads from SQLite — no pipeline execution."""
     layout = make_layout()
 
-    # Initial render
-    layout["header"].update(render_header())
-    layout["status"].update(render_status())
-    layout["performance"].update(render_performance())
-    layout["scanner"].update(render_scanner())
-    layout["trades"].update(render_trades())
-    layout["footer"].update(render_footer())
-
     try:
-        with Live(layout, console=console, refresh_per_second=2, screen=True) as live:
-            last_scan = 0.0
-
+        with Live(layout, console=console, refresh_per_second=0.5, screen=True) as live:
             while True:
-                now = time.time()
-
-                if now - last_scan >= scan_interval:
-                    run_scan_cycle()
-                    last_scan = now
-
                 layout["header"].update(render_header())
                 layout["status"].update(render_status())
-                layout["performance"].update(render_performance())
-                layout["scanner"].update(render_scanner())
+                layout["accuracy"].update(render_accuracy())
+                layout["news_feed"].update(render_news_feed())
                 layout["trades"].update(render_trades())
                 layout["footer"].update(render_footer())
-
-                time.sleep(0.5)
+                time.sleep(2)
 
     except KeyboardInterrupt:
         stats = logger.get_trade_stats()
-        console.print(f"\n[{ACCENT}]Pipeline stopped. {stats['total_trades']} signals logged across {state.run_number} cycles.[/{ACCENT}]")
+        console.print(f"\n[{ACCENT}]Dashboard closed. {stats['total_trades']} signals logged.[/{ACCENT}]")
 
 
 if __name__ == "__main__":
-    interval = float(sys.argv[1]) if len(sys.argv) > 1 else 60.0
-    run_dashboard(scan_interval=interval)
+    run_dashboard()

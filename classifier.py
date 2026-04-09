@@ -27,22 +27,53 @@ def _call_llm(prompt: str, temperature: float = 0.1, max_tokens: int = 200) -> s
     """Call the configured LLM backend. Returns raw text response."""
     provider = config.LLM_PROVIDER
 
-    if provider == "groq":
+    if provider == "gemini":
+        return _call_gemini(prompt, temperature, max_tokens)
+    elif provider == "groq":
         return _call_groq(prompt, temperature, max_tokens)
     elif provider == "ollama":
         return _call_ollama(prompt, temperature, max_tokens)
     elif provider == "anthropic":
         return _call_anthropic(prompt, temperature, max_tokens)
     else:
-        # Auto-detect: try groq first (fast), then ollama, then anthropic
-        if config.GROQ_API_KEY:
+        # Auto-detect: try gemini first (fast+cheap), then groq, ollama, anthropic
+        if config.GEMINI_API_KEY:
+            return _call_gemini(prompt, temperature, max_tokens)
+        elif config.GROQ_API_KEY:
             return _call_groq(prompt, temperature, max_tokens)
         elif config.OLLAMA_BASE_URL:
             return _call_ollama(prompt, temperature, max_tokens)
         elif config.ANTHROPIC_API_KEY:
             return _call_anthropic(prompt, temperature, max_tokens)
         else:
-            raise RuntimeError("No LLM configured — set GROQ_API_KEY, ANTHROPIC_API_KEY, or OLLAMA_BASE_URL")
+            raise RuntimeError("No LLM configured — set GEMINI_API_KEY, GROQ_API_KEY, ANTHROPIC_API_KEY, or OLLAMA_BASE_URL")
+
+
+_gemini_last_call = 0.0
+_GEMINI_MIN_INTERVAL = 4.0  # seconds between calls (free tier: 15 RPM)
+
+def _call_gemini(prompt: str, temperature: float, max_tokens: int) -> str:
+    """Call Google Gemini API (fast + cheap). Rate-limited for free tier."""
+    import time as _time
+    global _gemini_last_call
+
+    # Enforce rate limit
+    elapsed = _time.time() - _gemini_last_call
+    if elapsed < _GEMINI_MIN_INTERVAL:
+        _time.sleep(_GEMINI_MIN_INTERVAL - elapsed)
+
+    from google import genai
+    client = genai.Client(api_key=config.GEMINI_API_KEY)
+    _gemini_last_call = _time.time()
+    response = client.models.generate_content(
+        model=config.GEMINI_MODEL,
+        contents=prompt,
+        config={
+            "temperature": temperature,
+            "max_output_tokens": max_tokens,
+        },
+    )
+    return response.text.strip()
 
 
 def _call_groq(prompt: str, temperature: float, max_tokens: int) -> str:
@@ -220,7 +251,9 @@ def classify(headline: str, market: Market, source: str = "unknown") -> Classifi
 
     # Determine which model name to log
     provider = config.LLM_PROVIDER
-    if provider == "groq":
+    if provider == "gemini":
+        model_name = "gemini/" + config.GEMINI_MODEL
+    elif provider == "groq":
         model_name = "groq/" + config.CLASSIFICATION_MODEL
     elif provider == "ollama":
         model_name = "ollama/" + config.CLASSIFICATION_MODEL
