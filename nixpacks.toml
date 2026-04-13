@@ -1,8 +1,2 @@
-[phases.setup]
-nixPkgs = ["python311", "python311Packages.pip", "gcc"]
-
-[phases.install]
-cmds = ["python3.11 -m pip install -r requirements.txt"]
-
 [start]
-cmd = "python3.11 demo_runner.py"
+cmd = "python demo_runner.py"
