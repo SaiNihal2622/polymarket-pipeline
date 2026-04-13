@@ -1,1 +1,1 @@
-worker: python demo_runner.py
+worker: python3.11 demo_runner.py
