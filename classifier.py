@@ -98,9 +98,6 @@ def _call_ollama(prompt: str, temperature: float, max_tokens: int) -> str:
     """Call Ollama local model."""
     import ollama
     model = config.CLASSIFICATION_MODEL
-    # Map anthropic model names to ollama ones if needed
-    if "claude" in model or "haiku" in model or "sonnet" in model:
-        model = "gemma3:12b"
 
     response = ollama.chat(
         model=model,

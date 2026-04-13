@@ -47,12 +47,36 @@ class MarketWatcher:
         }
 
     def get_niche_markets(self, markets: list[Market]) -> list[Market]:
-        """Filter to niche markets within volume bounds."""
-        return [
-            m for m in markets
-            if config.MIN_VOLUME_USD <= m.volume <= config.MAX_VOLUME_USD
-            and m.active
-        ]
+        """Filter to niche markets within volume bounds + fast resolution."""
+        from datetime import timedelta
+        now = datetime.now(timezone.utc)
+        max_resolve = now + timedelta(hours=config.MAX_RESOLVE_HOURS)
+
+        filtered = []
+        for m in markets:
+            if not m.active:
+                continue
+            if m.volume < config.MIN_VOLUME_USD or m.volume > config.MAX_VOLUME_USD:
+                continue
+
+            # Fast-resolve filter: only trade markets ending soon
+            if m.end_date:
+                try:
+                    end = m.end_date
+                    if "T" in end:
+                        dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
+                    else:
+                        dt = datetime.fromisoformat(end + "T00:00:00+00:00")
+                    if dt > max_resolve:
+                        continue  # Too far in the future
+                    if dt < now:
+                        continue  # Already ended
+                except (ValueError, TypeError):
+                    pass  # Can't parse date, include anyway
+
+            filtered.append(m)
+
+        return filtered
 
     async def refresh_markets(self):
         """Fetch and filter markets from Gamma API."""

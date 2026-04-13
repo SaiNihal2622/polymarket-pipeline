@@ -134,6 +134,23 @@ def cmd_niche(args):
     console.print(table)
 
 
+def cmd_demo(args):
+    """Demo mode: paper-trade 1-day markets, track accuracy, unlock live at 70%."""
+    from demo_runner import main as demo_main
+    import sys
+    # Pass --once / --report / --resolve flags through
+    old_argv = sys.argv
+    sys.argv = ["demo_runner.py"]
+    if args.once:
+        sys.argv.append("--once")
+    if args.report:
+        sys.argv.append("--report")
+    if args.resolve:
+        sys.argv.append("--resolve")
+    demo_main()
+    sys.argv = old_argv
+
+
 def cmd_dashboard(args):
     from dashboard import run_dashboard
     run_dashboard(scan_interval=args.speed)
@@ -380,6 +397,13 @@ def cmd_stats(args):
 def main():
     parser = argparse.ArgumentParser(description="Polymarket Pipeline V2")
     sub = parser.add_subparsers(dest="command")
+
+    # demo
+    p_demo = sub.add_parser("demo", help="Paper-trade 1-day markets, track accuracy, unlock live at 70%")
+    p_demo.add_argument("--once", action="store_true", help="Single scan then exit")
+    p_demo.add_argument("--report", action="store_true", help="Show accuracy report only")
+    p_demo.add_argument("--resolve", action="store_true", help="Run resolution check only")
+    p_demo.set_defaults(func=cmd_demo)
 
     # watch (V2)
     p_watch = sub.add_parser("watch", help="V2: Event-driven pipeline (real-time)")

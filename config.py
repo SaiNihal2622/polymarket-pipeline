@@ -4,7 +4,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- LLM Provider ---
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "anthropic").lower()  # "anthropic", "groq", "ollama", "gemini"
+# Recommended: "gemini" (Gemini 2.0 Flash) — works locally AND on Railway, cheap, fast
+# Options: "gemini" | "groq" | "anthropic" | "ollama" (local only, no Railway)
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini").lower()
 
 # --- Anthropic ---
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
@@ -75,19 +77,27 @@ DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "5"))  # Stop aft
 EDGE_THRESHOLD = float(os.getenv("EDGE_THRESHOLD", "0.15"))  # Higher threshold = fewer but better trades
 NEWS_LOOKBACK_HOURS = 6
 
+# --- Demo Runner Settings ---
+DEMO_HOURS_WINDOW = float(os.getenv("DEMO_HOURS_WINDOW", "24"))       # Only trade markets closing in ≤N hours
+SCAN_INTERVAL_MIN = int(os.getenv("SCAN_INTERVAL_MIN", "30"))          # Re-scan every N minutes
+RESOLVE_INTERVAL_MIN = int(os.getenv("RESOLVE_INTERVAL_MIN", "10"))    # Check resolutions every N minutes
+ACCURACY_THRESHOLD = float(os.getenv("ACCURACY_THRESHOLD", "70.0"))   # % accuracy to unlock live trading
+MIN_RESOLVED_TRADES = int(os.getenv("MIN_RESOLVED_TRADES", "10"))      # Min resolved trades needed before going live
+
 # --- V2 Settings ---
+MAX_RESOLVE_HOURS = float(os.getenv("MAX_RESOLVE_HOURS", "72"))  # 3 days max
 MAX_VOLUME_USD = float(os.getenv("MAX_VOLUME_USD", "500000"))
 MIN_VOLUME_USD = float(os.getenv("MIN_VOLUME_USD", "500"))   # Lowered to catch more niche markets
 MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.65"))  # Slightly higher for quality
 SPEED_TARGET_SECONDS = float(os.getenv("SPEED_TARGET_SECONDS", "5"))
-CLASSIFICATION_MODEL = "claude-haiku-4-5-20251001"
-SCORING_MODEL = "claude-sonnet-4-6-20250514"
+CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "gemma3:4b")
+SCORING_MODEL = os.getenv("SCORING_MODEL", "gemma3:4b")
 # Alias for V1 scorer compatibility
 CLAUDE_MODEL = SCORING_MODEL
 
 # --- Consensus Settings (multi-agent inspired by MiroFish debate pattern) ---
 CONSENSUS_ENABLED = os.getenv("CONSENSUS_ENABLED", "true").lower() == "true"
-CONSENSUS_PASSES = int(os.getenv("CONSENSUS_PASSES", "2"))       # Classify N times, require agreement
+CONSENSUS_PASSES = int(os.getenv("CONSENSUS_PASSES", "1"))       # 1 pass for speed
 CONSENSUS_MIN_AGREEMENT = float(os.getenv("CONSENSUS_MIN_AGREEMENT", "1.0"))  # 1.0 = unanimous
 
 # --- RRF Multi-Signal Settings (inspired by SkillX fusion scoring) ---

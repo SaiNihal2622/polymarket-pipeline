@@ -19,6 +19,7 @@ from rich import box
 
 import config
 import logger
+from resolver import get_accuracy_stats as get_demo_accuracy
 
 console = Console()
 
@@ -109,43 +110,55 @@ def render_status() -> Panel:
 
 
 def render_accuracy() -> Panel:
+    demo = get_demo_accuracy()
     cal = logger.get_calibration_stats()
     stats = logger.get_trade_stats()
 
     table = Table(show_header=False, box=None, padding=(0, 1), expand=True)
-    table.add_column("label", style=MUTED, width=18)
+    table.add_column("label", style=MUTED, width=20)
     table.add_column("value")
 
-    if cal["total"] > 0:
-        acc = cal["accuracy"]
-        acc_style = WIN if acc >= 55 else (WARN if acc >= 45 else LOSS)
-        table.add_row("Calibrated Trades", str(cal["total"]))
-        table.add_row("Accuracy", f"[{acc_style}]{acc:.1f}%[/{acc_style}]")
+    # ── Demo accuracy block (primary) ────────────────────────────────────────
+    total_resolved = demo["total_resolved"]
+    decisive = total_resolved - demo["pushes"]
+    acc = demo["accuracy_pct"]
 
-        table.add_row("", "")
-        table.add_row("[bold]By Classification[/bold]", "")
-        for cls, pct in cal.get("by_classification", {}).items():
-            style = WIN if pct >= 55 else (WARN if pct >= 45 else LOSS)
-            table.add_row(f"  {cls}", f"[{style}]{pct:.1f}%[/{style}]")
-
-        table.add_row("", "")
-        table.add_row("[bold]By Source[/bold]", "")
-        for src, pct in cal.get("by_source", {}).items():
-            style = WIN if pct >= 55 else (WARN if pct >= 45 else LOSS)
-            table.add_row(f"  {src}", f"[{style}]{pct:.1f}%[/{style}]")
+    if total_resolved > 0:
+        acc_style = WIN if acc >= 70 else (WARN if acc >= 50 else LOSS)
+        live_status = (
+            f"[{WIN}]✅ READY FOR LIVE[/{WIN}]" if demo["ready_for_live"]
+            else f"[{WARN}]need {max(0, 10 - decisive)} more + 70%[/{WARN}]"
+        )
+        table.add_row("[bold]── Demo Accuracy ──[/bold]", "")
+        table.add_row("Resolved Trades", str(total_resolved))
+        table.add_row("Wins / Losses", f"[{WIN}]{demo['wins']}W[/{WIN}] / [{LOSS}]{demo['losses']}L[/{LOSS}] / {demo['pushes']}P")
+        table.add_row("Accuracy", f"[{acc_style}]{acc:.1f}%[/{acc_style}]  (threshold: 70%)")
+        table.add_row("Virtual PnL", f"[{WIN if demo['total_pnl'] >= 0 else LOSS}]${demo['total_pnl']:+.2f}[/{WIN if demo['total_pnl'] >= 0 else LOSS}]")
+        table.add_row("Go-Live Status", live_status)
     else:
         by_status = stats.get("by_status", {})
-        dry_runs = by_status.get("dry_run", 0)
-        executed = by_status.get("executed", 0)
-
-        table.add_row("Dry Run Signals", f"[{WARN}]{dry_runs}[/{WARN}]")
-        table.add_row("Live Trades", f"[{ACCENT}]{executed}[/{ACCENT}]")
+        demo_logged = by_status.get("demo", 0) + by_status.get("dry_run", 0)
+        table.add_row("[bold]── Demo Accuracy ──[/bold]", "")
+        table.add_row("Demo Trades Logged", f"[{WARN}]{demo_logged}[/{WARN}]")
+        table.add_row("Resolved", f"[{DIM}]0 — waiting for markets to close[/{DIM}]")
         table.add_row("", "")
-        table.add_row(f"[{DIM}]Accuracy tracking[/{DIM}]", "")
-        table.add_row(f"[{DIM}]starts after markets[/{DIM}]", "")
-        table.add_row(f"[{DIM}]resolve.[/{DIM}]", "")
+        table.add_row(f"[{DIM}]Markets resolve within[/{DIM}]", "")
+        table.add_row(f"[{DIM}]24h of being logged.[/{DIM}]", "")
 
-    return Panel(table, title="[bold]ACCURACY & PERFORMANCE[/bold]", border_style=CYAN, box=box.ROUNDED)
+    # ── Calibration breakdown (secondary) ────────────────────────────────────
+    if cal["total"] > 0:
+        table.add_row("", "")
+        table.add_row("[bold]── By Direction ──[/bold]", "")
+        for cls, pct in cal.get("by_classification", {}).items():
+            style = WIN if pct >= 60 else (WARN if pct >= 45 else LOSS)
+            table.add_row(f"  {cls}", f"[{style}]{pct:.1f}%[/{style}]")
+
+        table.add_row("[bold]── By Source ──[/bold]", "")
+        for src, pct in cal.get("by_source", {}).items():
+            style = WIN if pct >= 60 else (WARN if pct >= 45 else LOSS)
+            table.add_row(f"  {src}", f"[{style}]{pct:.1f}%[/{style}]")
+
+    return Panel(table, title="[bold]DEMO ACCURACY & PERFORMANCE[/bold]", border_style=CYAN, box=box.ROUNDED)
 
 
 def render_news_feed() -> Panel:

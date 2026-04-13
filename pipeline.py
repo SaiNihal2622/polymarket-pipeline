@@ -118,13 +118,13 @@ class PipelineV2:
                     if signal:
                         self.stats["signals_found"] += 1
                         await self.signal_queue.put(signal)
-                        consensus_tag = "[bright_green]✓CON[/bright_green]" if signal.consensus_agreed else ""
+                        consensus_tag = "[bright_green]CON[/bright_green]" if signal.consensus_agreed else ""
                         console.print(
                             f"  [bright_green]SIGNAL[/bright_green] {consensus_tag} "
                             f"[{event.source}] {classification.direction.upper()} "
                             f"mat:{classification.materiality:.2f} "
                             f"comp:{signal.composite_score:.2f} "
-                            f"→ {signal.side} ${signal.bet_amount} "
+                            f"@ {signal.side} ${signal.bet_amount} "
                             f"on \"{market.question[:40]}...\" "
                             f"({signal.total_latency_ms}ms)"
                         )

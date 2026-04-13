@@ -207,6 +207,31 @@ def _infer_category(question: str, tags: list) -> str:
     return "other"
 
 
+def filter_by_end_hours(markets: list[Market], hours: float = 24) -> list[Market]:
+    """Return only markets closing within `hours` from now (UTC)."""
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    cutoff = now + timedelta(hours=hours)
+    fmts = [
+        "%Y-%m-%dT%H:%M:%SZ",
+        "%Y-%m-%dT%H:%M:%S.%fZ",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d",
+    ]
+    result = []
+    for m in markets:
+        end_dt = None
+        for fmt in fmts:
+            try:
+                end_dt = datetime.strptime(m.end_date[:26], fmt).replace(tzinfo=timezone.utc)
+                break
+            except (ValueError, TypeError):
+                continue
+        if end_dt and now < end_dt <= cutoff:
+            result.append(m)
+    return result
+
+
 def filter_by_categories(markets: list[Market], categories: list[str] | None = None) -> list[Market]:
     """Filter markets to only target categories."""
     cats = categories or config.MARKET_CATEGORIES

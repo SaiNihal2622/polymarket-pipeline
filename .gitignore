@@ -5,3 +5,10 @@ trades.db-wal
 __pycache__/
 *.pyc
 .venv/
+venv/
+WALLET_BACKUP.txt
+test_permissions.txt
+nul
+.claude/
+.vscode/
+data/
