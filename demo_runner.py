@@ -28,6 +28,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
+import re
 import time
 from datetime import datetime, timezone, timedelta
 
@@ -37,9 +39,10 @@ from rich.table import Table
 
 import config
 import logger
+from logger import get_pending_market_ids
 from markets import fetch_active_markets, filter_by_categories
 from scraper import scrape_all
-from classifier import classify, Classification
+from classifier import classify, research_market, Classification
 from matcher import match_news_to_markets
 from edge import detect_edge_v2, Signal
 from news_stream import NewsEvent
@@ -47,6 +50,30 @@ from resolver import run_resolution_check, get_accuracy_stats
 
 console = Console()
 log = logging.getLogger(__name__)
+
+
+def _print_accuracy_oneliner():
+    """Always print a one-line accuracy summary — shown every scan and every resolution check."""
+    stats = get_accuracy_stats()
+    total_logged   = stats.get("total_logged", 0)
+    total_resolved = stats["total_resolved"]
+    wins           = stats["wins"]
+    losses         = stats["losses"]
+    acc            = stats["accuracy_pct"]
+
+    if total_resolved == 0:
+        acc_str = "[dim]no resolutions yet[/dim]"
+    else:
+        color   = "bright_green" if acc >= ACCURACY_THRESHOLD else "yellow" if acc >= 50 else "red"
+        acc_str = f"[{color}]{acc:.1f}%[/{color}] ({wins}W / {losses}L)"
+
+    need = max(0, MIN_RESOLVED - total_resolved)
+    console.print(
+        f"  [bold cyan]▶ ACCURACY:[/bold cyan] {acc_str}  "
+        f"| logged={total_logged}  resolved={total_resolved}  "
+        f"| need {need} more to go-live"
+    )
+
 
 # ── Settings ─────────────────────────────────────────────────────────────────
 DEMO_HOURS_WINDOW = float(getattr(config, "DEMO_HOURS_WINDOW", 24))    # markets closing within N hours
@@ -86,6 +113,87 @@ def filter_closing_soon(markets, hours: float = DEMO_HOURS_WINDOW):
         if end and now < end <= cutoff:
             result.append(m)
     return result
+
+
+def _parse_window_duration_hours(question: str) -> float | None:
+    """Detect short-window markets like 'X:XXam-X:XXam ET'. Returns duration in hours or None."""
+    pattern = r'(\d+):(\d+)\s*([AaPp][Mm]).*?[-–]\s*(\d+):(\d+)\s*([AaPp][Mm])'
+    m = re.search(pattern, question)
+    if not m:
+        return None
+    h1, m1, ap1 = int(m.group(1)), int(m.group(2)), m.group(3).upper()
+    h2, m2, ap2 = int(m.group(4)), int(m.group(5)), m.group(6).upper()
+    if ap1 == "PM" and h1 != 12: h1 += 12
+    if ap1 == "AM" and h1 == 12: h1 = 0
+    if ap2 == "PM" and h2 != 12: h2 += 12
+    if ap2 == "AM" and h2 == 12: h2 = 0
+    mins = (h2 * 60 + m2) - (h1 * 60 + m1)
+    if mins < 0: mins += 1440
+    return mins / 60
+
+
+_WEATHER_MARKET_KW = {
+    "temperature", "celsius", "fahrenheit", "°c", "°f", "degrees",
+    "highest temp", "lowest temp", "hottest", "coldest", "rainfall",
+    "precipitation", "wind speed", "humidity",
+}
+
+
+def _is_weather_market(question: str) -> bool:
+    q = question.lower()
+    return any(k in q for k in _WEATHER_MARKET_KW)
+
+
+def filter_quality_markets(markets, now: datetime) -> tuple[list, dict]:
+    """
+    Filter markets to high-quality candidates only. Removes:
+      - Markets closing too soon (< MIN_CLOSE_HOURS) — already priced in
+      - Markets with extreme YES prices (< MIN_YES_PRICE or > MAX_YES_PRICE) — near-certain
+      - Low-volume markets (< MIN_VOLUME_USD) — micro/5-min windows
+      - Micro time-window markets (< MIN_WINDOW_HOURS duration)
+      - Weather/temperature markets — no relevant news source covers them
+    Returns (filtered_list, stats_dict).
+    """
+    result = []
+    skipped = {"too_soon": 0, "price_extreme": 0, "low_volume": 0, "micro_window": 0, "weather": 0}
+
+    for m in markets:
+        # 1. Skip markets closing too soon
+        end = _parse_end_date(m.end_date)
+        if end:
+            hours_left = (end - now).total_seconds() / 3600
+            if hours_left < config.MIN_CLOSE_HOURS:
+                skipped["too_soon"] += 1
+                continue
+
+        # 2. Skip near-certain prices (market already knows outcome)
+        if m.yes_price < config.MIN_YES_PRICE or m.yes_price > config.MAX_YES_PRICE:
+            skipped["price_extreme"] += 1
+            continue
+
+        # 3. Skip very low volume (filters out $100 micro-window markets)
+        # Fast markets (≤24h) get a lower volume floor — Gemini researches them directly
+        end2 = _parse_end_date(m.end_date)
+        h_left = ((end2 - now).total_seconds() / 3600) if end2 else 9999
+        vol_min = 100 if h_left <= 24 else config.MIN_VOLUME_USD
+        if m.volume < vol_min:
+            skipped["low_volume"] += 1
+            continue
+
+        # 4. Skip micro time-window markets (< 30 min duration)
+        win_dur = _parse_window_duration_hours(m.question)
+        if win_dur is not None and win_dur < config.MIN_WINDOW_HOURS:
+            skipped["micro_window"] += 1
+            continue
+
+        # 5. Skip weather/temperature markets — RSS feeds don't cover them
+        if _is_weather_market(m.question):
+            skipped["weather"] += 1
+            continue
+
+        result.append(m)
+
+    return result, skipped
 
 
 def _log_demo_trade(signal: Signal) -> int:
@@ -138,25 +246,51 @@ def scan_and_trade() -> dict:
     consensus_tag = f"consensus={'ON' if config.CONSENSUS_ENABLED else 'OFF'} passes={config.CONSENSUS_PASSES}"
     console.print(f"  {now_str}  |  ≤{DEMO_HOURS_WINDOW:.0f}h window  |  {consensus_tag}  |  model={config.LLM_PROVIDER}")
 
+    # Show accuracy at the top of every scan
+    _print_accuracy_oneliner()
+
     # 1. News
     console.print("\n[bold]1. Scraping news...[/bold]")
     news_items = scrape_all(config.NEWS_LOOKBACK_HOURS)
-    console.print(f"   {len(news_items)} headlines from RSS/Twitter/Telegram")
+    # Count by source type
+    rss_count     = sum(1 for n in news_items if not n.source.startswith("Reddit") and n.source != "Hacker News" and n.source != "CryptoPanic" and n.source != "Twitter")
+    reddit_count  = sum(1 for n in news_items if n.source.startswith("Reddit"))
+    hn_count      = sum(1 for n in news_items if n.source == "Hacker News")
+    crypto_count  = sum(1 for n in news_items if n.source == "CryptoPanic")
+    twitter_count = sum(1 for n in news_items if n.source == "Twitter")
+    console.print(
+        f"   {len(news_items)} headlines "
+        f"[dim](RSS:{rss_count} Reddit:{reddit_count} HN:{hn_count} "
+        f"CryptoPanic:{crypto_count} Twitter:{twitter_count})[/dim]"
+    )
 
     # 2. Markets
     console.print("\n[bold]2. Fetching live markets...[/bold]")
-    all_markets = fetch_active_markets(limit=200)
+    all_markets = fetch_active_markets(limit=500)
     category_filtered = filter_by_categories(all_markets)
-    day_markets = filter_closing_soon(category_filtered, DEMO_HOURS_WINDOW)
+    window_markets = filter_closing_soon(category_filtered, DEMO_HOURS_WINDOW)
+    now = datetime.now(timezone.utc)
+    day_markets, skipped = filter_quality_markets(window_markets, now)
 
     console.print(
         f"   {len(all_markets)} total → {len(category_filtered)} in categories "
-        f"→ [bold yellow]{len(day_markets)} closing within {DEMO_HOURS_WINDOW:.0f}h[/bold yellow]"
+        f"→ {len(window_markets)} in {DEMO_HOURS_WINDOW:.0f}h window "
+        f"→ [bold yellow]{len(day_markets)} quality markets[/bold yellow] "
+        f"[dim](dropped: {skipped['too_soon']} too-soon, {skipped['price_extreme']} price-extreme, "
+        f"{skipped['low_volume']} low-vol, {skipped['micro_window']} micro-window, {skipped['weather']} weather)[/dim]"
     )
 
     if not day_markets:
-        console.print("   [yellow]No 1-day markets found. Try expanding DEMO_HOURS_WINDOW in .env.[/yellow]")
+        console.print("   [yellow]No quality markets found this scan.[/yellow]")
         return {"markets": 0, "signals": 0, "demos_logged": 0}
+
+    # Sort by closing time — soonest first so fast-resolving markets get priority
+    # This means accuracy shows up much faster (hours not days)
+    now = datetime.now(timezone.utc)
+    def _hours_left(m):
+        end = _parse_end_date(m.end_date)
+        return (end - now).total_seconds() / 3600 if end else 9999
+    day_markets.sort(key=_hours_left)
 
     # Print the shortlist
     now = datetime.now(timezone.utc)
@@ -172,55 +306,204 @@ def scan_and_trade() -> dict:
         table.add_row(str(i), m.question[:52], f"{m.yes_price:.2f}", f"${m.volume:,.0f}", f"{hours_left:.1f}h")
     console.print(table)
 
-    # 3. Full V2 Analysis: match news → consensus classify → RRF score
-    console.print(f"\n[bold]3. Full V2 Analysis (Analyst + Skeptic + RRF) on {len(day_markets)} markets...[/bold]")
+    # 3. TWO-TRACK ANALYSIS:
+    #   TRACK 1 — Fast markets (≤24h): research_market() with Gemini live search — no news needed
+    #   TRACK 2 — Slow markets (>24h): news matching + classify() (existing approach)
+
+    MAX_FAST = int(os.getenv("MAX_FAST_PER_SCAN", "60"))   # research up to 60 fast markets
+    MAX_SLOW = int(os.getenv("MAX_PAIRS_PER_SCAN", "20"))  # keep top 20 slow news pairs
+
+    already_logged = get_pending_market_ids()
+
+    fast_markets = [m for m in day_markets if _hours_left(m) <= 24 and m.condition_id not in already_logged]
+    slow_markets = [m for m in day_markets if _hours_left(m) > 24 and m.condition_id not in already_logged]
+
+    console.print(
+        f"\n[bold]3. Two-Track Analysis:[/bold] "
+        f"⚡ {len(fast_markets)} fast (≤24h, Gemini search) | "
+        f"📅 {len(slow_markets)} slow (>24h, news match)"
+    )
+
     signals_found: list[Signal] = []
     demos_logged = 0
     analyzed = 0
 
-    for news_item in news_items:
-        # Match this headline to relevant 1-day markets
-        matched_markets = match_news_to_markets(news_item.headline, day_markets)
-        if not matched_markets:
+    # ── TRACK 1: Fast markets — Gemini live web search research ──────────────
+    if fast_markets:
+        console.print(f"\n  [cyan]⚡ TRACK 1: Researching {min(len(fast_markets), MAX_FAST)} fast markets with Gemini search...[/cyan]")
+    for market in fast_markets[:MAX_FAST]:
+        analyzed += 1
+        end = _parse_end_date(market.end_date)
+        hours_left = ((end - now).total_seconds() / 3600) if end else 999
+
+        # Tiered thresholds for fast markets
+        if hours_left <= 6:
+            mat_threshold  = 0.10
+            comp_threshold = 0.25
+        else:
+            mat_threshold  = 0.15
+            comp_threshold = 0.30
+
+        classification: Classification = research_market(market)
+
+        closes_tag = f"[{hours_left:.1f}h]"
+        console.print(
+            f"  [{('cyan' if classification.direction != 'neutral' else 'dim')}]"
+            f"⚡research→ {classification.direction} mat:{classification.materiality:.2f} "
+            f"{closes_tag}[/] {market.question[:48]}"
+        )
+        if classification.direction == "neutral" or classification.materiality < mat_threshold:
             continue
 
-        news_event = _news_item_to_event(news_item)
+        # Build synthetic news event from research reasoning
+        dummy_news = type("NewsItem", (), {
+            "headline": f"[Research] {market.question[:120]}",
+            "source": "Gemini Search",
+            "url": "",
+            "age_hours": lambda self: 0.5,
+            "summary": classification.reasoning,
+        })()
+        news_event = _news_item_to_event(dummy_news)
 
-        for market in matched_markets:
+        import config as _cfg
+        _orig_mat = _cfg.MATERIALITY_THRESHOLD
+        _cfg.MATERIALITY_THRESHOLD = mat_threshold
+        signal = detect_edge_v2(market, classification, news_event)
+        _cfg.MATERIALITY_THRESHOLD = _orig_mat
+        if signal and signal.composite_score < comp_threshold:
+            signal = None
+
+        if signal:
+            console.print(
+                f"  [bright_green]SIGNAL ⚡FAST[/bright_green] "
+                f"[bold]{signal.side}[/bold] | "
+                f"mat:{classification.materiality:.2f} "
+                f"composite:{signal.composite_score:.2f} "
+                f"edge:{signal.edge:.1%} "
+                f"closes:{hours_left:.1f}h\n"
+                f"    Market: \"{market.question[:55]}\"\n"
+                f"    Reason: {classification.reasoning[:120]}"
+            )
+            trade_id = _log_demo_trade(signal)
+            console.print(f"    → [green]Demo trade #{trade_id} logged (${signal.bet_amount:.2f} virtual)[/green]")
+            signals_found.append(signal)
+            demos_logged += 1
+
+    # ── TRACK 2: Slow markets — news matching + classify ─────────────────────
+    if slow_markets:
+        console.print(f"\n  [yellow]📅 TRACK 2: News matching for {len(slow_markets)} slow markets...[/yellow]")
+        from matcher import extract_keywords
+        import urllib.parse
+
+        _CRYPTO_KW    = {"bitcoin","btc","ethereum","eth","solana","sol","xrp","bnb","crypto",
+                         "blockchain","defi","nft","token","altcoin","stablecoin",
+                         "coinbase","binance","polymarket","web3","on-chain","onchain"}
+        _WEATHER_KW   = {"temperature","celsius","fahrenheit","weather","rain","snow","wind",
+                         "humidity","forecast","climate","degrees","hottest","coldest"}
+        _SOCCER_KW    = {"fc ","football club","premier league","champions league","bundesliga",
+                         "la liga","serie a","ligue 1","eredivisie","atletico","barcelona",
+                         "bayern","liverpool","arsenal","chelsea","manchester","real madrid",
+                         "borussia","juventus","inter milan","psg","ajax","porto","celtic"}
+        _BASKETBALL_KW= {"nba","76ers","lakers","celtics","warriors","bucks","heat","knicks",
+                         "nets","suns","nuggets","magic","bulls","pistons","raptors","clippers",
+                         "spurs","grizzlies","pelicans","hawks","cavaliers","thunder","trail blazers"}
+        _CRICKET_KW   = {"ipl","cricket","wicket","t20","odi","test match","bcci","iplt20",
+                         "rajasthan royals","mumbai indians","chennai","kolkata","punjab",
+                         "sunrisers","rcb","delhi capitals"}
+        _ESPORTS_KW   = {"valorant","counter-strike","cs:go","leviatan","vitality","g2",
+                         "fnatic","navi","blast","dota","league of legends","lol","esports",
+                         "gaming","rekonix","nemesis"}
+        _FINANCE_KW   = {"stock","nasdaq","s&p","dow jones","fed","federal reserve",
+                         "interest rate","inflation","recession","earnings","ipo","bond","yield"}
+
+        def _cat(text: str) -> str:
+            t = text.lower()
+            if any(k in t for k in _CRYPTO_KW):      return "crypto"
+            if any(k in t for k in _WEATHER_KW):     return "weather"
+            if any(k in t for k in _SOCCER_KW):      return "soccer"
+            if any(k in t for k in _BASKETBALL_KW):  return "basketball"
+            if any(k in t for k in _CRICKET_KW):     return "cricket"
+            if any(k in t for k in _ESPORTS_KW):     return "esports"
+            if any(k in t for k in _FINANCE_KW):     return "finance"
+            return "general"
+
+        _STRICT_CATS = {"weather"}
+
+        best_per_market: dict[str, tuple[float, object, object]] = {}
+        skipped_cat = 0
+        for news_item in news_items:
+            headline_lower = news_item.headline.lower()
+            news_cat = _cat(news_item.headline)
+            for market in slow_markets:
+                mkt_cat = _cat(market.question)
+                if mkt_cat != "general" and mkt_cat != news_cat:
+                    if news_cat != "general" or mkt_cat in _STRICT_CATS:
+                        skipped_cat += 1
+                        continue
+                kws = extract_keywords(market.question)
+                if not kws:
+                    continue
+                hits = sum(1 for kw in kws if kw in headline_lower)
+                if hits == 0:
+                    continue
+                score = hits / len(kws)
+                mid = market.condition_id
+                if mid not in best_per_market or score > best_per_market[mid][0]:
+                    best_per_market[mid] = (score, news_item, market)
+
+        all_pairs = sorted(best_per_market.values(), key=lambda x: _hours_left(x[2]))
+        top_pairs = all_pairs[:MAX_SLOW]
+        console.print(
+            f"   {len(best_per_market)} slow markets matched news → top {len(top_pairs)} "
+            f"(skipped: {skipped_cat} cross-cat)"
+        )
+
+        for score, news_item, market in top_pairs:
+            news_event = _news_item_to_event(news_item)
             analyzed += 1
 
-            # ── Pass 1: Analyst + Pass 2: Skeptic (MiroFish debate) ──────────
+            end = _parse_end_date(market.end_date)
+            hours_left = ((end - now).total_seconds() / 3600) if end else 999
+            mat_threshold  = config.MATERIALITY_THRESHOLD  # 0.20
+            comp_threshold = 0.40
+
             classification: Classification = classify(
                 headline=news_item.headline,
                 market=market,
                 source=news_item.source,
+                use_search=False,
             )
 
-            # Log what the analysis said
+            closes_tag = f"[{hours_left:.0f}h]"
+            console.print(
+                f"  [{('green' if classification.direction != 'neutral' else 'dim')}]"
+                f"📅classify→ {classification.direction} mat:{classification.materiality:.2f} "
+                f"{closes_tag}[/] {market.question[:48]}"
+            )
             if classification.direction == "neutral":
-                log.debug(f"  neutral: {market.question[:45]}")
                 continue
 
             if config.CONSENSUS_ENABLED and not classification.consensus_agreed:
-                console.print(
-                    f"  [yellow]DEBATE SPLIT[/yellow] analyst vs skeptic disagreed on "
-                    f"\"{market.question[:45]}\" — skipping"
-                )
+                console.print(f"  [yellow]DEBATE SPLIT[/yellow] — skipping \"{market.question[:45]}\"")
                 continue
 
-            # ── RRF Multi-Signal Edge Detection ──────────────────────────────
+            if classification.materiality < mat_threshold:
+                continue
+
+            import config as _cfg
+            _orig_mat = _cfg.MATERIALITY_THRESHOLD
+            _cfg.MATERIALITY_THRESHOLD = mat_threshold
             signal = detect_edge_v2(market, classification, news_event)
+            _cfg.MATERIALITY_THRESHOLD = _orig_mat
+            if signal and signal.composite_score < comp_threshold:
+                signal = None
 
             if signal:
-                end = _parse_end_date(market.end_date)
-                hours_left = ((end - now).total_seconds() / 3600) if end else 0
                 console.print(
-                    f"  [bright_green]SIGNAL ✓CON[/bright_green] "
+                    f"  [bright_green]SIGNAL 📅SLOW[/bright_green] "
                     f"[bold]{signal.side}[/bold] | "
-                    f"mat:{classification.materiality:.2f} "
-                    f"composite:{signal.composite_score:.2f} "
-                    f"edge:{signal.edge:.1%} "
-                    f"closes:{hours_left:.1f}h\n"
+                    f"mat:{classification.materiality:.2f} composite:{signal.composite_score:.2f} "
+                    f"edge:{signal.edge:.1%} closes:{hours_left:.1f}h\n"
                     f"    Market: \"{market.question[:55]}\"\n"
                     f"    News:   [{news_item.source}] {news_item.headline[:70]}\n"
                     f"    Reason: {classification.reasoning[:100]}"
@@ -229,19 +512,16 @@ def scan_and_trade() -> dict:
                 console.print(f"    → [green]Demo trade #{trade_id} logged (${signal.bet_amount:.2f} virtual)[/green]")
                 signals_found.append(signal)
                 demos_logged += 1
-            else:
-                log.debug(
-                    f"  edge too low: {market.question[:45]} "
-                    f"mat={classification.materiality:.2f} dir={classification.direction}"
-                )
 
     if not signals_found:
         console.print(
-            f"  [dim]No signals this scan — analyzed {analyzed} market×news pairs. "
-            f"Consensus or composite threshold not met.[/dim]"
+            f"  [dim]No signals this scan — {analyzed} markets analyzed. "
+            f"Thresholds or materiality not met.[/dim]"
         )
 
-    console.print(f"\n  Scan complete: {len(news_items)} headlines → {analyzed} pairs analyzed → {demos_logged} demo trades")
+    console.print(f"\n  Scan complete: {len(news_items)} headlines → {analyzed} markets analyzed → {demos_logged} demo trades")
+    _print_accuracy_oneliner()
+    # ─────────────────────────────────────────────────────────────────────────
 
     return {
         "markets": len(day_markets),
@@ -343,7 +623,8 @@ def run_loop():
             console.print(f"\n[dim]── Resolution check @ {datetime.now().strftime('%H:%M:%S')} ──[/dim]")
             res = run_resolution_check(verbose=True)
             last_resolve = now
-
+            # Always print accuracy after resolution check
+            _print_accuracy_oneliner()
             if res["resolved"] > 0:
                 stats = print_accuracy_report()
                 maybe_go_live(stats)
