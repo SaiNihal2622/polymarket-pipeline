@@ -10,3 +10,4 @@ py-clob-client>=0.18.0
 google-genai>=0.8.0
 groq>=0.9.0
 telethon>=1.36.0
+# cache-bust: 2026-04-16
