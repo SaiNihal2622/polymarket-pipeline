@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,7 +16,8 @@ import httpx
 
 log = logging.getLogger(__name__)
 
-DB_PATH = Path(__file__).parent / "trades.db"
+_db_env = os.getenv("DB_PATH", "")
+DB_PATH = Path(_db_env) if _db_env else Path(__file__).parent / "trades.db"
 GAMMA_API = "https://gamma-api.polymarket.com"
 
 
@@ -65,16 +67,14 @@ def check_market_resolution(condition_id: str) -> float | None:
         items = data if isinstance(data, list) else data.get("data", [])
 
         if not items:
+            log.warning(f"[resolver] No market data returned for conditionId={condition_id}")
             return None
 
         m = items[0]
         closed = m.get("closed", False)
         active = m.get("active", True)
 
-        if not closed and active:
-            return None  # still open
-
-        # Parse outcome prices
+        # First check outcomePrices — most reliable signal of resolution
         outcome_prices_raw = m.get("outcomePrices", "")
         if outcome_prices_raw:
             try:
@@ -82,24 +82,34 @@ def check_market_resolution(condition_id: str) -> float | None:
                 if len(prices) >= 2:
                     yes_price = float(prices[0])
                     no_price = float(prices[1])
-                    if yes_price == 1.0:
+                    if yes_price >= 0.99:
                         return 1.0  # YES won
-                    elif no_price == 1.0:
+                    elif no_price >= 0.99:
                         return 0.0  # NO won
-                    elif yes_price == 0.5 and no_price == 0.5:
+                    elif 0.45 <= yes_price <= 0.55 and 0.45 <= no_price <= 0.55 and (closed or not active):
                         return 0.5  # push
             except (json.JSONDecodeError, ValueError):
                 pass
 
-        # Fallback: check resolutionPrice field
+        # Fallback: resolutionPrice field
         res_price = m.get("resolutionPrice")
         if res_price is not None:
             try:
-                return float(res_price)
+                rp = float(res_price)
+                if rp >= 0.99:
+                    return 1.0
+                elif rp <= 0.01:
+                    return 0.0
+                else:
+                    return 0.5
             except (ValueError, TypeError):
                 pass
 
-        return None
+        # If closed and not active but no price data — treat as push
+        if closed and not active:
+            return 0.5
+
+        return None  # still open
 
     except Exception as e:
         log.warning(f"[resolver] API error for {condition_id}: {e}")
@@ -162,6 +172,10 @@ def run_resolution_check(verbose: bool = True) -> dict:
 
     for trade in pending:
         market_result = check_market_resolution(trade["market_id"])
+        log.info(
+            f"[resolver] trade#{trade['id']} market_id={trade['market_id'][:16]}… "
+            f"result={market_result} q=\"{trade['market_question'][:40]}\""
+        )
 
         if market_result is None:
             continue  # still open
@@ -206,6 +220,10 @@ def run_resolution_check(verbose: bool = True) -> dict:
 def get_accuracy_stats() -> dict:
     """Calculate overall accuracy from resolved demo trades."""
     conn = _conn()
+    # Total trades logged (pending + resolved)
+    logged_row = conn.execute(
+        "SELECT COUNT(*) as total FROM trades WHERE status IN ('demo','dry_run')"
+    ).fetchone()
     row = conn.execute("""
         SELECT
             COUNT(*) as total,
@@ -229,6 +247,7 @@ def get_accuracy_stats() -> dict:
     accuracy = round(wins / decisive * 100, 1) if decisive > 0 else 0.0
 
     return {
+        "total_logged": logged_row["total"] or 0,
         "total_resolved": total,
         "wins": wins,
         "losses": losses,
