@@ -57,14 +57,23 @@ def check_market_resolution(condition_id: str) -> float | None:
     if not condition_id:
         return None
     try:
+        # Try conditionId (singular) first — correct Gamma API param
         resp = httpx.get(
             f"{GAMMA_API}/markets",
-            params={"conditionIds": condition_id, "limit": 1},
+            params={"conditionId": condition_id, "limit": 1},
             timeout=10,
         )
-        resp.raise_for_status()
         data = resp.json()
         items = data if isinstance(data, list) else data.get("data", [])
+        # Fallback: try conditionIds (plural) if singular returned nothing
+        if not items:
+            resp2 = httpx.get(
+                f"{GAMMA_API}/markets",
+                params={"conditionIds": condition_id, "limit": 1},
+                timeout=10,
+            )
+            data = resp2.json()
+            items = data if isinstance(data, list) else data.get("data", [])
 
         if not items:
             log.warning(f"[resolver] No market data returned for conditionId={condition_id}")
@@ -82,9 +91,9 @@ def check_market_resolution(condition_id: str) -> float | None:
                 if len(prices) >= 2:
                     yes_price = float(prices[0])
                     no_price = float(prices[1])
-                    if yes_price >= 0.99:
+                    if yes_price >= 0.95:
                         return 1.0  # YES won
-                    elif no_price >= 0.99:
+                    elif no_price >= 0.95:
                         return 0.0  # NO won
                     elif 0.45 <= yes_price <= 0.55 and 0.45 <= no_price <= 0.55 and (closed or not active):
                         return 0.5  # push
@@ -96,9 +105,9 @@ def check_market_resolution(condition_id: str) -> float | None:
         if res_price is not None:
             try:
                 rp = float(res_price)
-                if rp >= 0.99:
+                if rp >= 0.95:
                     return 1.0
-                elif rp <= 0.01:
+                elif rp <= 0.05:
                     return 0.0
                 else:
                     return 0.5
