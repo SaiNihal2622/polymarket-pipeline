@@ -76,12 +76,13 @@ def check_market_resolution(condition_id: str) -> float | None:
             items = data if isinstance(data, list) else data.get("data", [])
 
         if not items:
-            log.warning(f"[resolver] No market data returned for conditionId={condition_id}")
+            print(f"[resolver] NO DATA for conditionId={condition_id[:20]}")
             return None
 
         m = items[0]
         closed = m.get("closed", False)
         active = m.get("active", True)
+        print(f"[resolver] API: closed={closed} active={active} prices={str(m.get('outcomePrices','?'))[:30]} cid={m.get('conditionId','?')[:20]}")
 
         # First check outcomePrices — most reliable signal of resolution
         outcome_prices_raw = m.get("outcomePrices", "")
