@@ -335,7 +335,15 @@ def scan_and_trade() -> dict:
     # ── TRACK 1: Fast markets — Gemini live web search + whale signals ───────
     from whale import bulk_whale_signals
     fast_ids = [m.condition_id for m in fast_markets[:MAX_FAST]]
-    whale_signals_map = bulk_whale_signals(fast_ids[:20])  # cap to 20 whale lookups/scan
+    # Build token_map: condition_id → YES token_id (first token in list)
+    token_map = {}
+    for m in fast_markets[:MAX_FAST]:
+        if m.tokens and isinstance(m.tokens, list) and m.tokens:
+            t = m.tokens[0]
+            tid = t.get("token_id") if isinstance(t, dict) else str(t)
+            if tid:
+                token_map[m.condition_id] = tid
+    whale_signals_map = bulk_whale_signals(fast_ids[:20], token_map=token_map)  # cap to 20/scan
     console.print(f"   [dim]Whale signals: {len(whale_signals_map)} markets with whale data[/dim]")
 
     if fast_markets:

@@ -49,9 +49,15 @@ def _get(path: str, params: dict, timeout: int = 12) -> list | dict | None:
     return None
 
 
-def get_top_holders(condition_id: str, limit: int = 20) -> list[dict]:
-    """Return top position holders for a market."""
-    data = _get("/holders", {"market": condition_id, "limit": limit})
+def get_top_holders(condition_id: str, token_id: str | None = None, limit: int = 20) -> list[dict]:
+    """Return top position holders for a market. Uses token_id (YES token) if available."""
+    # /holders accepts either conditionId or tokenId
+    params = {"limit": limit}
+    if token_id:
+        params["tokenId"] = token_id
+    else:
+        params["conditionId"] = condition_id
+    data = _get("/holders", params)
     if isinstance(data, list):
         return data
     if isinstance(data, dict):
@@ -69,12 +75,12 @@ def get_recent_trades(wallet: str, condition_id: str, limit: int = 10) -> list[d
     return []
 
 
-def whale_signal(condition_id: str) -> WhaleSignal | None:
+def whale_signal(condition_id: str, token_id: str | None = None) -> WhaleSignal | None:
     """
     Compute whale signal for a market.
     Returns WhaleSignal or None if insufficient data.
     """
-    holders = get_top_holders(condition_id, limit=20)
+    holders = get_top_holders(condition_id, token_id=token_id, limit=20)
     if not holders:
         return None
 
@@ -129,11 +135,12 @@ def whale_signal(condition_id: str) -> WhaleSignal | None:
     )
 
 
-def bulk_whale_signals(condition_ids: list[str], delay: float = 0.3) -> dict[str, WhaleSignal]:
+def bulk_whale_signals(condition_ids: list[str], token_map: dict[str, str] | None = None, delay: float = 0.3) -> dict[str, WhaleSignal]:
     """Fetch whale signals for multiple markets. Returns {condition_id: signal}."""
     results = {}
+    tm = token_map or {}
     for cid in condition_ids:
-        sig = whale_signal(cid)
+        sig = whale_signal(cid, token_id=tm.get(cid))
         if sig:
             results[cid] = sig
         time.sleep(delay)
