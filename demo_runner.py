@@ -332,7 +332,12 @@ def scan_and_trade() -> dict:
     demos_logged = 0
     analyzed = 0
 
-    # ── TRACK 1: Fast markets — Gemini live web search research ──────────────
+    # ── TRACK 1: Fast markets — Gemini live web search + whale signals ───────
+    from whale import bulk_whale_signals
+    fast_ids = [m.condition_id for m in fast_markets[:MAX_FAST]]
+    whale_signals_map = bulk_whale_signals(fast_ids[:20])  # cap to 20 whale lookups/scan
+    console.print(f"   [dim]Whale signals: {len(whale_signals_map)} markets with whale data[/dim]")
+
     if fast_markets:
         console.print(f"\n  [cyan]⚡ TRACK 1: Researching {min(len(fast_markets), MAX_FAST)} fast markets with Gemini search...[/cyan]")
     for market in fast_markets[:MAX_FAST]:
@@ -350,19 +355,33 @@ def scan_and_trade() -> dict:
 
         classification: Classification = research_market(market)
 
-        # Polycool bot signal: tight spread = liquid market = boost materiality
-        bot_sig = polycool_signal(market.question, bot_markets)
-        if bot_sig and bot_sig["spread"] is not None and bot_sig["spread"] < 0.05:
-            # Tight spread confirms liquid, well-priced market — slight boost
+        # ── Signal fusion: Polycool spread + whale alignment ────────────────
+        bot_sig   = polycool_signal(market.question, bot_markets)
+        whale_sig = whale_signals_map.get(market.condition_id)
+
+        # Tight spread boost
+        if bot_sig and bot_sig.get("spread") is not None and bot_sig["spread"] < 0.05:
             classification.materiality = min(1.0, classification.materiality + 0.05)
-            log.info(f"[tg] Spread boost for {market.question[:40]} spread={bot_sig['spread']:.3f}")
+
+        whale_tag = ""
+        if whale_sig:
+            gemini_dir = classification.direction  # bullish/bearish/neutral
+            whale_dir  = whale_sig.direction
+            if gemini_dir != "neutral" and whale_dir == gemini_dir:
+                # Whales agree → strong boost
+                classification.materiality = min(1.0, classification.materiality + 0.12)
+                whale_tag = f" 🐋{whale_sig.yes_bias:.0%}YES"
+            elif whale_dir != "neutral" and whale_dir != gemini_dir:
+                # Whales disagree → reduce materiality (smart money says opposite)
+                classification.materiality = max(0.0, classification.materiality - 0.10)
+                whale_tag = f" ⚠️whale-vs-gemini"
 
         closes_tag = f"[{hours_left:.1f}h]"
         bot_tag = f" spread:{bot_sig['spread']:.3f}" if bot_sig and bot_sig.get("spread") else ""
         console.print(
             f"  [{('cyan' if classification.direction != 'neutral' else 'dim')}]"
             f"⚡research→ {classification.direction} mat:{classification.materiality:.2f}"
-            f"{bot_tag} {closes_tag}[/] {market.question[:48]}"
+            f"{bot_tag}{whale_tag} {closes_tag}[/] {market.question[:48]}"
         )
         if classification.direction == "neutral" or classification.materiality < mat_threshold:
             continue
