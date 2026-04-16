@@ -76,46 +76,50 @@ def _print_accuracy_oneliner():
 
 
 def _startup_cleanup():
-    """Void any trades whose markets close more than 7 days from now. Runs once at startup."""
-    import sqlite3, httpx as _httpx
+    """
+    Void trades that were logged before DEMO_HOURS_WINDOW was set to 24h.
+    Only voids trades older than 2 hours that have no market_id or whose
+    market_question contains known season-long keywords.
+    Does NOT touch recently logged trades.
+    """
+    import sqlite3
     from pathlib import Path as _Path
     db = _Path(os.getenv("DB_PATH", "/data/trades.db"))
     if not db.exists():
         return
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
+
+    # Only consider trades logged more than 2 hours ago (not fresh ones)
+    old_cutoff = (datetime.now(timezone.utc) - timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S")
     rows = conn.execute(
-        "SELECT id, market_id, market_question FROM trades WHERE status IN ('demo','dry_run')"
+        "SELECT id, market_id, market_question, created_at FROM trades "
+        "WHERE status IN ('demo','dry_run') AND created_at < ?",
+        (old_cutoff,)
     ).fetchall()
-    console.print(f"\n[bold]Startup cleanup:[/bold] checking {len(rows)} active trades...")
-    cutoff = datetime.now(timezone.utc) + timedelta(days=7)
+
+    if not rows:
+        console.print(f"  [dim]Startup cleanup: no old trades to check.[/dim]")
+        conn.close()
+        return
+
+    console.print(f"\n[bold]Startup cleanup:[/bold] checking {len(rows)} old trades (>2h)...")
+
+    LONG_DATED_KW = [
+        "2027", "world series", "french open", "wimbledon", "us open",
+        "nba champion", "nba finals", "super bowl", "afc champion", "nfc champion",
+        "eurovision", "lpl 2026 season", "ipl champion", "grammy", "oscar",
+        "nobel", "governor 2026", "senator 2026", "president", "fed chair",
+        "confirmed as", "rbc heritage", "masters 2026", "tour de france",
+    ]
+
     void_ids = []
     for r in rows:
-        mid = r["market_id"]
-        if not mid:
+        q = r["market_question"].lower()
+        if any(k in q for k in LONG_DATED_KW):
             void_ids.append(r["id"])
-            console.print(f"  VOID #{r['id']} (no market_id): {r['market_question'][:55]}")
-            continue
-        try:
-            resp = _httpx.get(
-                "https://gamma-api.polymarket.com/markets",
-                params={"conditionIds": mid, "limit": 1},
-                timeout=8,
-            )
-            items = resp.json()
-            items = items if isinstance(items, list) else items.get("data", [])
-            if not items:
-                void_ids.append(r["id"])
-                console.print(f"  VOID #{r['id']} (market gone): {r['market_question'][:55]}")
-                continue
-            end_str = items[0].get("endDate") or items[0].get("end_date_iso") or ""
-            if end_str:
-                end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
-                if end_dt > cutoff:
-                    void_ids.append(r["id"])
-                    console.print(f"  VOID #{r['id']} (closes {end_dt.date()}): {r['market_question'][:50]}")
-        except Exception as e:
-            console.print(f"  SKIP #{r['id']}: {e}")
+            console.print(f"  VOID #{r['id']}: {r['market_question'][:65]}")
+
     if void_ids:
         conn.execute(
             f"UPDATE trades SET status='voided' WHERE id IN ({','.join('?'*len(void_ids))})",
@@ -124,7 +128,7 @@ def _startup_cleanup():
         conn.commit()
         console.print(f"  [green]Voided {len(void_ids)} long-dated trades.[/green]")
     else:
-        console.print(f"  [dim]All {len(rows)} trades are within 7 days — nothing to void.[/dim]")
+        console.print(f"  [dim]All old trades look fine — nothing voided.[/dim]")
     conn.close()
 
 
