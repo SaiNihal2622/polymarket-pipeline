@@ -13,10 +13,18 @@ import base64
 import logging
 import os
 import re
+import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Self-install telethon if missing
+try:
+    import telethon as _tl_check  # noqa
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "telethon>=1.36.0", "-q"])
 
 log = logging.getLogger(__name__)
 
