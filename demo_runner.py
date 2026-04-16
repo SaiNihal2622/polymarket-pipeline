@@ -249,8 +249,12 @@ def scan_and_trade() -> dict:
     # Show accuracy at the top of every scan
     _print_accuracy_oneliner()
 
-    # 1. News
-    console.print("\n[bold]1. Scraping news...[/bold]")
+    # 1. News + Polycool bot market feed
+    console.print("\n[bold]1. Scraping news + Polycool bot...[/bold]")
+    from tg_scraper import fetch_polycool_markets, polycool_signal, MARKET_KEYWORDS
+    bot_markets = fetch_polycool_markets(MARKET_KEYWORDS)
+    console.print(f"   [dim]Polycool bot: {len(bot_markets)} live markets fetched[/dim]")
+
     news_items = scrape_all(config.NEWS_LOOKBACK_HOURS)
     # Count by source type
     rss_count     = sum(1 for n in news_items if not n.source.startswith("Reddit") and n.source != "Hacker News" and n.source != "CryptoPanic" and n.source != "Twitter")
@@ -346,11 +350,19 @@ def scan_and_trade() -> dict:
 
         classification: Classification = research_market(market)
 
+        # Polycool bot signal: tight spread = liquid market = boost materiality
+        bot_sig = polycool_signal(market.question, bot_markets)
+        if bot_sig and bot_sig["spread"] is not None and bot_sig["spread"] < 0.05:
+            # Tight spread confirms liquid, well-priced market — slight boost
+            classification.materiality = min(1.0, classification.materiality + 0.05)
+            log.info(f"[tg] Spread boost for {market.question[:40]} spread={bot_sig['spread']:.3f}")
+
         closes_tag = f"[{hours_left:.1f}h]"
+        bot_tag = f" spread:{bot_sig['spread']:.3f}" if bot_sig and bot_sig.get("spread") else ""
         console.print(
             f"  [{('cyan' if classification.direction != 'neutral' else 'dim')}]"
-            f"⚡research→ {classification.direction} mat:{classification.materiality:.2f} "
-            f"{closes_tag}[/] {market.question[:48]}"
+            f"⚡research→ {classification.direction} mat:{classification.materiality:.2f}"
+            f"{bot_tag} {closes_tag}[/] {market.question[:48]}"
         )
         if classification.direction == "neutral" or classification.materiality < mat_threshold:
             continue
