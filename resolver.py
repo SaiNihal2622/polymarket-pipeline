@@ -87,11 +87,10 @@ _cache_fetched_at: float = 0.0
 _CACHE_TTL = 300  # refresh every 5 min
 
 
-def _refresh_resolution_cache(condition_ids: list[str]) -> None:
+def _refresh_resolution_cache(pending_trades: list[dict]) -> None:
     """
-    Fetch recently-closed markets in bulk and populate _resolution_cache.
-    The Gamma API conditionId filter is broken — so we fetch closed markets
-    by volume and match locally.
+    Fetch recently-closed markets and match to pending trades by question text.
+    The Gamma API conditionId filter is broken — match on question instead.
     """
     global _resolution_cache, _cache_fetched_at
     import time as _time
@@ -100,9 +99,16 @@ def _refresh_resolution_cache(condition_ids: list[str]) -> None:
     if now - _cache_fetched_at < _CACHE_TTL:
         return  # still fresh
 
-    fetched: dict[str, float] = {}
-    # Fetch last 500 closed markets
-    for offset in range(0, 1000, 100):
+    # Build lookup: normalized question → (condition_id, side)
+    pending_by_q: dict[str, str] = {}
+    for t in pending_trades:
+        q = t.get("market_question", "").lower().strip()[:80]
+        if q:
+            pending_by_q[q] = t["market_id"]
+
+    matched = 0
+    fetched_total = 0
+    for offset in range(0, 1500, 100):
         try:
             resp = httpx.get(
                 f"{GAMMA_API}/markets",
@@ -119,24 +125,29 @@ def _refresh_resolution_cache(condition_ids: list[str]) -> None:
             items = data if isinstance(data, list) else data.get("data", [])
             if not items:
                 break
+            fetched_total += len(items)
             for m in items:
-                cid = m.get("conditionId", "")
-                if not cid:
-                    continue
                 result = _parse_outcome(m)
-                if result is not None:
-                    fetched[cid] = result
-            # Stop early if we have all our condition_ids
-            if all(cid in fetched for cid in condition_ids):
-                break
+                if result is None:
+                    continue
+                # Match by question text
+                q = (m.get("question") or "").lower().strip()[:80]
+                if q in pending_by_q:
+                    cid = pending_by_q[q]
+                    _resolution_cache[cid] = result
+                    matched += 1
+                # Also index by all possible IDs for future use
+                for id_field in ("conditionId", "id", "condition_id"):
+                    cid2 = m.get(id_field, "")
+                    if cid2:
+                        _resolution_cache[cid2] = result
         except Exception as e:
             log.warning(f"[resolver] bulk fetch error (offset={offset}): {e}")
             break
 
-    _resolution_cache.update(fetched)
     _cache_fetched_at = now
-    print(f"[resolver] cache refreshed: {len(fetched)} closed markets fetched, "
-          f"{sum(1 for c in condition_ids if c in fetched)} of our trades matched")
+    print(f"[resolver] cache: {fetched_total} closed markets scanned, "
+          f"{matched} of our {len(pending_trades)} trades matched & resolved")
 
 
 def check_market_resolution(condition_id: str) -> float | None:
@@ -202,9 +213,8 @@ def run_resolution_check(verbose: bool = True) -> dict:
     if verbose:
         print(f"[resolver] Checking {len(pending)} pending demo trades...")
 
-    # Bulk-fetch closed markets and populate cache
-    condition_ids = [t["market_id"] for t in pending if t.get("market_id")]
-    _refresh_resolution_cache(condition_ids)
+    # Bulk-fetch closed markets and match by question text
+    _refresh_resolution_cache(pending)
 
     resolved = wins = losses = pushes = 0
 
