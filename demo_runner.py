@@ -75,6 +75,59 @@ def _print_accuracy_oneliner():
     )
 
 
+def _startup_cleanup():
+    """Void any trades whose markets close more than 7 days from now. Runs once at startup."""
+    import sqlite3, httpx as _httpx
+    from pathlib import Path as _Path
+    db = _Path(os.getenv("DB_PATH", "/data/trades.db"))
+    if not db.exists():
+        return
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT id, market_id, market_question FROM trades WHERE status IN ('demo','dry_run')"
+    ).fetchall()
+    console.print(f"\n[bold]Startup cleanup:[/bold] checking {len(rows)} active trades...")
+    cutoff = datetime.now(timezone.utc) + timedelta(days=7)
+    void_ids = []
+    for r in rows:
+        mid = r["market_id"]
+        if not mid:
+            void_ids.append(r["id"])
+            console.print(f"  VOID #{r['id']} (no market_id): {r['market_question'][:55]}")
+            continue
+        try:
+            resp = _httpx.get(
+                "https://gamma-api.polymarket.com/markets",
+                params={"conditionIds": mid, "limit": 1},
+                timeout=8,
+            )
+            items = resp.json()
+            items = items if isinstance(items, list) else items.get("data", [])
+            if not items:
+                void_ids.append(r["id"])
+                console.print(f"  VOID #{r['id']} (market gone): {r['market_question'][:55]}")
+                continue
+            end_str = items[0].get("endDate") or items[0].get("end_date_iso") or ""
+            if end_str:
+                end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
+                if end_dt > cutoff:
+                    void_ids.append(r["id"])
+                    console.print(f"  VOID #{r['id']} (closes {end_dt.date()}): {r['market_question'][:50]}")
+        except Exception as e:
+            console.print(f"  SKIP #{r['id']}: {e}")
+    if void_ids:
+        conn.execute(
+            f"UPDATE trades SET status='voided' WHERE id IN ({','.join('?'*len(void_ids))})",
+            void_ids,
+        )
+        conn.commit()
+        console.print(f"  [green]Voided {len(void_ids)} long-dated trades.[/green]")
+    else:
+        console.print(f"  [dim]All {len(rows)} trades are within 7 days — nothing to void.[/dim]")
+    conn.close()
+
+
 # ── Settings ─────────────────────────────────────────────────────────────────
 DEMO_HOURS_WINDOW = float(getattr(config, "DEMO_HOURS_WINDOW", 24))    # markets closing within N hours
 SCAN_INTERVAL_MIN = int(getattr(config, "SCAN_INTERVAL_MIN", 30))       # re-scan every N minutes
@@ -333,7 +386,7 @@ def scan_and_trade() -> dict:
     analyzed = 0
 
     # ── TRACK 1: Fast markets — Gemini live web search + whale signals ───────
-    from whale import bulk_whale_signals
+    from whale import bulk_whale_signals, copy_trade_signal
     fast_ids = [m.condition_id for m in fast_markets[:MAX_FAST]]
     # Build token_map: condition_id → YES token_id (first token in list)
     token_map = {}
@@ -391,6 +444,19 @@ def scan_and_trade() -> dict:
             f"⚡research→ {classification.direction} mat:{classification.materiality:.2f}"
             f"{bot_tag}{whale_tag} {closes_tag}[/] {market.question[:48]}"
         )
+        # ── Copy-trade override: recent whale buys → force signal ────────────
+        copy_sig = copy_trade_signal(market.condition_id,
+                                     token_id=token_map.get(market.condition_id))
+        if copy_sig and copy_sig["direction"] != "neutral" and copy_sig["confidence"] >= 0.6:
+            # Whales recently piled in → override neutral/low-mat with their direction
+            if classification.direction == "neutral":
+                classification.direction = copy_sig["direction"]
+            classification.materiality = min(1.0, classification.materiality + copy_sig["confidence"] * 0.20)
+            console.print(
+                f"  [bold magenta]🐋 COPY-TRADE override[/bold magenta] "
+                f"{copy_sig['direction']} conf:{copy_sig['confidence']:.2f} — {copy_sig['reason']}"
+            )
+
         if classification.direction == "neutral" or classification.materiality < mat_threshold:
             continue
 
@@ -650,6 +716,9 @@ def run_loop():
         f"[dim]Press Ctrl+C to stop[/dim]",
         title="🎯 Demo Mode Active",
     ))
+
+    # Clean out long-dated trades on startup (once per container start)
+    _startup_cleanup()
 
     last_scan = 0.0
     last_resolve = 0.0

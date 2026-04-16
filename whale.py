@@ -1,10 +1,10 @@
 """
-whale.py — Polymarket whale / smart-money signal scraper.
+whale.py — Polymarket whale / smart-money signal + copy-trade tracker.
 
 Uses data-api.polymarket.com (accessible from Railway) to:
-1. fetch top holders for a market (GET /holders?market=<conditionId>)
-2. fetch recent trades for top wallets (GET /trades?user=<wallet>)
-3. return a WhaleSigal: net YES/NO bias from smart money
+1. GET /holders?tokenId=<id>  — top holders per market (YES/NO bias)
+2. GET /trades?user=<wallet>  — recent trades from top wallets
+3. Copy-trade: if a known top wallet opened a position in the last 2h → signal
 
 Integrated into demo_runner.py Track 1 (fast markets).
 """
@@ -145,6 +145,77 @@ def bulk_whale_signals(condition_ids: list[str], token_map: dict[str, str] | Non
             results[cid] = sig
         time.sleep(delay)
     return results
+
+
+def get_recent_whale_buys(condition_id: str, lookback_hours: float = 4.0) -> list[dict]:
+    """
+    Fetch recent trades in a market from high-volume wallets.
+    Returns list of {wallet, side, size, timestamp} for trades in last N hours.
+    """
+    from datetime import datetime, timezone, timedelta
+    cutoff_ts = int((datetime.now(timezone.utc) - timedelta(hours=lookback_hours)).timestamp())
+
+    # Get top holders first to know which wallets are whales
+    holders = get_top_holders(condition_id, limit=10)
+    whale_wallets = [
+        h.get("proxyWallet") or h.get("userAddress", "")
+        for h in holders
+        if float(h.get("size", h.get("currentValue", 0)) or 0) >= WHALE_MIN_SIZE
+    ][:5]
+
+    buys = []
+    for wallet in whale_wallets:
+        if not wallet:
+            continue
+        data = _get("/trades", {
+            "user": wallet,
+            "market": condition_id,
+            "limit": 10,
+            "takerOnly": "true",
+        })
+        trades = data if isinstance(data, list) else (data or {}).get("data", [])
+        for t in trades:
+            ts = int(t.get("timestamp", t.get("matchTime", 0)) or 0)
+            if ts < cutoff_ts:
+                continue
+            buys.append({
+                "wallet": wallet[:10] + "...",
+                "side": t.get("side", "BUY"),
+                "size": float(t.get("size", t.get("usdcSize", 0)) or 0),
+                "timestamp": ts,
+            })
+        time.sleep(0.2)
+
+    return buys
+
+
+def copy_trade_signal(condition_id: str, token_id: str | None = None) -> dict | None:
+    """
+    Returns a copy-trade signal if whales recently opened large positions.
+    signal = {direction: bullish/bearish, confidence: 0-1, reason: str}
+    """
+    recent = get_recent_whale_buys(condition_id, lookback_hours=4)
+    if not recent:
+        return None
+
+    yes_size = sum(t["size"] for t in recent if t["side"] in ("BUY", "YES"))
+    no_size  = sum(t["size"] for t in recent if t["side"] in ("SELL", "NO"))
+    total = yes_size + no_size
+    if total < 100:
+        return None
+
+    bias = yes_size / total
+    direction = "bullish" if bias >= 0.65 else "bearish" if bias <= 0.35 else "neutral"
+    confidence = abs(bias - 0.5) * 2  # 0→neutral, 1→all one side
+
+    return {
+        "direction": direction,
+        "confidence": round(confidence, 2),
+        "yes_size": yes_size,
+        "no_size": no_size,
+        "trade_count": len(recent),
+        "reason": f"Whales: ${yes_size:.0f} YES vs ${no_size:.0f} NO in last 4h ({len(recent)} trades)",
+    }
 
 
 if __name__ == "__main__":
