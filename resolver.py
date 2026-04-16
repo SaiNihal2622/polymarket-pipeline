@@ -45,85 +45,109 @@ def get_pending_demo_trades() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def _parse_outcome(m: dict) -> float | None:
+    """Extract resolution result from a Gamma market dict. Returns 1.0/0.0/0.5/None."""
+    closed = m.get("closed", False)
+    active = m.get("active", True)
+
+    outcome_prices_raw = m.get("outcomePrices", "")
+    if outcome_prices_raw:
+        try:
+            prices = json.loads(outcome_prices_raw) if isinstance(outcome_prices_raw, str) else outcome_prices_raw
+            if len(prices) >= 2:
+                yes_price = float(prices[0])
+                no_price  = float(prices[1])
+                if yes_price >= 0.95:
+                    return 1.0
+                elif no_price >= 0.95:
+                    return 0.0
+                elif closed and 0.40 <= yes_price <= 0.60:
+                    return 0.5
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    res_price = m.get("resolutionPrice")
+    if res_price is not None:
+        try:
+            rp = float(res_price)
+            if rp >= 0.95:   return 1.0
+            elif rp <= 0.05: return 0.0
+            else:            return 0.5
+        except (ValueError, TypeError):
+            pass
+
+    if closed and not active:
+        return 0.5
+    return None
+
+
+# Module-level cache: conditionId → outcome (populated by bulk fetch)
+_resolution_cache: dict[str, float] = {}
+_cache_fetched_at: float = 0.0
+_CACHE_TTL = 300  # refresh every 5 min
+
+
+def _refresh_resolution_cache(condition_ids: list[str]) -> None:
+    """
+    Fetch recently-closed markets in bulk and populate _resolution_cache.
+    The Gamma API conditionId filter is broken — so we fetch closed markets
+    by volume and match locally.
+    """
+    global _resolution_cache, _cache_fetched_at
+    import time as _time
+
+    now = _time.time()
+    if now - _cache_fetched_at < _CACHE_TTL:
+        return  # still fresh
+
+    fetched: dict[str, float] = {}
+    # Fetch last 500 closed markets
+    for offset in range(0, 1000, 100):
+        try:
+            resp = httpx.get(
+                f"{GAMMA_API}/markets",
+                params={
+                    "closed": "true",
+                    "limit": 100,
+                    "offset": offset,
+                    "order": "updatedAt",
+                    "ascending": "false",
+                },
+                timeout=15,
+            )
+            data = resp.json()
+            items = data if isinstance(data, list) else data.get("data", [])
+            if not items:
+                break
+            for m in items:
+                cid = m.get("conditionId", "")
+                if not cid:
+                    continue
+                result = _parse_outcome(m)
+                if result is not None:
+                    fetched[cid] = result
+            # Stop early if we have all our condition_ids
+            if all(cid in fetched for cid in condition_ids):
+                break
+        except Exception as e:
+            log.warning(f"[resolver] bulk fetch error (offset={offset}): {e}")
+            break
+
+    _resolution_cache.update(fetched)
+    _cache_fetched_at = now
+    print(f"[resolver] cache refreshed: {len(fetched)} closed markets fetched, "
+          f"{sum(1 for c in condition_ids if c in fetched)} of our trades matched")
+
+
 def check_market_resolution(condition_id: str) -> float | None:
     """
-    Query Gamma API for a market by conditionId.
-    Returns:
-      1.0  if YES resolved
-      0.0  if NO resolved
-      0.5  if push/invalid
-      None if still open
+    Check if a market has resolved. Uses bulk-fetch cache since
+    the Gamma API conditionId filter doesn't work reliably.
+    Returns 1.0 (YES), 0.0 (NO), 0.5 (push), or None (still open).
     """
     if not condition_id:
         return None
-    try:
-        # Try conditionId (singular) first — correct Gamma API param
-        resp = httpx.get(
-            f"{GAMMA_API}/markets",
-            params={"conditionId": condition_id, "limit": 1},
-            timeout=10,
-        )
-        data = resp.json()
-        items = data if isinstance(data, list) else data.get("data", [])
-        # Fallback: try conditionIds (plural) if singular returned nothing
-        if not items:
-            resp2 = httpx.get(
-                f"{GAMMA_API}/markets",
-                params={"conditionIds": condition_id, "limit": 1},
-                timeout=10,
-            )
-            data = resp2.json()
-            items = data if isinstance(data, list) else data.get("data", [])
-
-        if not items:
-            print(f"[resolver] NO DATA for conditionId={condition_id[:20]}")
-            return None
-
-        m = items[0]
-        closed = m.get("closed", False)
-        active = m.get("active", True)
-        print(f"[resolver] API: closed={closed} active={active} prices={str(m.get('outcomePrices','?'))[:30]} cid={m.get('conditionId','?')[:20]}")
-
-        # First check outcomePrices — most reliable signal of resolution
-        outcome_prices_raw = m.get("outcomePrices", "")
-        if outcome_prices_raw:
-            try:
-                prices = json.loads(outcome_prices_raw) if isinstance(outcome_prices_raw, str) else outcome_prices_raw
-                if len(prices) >= 2:
-                    yes_price = float(prices[0])
-                    no_price = float(prices[1])
-                    if yes_price >= 0.95:
-                        return 1.0  # YES won
-                    elif no_price >= 0.95:
-                        return 0.0  # NO won
-                    elif 0.45 <= yes_price <= 0.55 and 0.45 <= no_price <= 0.55 and (closed or not active):
-                        return 0.5  # push
-            except (json.JSONDecodeError, ValueError):
-                pass
-
-        # Fallback: resolutionPrice field
-        res_price = m.get("resolutionPrice")
-        if res_price is not None:
-            try:
-                rp = float(res_price)
-                if rp >= 0.95:
-                    return 1.0
-                elif rp <= 0.05:
-                    return 0.0
-                else:
-                    return 0.5
-            except (ValueError, TypeError):
-                pass
-
-        # If closed and not active but no price data — treat as push
-        if closed and not active:
-            return 0.5
-
-        return None  # still open
-
-    except Exception as e:
-        log.warning(f"[resolver] API error for {condition_id}: {e}")
-        return None
+    return _resolution_cache.get(condition_id, None)
 
 
 def resolve_trade(trade_id: int, market_result: float, side: str, amount_usd: float):
@@ -177,6 +201,10 @@ def run_resolution_check(verbose: bool = True) -> dict:
 
     if verbose:
         print(f"[resolver] Checking {len(pending)} pending demo trades...")
+
+    # Bulk-fetch closed markets and populate cache
+    condition_ids = [t["market_id"] for t in pending if t.get("market_id")]
+    _refresh_resolution_cache(condition_ids)
 
     resolved = wins = losses = pushes = 0
 
