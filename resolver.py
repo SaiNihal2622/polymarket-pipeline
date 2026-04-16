@@ -181,10 +181,11 @@ def run_resolution_check(verbose: bool = True) -> dict:
 
     for trade in pending:
         market_result = check_market_resolution(trade["market_id"])
-        log.info(
-            f"[resolver] trade#{trade['id']} market_id={trade['market_id'][:16]}… "
-            f"result={market_result} q=\"{trade['market_question'][:40]}\""
-        )
+        if verbose:
+            print(
+                f"[resolver] #{trade['id']} result={market_result} "
+                f"q=\"{trade['market_question'][:45]}\""
+            )
 
         if market_result is None:
             continue  # still open
