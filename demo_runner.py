@@ -377,6 +377,8 @@ def scan_and_trade() -> dict:
     already_logged = get_pending_market_ids()
 
     fast_markets = [m for m in day_markets if _hours_left(m) <= 24 and m.condition_id not in already_logged]
+    # Priority: fastest-ending first (they resolve soonest → fastest feedback + most urgent)
+    fast_markets.sort(key=lambda m: _hours_left(m))
     slow_markets = [m for m in day_markets if _hours_left(m) > 24 and m.condition_id not in already_logged]
 
     console.print(
