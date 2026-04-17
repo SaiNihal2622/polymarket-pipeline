@@ -405,18 +405,31 @@ def scan_and_trade() -> dict:
 
     if fast_markets:
         console.print(f"\n  [cyan]⚡ TRACK 1: Researching {min(len(fast_markets), MAX_FAST)} fast markets with Gemini search...[/cyan]")
+    # Categories to skip — too noisy/unpredictable for 80%+ accuracy
+    SKIP_PATTERNS = [
+        "exact score", "correct score",
+        "posts from", "post 20-", "post 40-", "post 60-", "post 80-", "post 100-",
+        "post 120-", "post 140-", "post 160-", "post 180-",
+        "o/u 10.", "o/u 8.", "o/u 6.", "total corners",
+        "map handicap", "first blood", "first tower",
+        "both teams to score",  # too coin-flippy
+    ]
+
     for market in fast_markets[:MAX_FAST]:
         analyzed += 1
+
+        # Skip low-quality categories
+        q_lower = market.question.lower()
+        if any(pat in q_lower for pat in SKIP_PATTERNS):
+            console.print(f"  [dim]⛔ SKIP (low-quality category): {market.question[:60]}[/dim]")
+            continue
+
         end = _parse_end_date(market.end_date)
         hours_left = ((end - now).total_seconds() / 3600) if end else 999
 
-        # Tiered thresholds for fast markets
-        if hours_left <= 6:
-            mat_threshold  = 0.10
-            comp_threshold = 0.25
-        else:
-            mat_threshold  = 0.15
-            comp_threshold = 0.30
+        # High-bar thresholds — only take trades where Gemini is confident
+        mat_threshold  = 0.55   # was 0.10–0.15
+        comp_threshold = 0.65   # was 0.25–0.30
 
         classification: Classification = research_market(market)
 
@@ -573,8 +586,8 @@ def scan_and_trade() -> dict:
 
             end = _parse_end_date(market.end_date)
             hours_left = ((end - now).total_seconds() / 3600) if end else 999
-            mat_threshold  = config.MATERIALITY_THRESHOLD  # 0.20
-            comp_threshold = 0.40
+            mat_threshold  = 0.55   # raised for quality — was 0.20
+            comp_threshold = 0.65   # raised for quality — was 0.40
 
             classification: Classification = classify(
                 headline=news_item.headline,

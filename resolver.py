@@ -87,10 +87,20 @@ _cache_fetched_at: float = 0.0
 _CACHE_TTL = 300  # refresh every 5 min
 
 
+def _normalize_q(s: str, length: int = 80) -> str:
+    """Normalize a question string for matching."""
+    import re
+    s = s.lower().strip()
+    s = re.sub(r'\s+', ' ', s)          # collapse whitespace
+    s = s.replace('\u2019', "'").replace('\u2018', "'")  # smart quotes
+    s = s.replace('\u2013', '-').replace('\u2014', '-')  # em/en dashes
+    return s[:length]
+
+
 def _refresh_resolution_cache(pending_trades: list[dict]) -> None:
     """
     Fetch recently-closed markets and match to pending trades by question text.
-    The Gamma API conditionId filter is broken — match on question instead.
+    Uses multi-length prefix matching since Gamma text can differ slightly.
     """
     global _resolution_cache, _cache_fetched_at
     import time as _time
@@ -99,16 +109,20 @@ def _refresh_resolution_cache(pending_trades: list[dict]) -> None:
     if now - _cache_fetched_at < _CACHE_TTL:
         return  # still fresh
 
-    # Build lookup: normalized question → (condition_id, side)
-    pending_by_q: dict[str, str] = {}
+    # Build lookup at multiple prefix lengths: 40, 60, 80 chars
+    pending_by_q: dict[str, str] = {}  # normalized_prefix → market_id
     for t in pending_trades:
-        q = t.get("market_question", "").lower().strip()[:80]
-        if q:
-            pending_by_q[q] = t["market_id"]
+        raw = t.get("market_question", "")
+        mid = t["market_id"]
+        for ln in (80, 60, 40):
+            k = _normalize_q(raw, ln)
+            if k and k not in pending_by_q:
+                pending_by_q[k] = mid
 
     matched = 0
     fetched_total = 0
-    for offset in range(0, 1500, 100):
+    # Fetch up to 3000 closed markets (recently updated first)
+    for offset in range(0, 3000, 100):
         try:
             resp = httpx.get(
                 f"{GAMMA_API}/markets",
@@ -121,6 +135,7 @@ def _refresh_resolution_cache(pending_trades: list[dict]) -> None:
                 },
                 timeout=15,
             )
+            resp.raise_for_status()
             data = resp.json()
             items = data if isinstance(data, list) else data.get("data", [])
             if not items:
@@ -130,13 +145,18 @@ def _refresh_resolution_cache(pending_trades: list[dict]) -> None:
                 result = _parse_outcome(m)
                 if result is None:
                     continue
-                # Match by question text
-                q = (m.get("question") or "").lower().strip()[:80]
-                if q in pending_by_q:
-                    cid = pending_by_q[q]
-                    _resolution_cache[cid] = result
+                gq_full = (m.get("question") or "").lower().strip()
+                # Try matching at multiple prefix lengths
+                matched_cid = None
+                for ln in (80, 60, 40):
+                    gq = _normalize_q(gq_full, ln)
+                    if gq in pending_by_q:
+                        matched_cid = pending_by_q[gq]
+                        break
+                if matched_cid:
+                    _resolution_cache[matched_cid] = result
                     matched += 1
-                # Also index by all possible IDs for future use
+                # Also index by conditionId directly
                 for id_field in ("conditionId", "id", "condition_id"):
                     cid2 = m.get(id_field, "")
                     if cid2:
