@@ -46,7 +46,7 @@ from classifier import classify, research_market, Classification
 from matcher import match_news_to_markets
 from edge import detect_edge_v2, Signal
 from news_stream import NewsEvent
-from resolver import run_resolution_check, get_accuracy_stats
+from resolver import run_resolution_check, get_accuracy_stats, get_resolved_trade_list
 
 console = Console()
 log = logging.getLogger(__name__)
@@ -672,6 +672,33 @@ def print_accuracy_report():
         title="📊 Demo Accuracy Report",
         border_style=color,
     ))
+
+    # Detailed trade-by-trade breakdown
+    trades = get_resolved_trade_list()
+    if trades:
+        tbl = Table(title="Trade Results", show_lines=True)
+        tbl.add_column("#", style="dim", width=4)
+        tbl.add_column("Result", width=6)
+        tbl.add_column("Side", width=4)
+        tbl.add_column("PnL", width=7)
+        tbl.add_column("Market", no_wrap=False)
+
+        for t in trades:
+            r = t["result"]
+            if r == "win":
+                sym, col = "✅ W", "bright_green"
+            elif r == "loss":
+                sym, col = "❌ L", "red"
+            else:
+                sym, col = "↩ P", "yellow"
+            tbl.add_row(
+                str(t["id"]),
+                f"[{col}]{sym}[/{col}]",
+                t["side"],
+                f"[{col}]${t['pnl']:+.2f}[/{col}]",
+                t["market_question"][:80],
+            )
+        console.print(tbl)
 
     return stats
 

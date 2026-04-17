@@ -307,6 +307,21 @@ def get_accuracy_stats() -> dict:
     }
 
 
+def get_resolved_trade_list() -> list[dict]:
+    """Return all resolved demo trades with result details."""
+    conn = _conn()
+    rows = conn.execute("""
+        SELECT t.id, t.market_question, t.side, t.amount_usd,
+               t.market_price, t.edge, o.result, o.pnl, o.resolved_at
+        FROM trades t
+        JOIN outcomes o ON t.id = o.trade_id
+        WHERE t.status IN ('demo', 'dry_run')
+        ORDER BY o.result, o.resolved_at DESC
+    """).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 if __name__ == "__main__":
     import logging
     logging.basicConfig(level=logging.INFO)
