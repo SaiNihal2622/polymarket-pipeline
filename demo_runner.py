@@ -306,11 +306,10 @@ def scan_and_trade() -> dict:
     # Show accuracy at the top of every scan
     _print_accuracy_oneliner()
 
-    # 1. News + Polycool bot market feed
-    console.print("\n[bold]1. Scraping news + Polycool bot...[/bold]")
-    from tg_scraper import fetch_polycool_markets, polycool_signal, MARKET_KEYWORDS
-    bot_markets = fetch_polycool_markets(MARKET_KEYWORDS)
-    console.print(f"   [dim]Polycool bot: {len(bot_markets)} live markets fetched[/dim]")
+    # 1. News scraping (Polycool removed — leaderboard used instead)
+    console.print("\n[bold]1. Scraping news...[/bold]")
+    bot_markets: list = []  # Polycool disabled; placeholder for polycool_signal()
+    def polycool_signal(_q, _mkts): return None  # no-op stub
 
     news_items = scrape_all(config.NEWS_LOOKBACK_HOURS)
     # Count by source type
@@ -405,6 +404,11 @@ def scan_and_trade() -> dict:
     whale_signals_map = bulk_whale_signals(fast_ids[:20], token_map=token_map)  # cap to 20/scan
     console.print(f"   [dim]Whale signals: {len(whale_signals_map)} markets with whale data[/dim]")
 
+    # ── Leaderboard copy-trade: top wallets' recent buys (replaces Polycool) ─
+    from leaderboard import build_copy_signals
+    copy_signals_map = build_copy_signals(set(fast_ids), top_n_wallets=25, lookback_hours=6)
+    console.print(f"   [dim]Leaderboard: {len(copy_signals_map)} markets with top-wallet activity[/dim]")
+
     if fast_markets:
         console.print(f"\n  [cyan]⚡ TRACK 1: Researching {min(len(fast_markets), MAX_FAST)} fast markets with Gemini search...[/cyan]")
     # Categories to skip — too noisy/unpredictable for 80%+ accuracy
@@ -445,6 +449,23 @@ def scan_and_trade() -> dict:
 
         bot_sig   = polycool_signal(market.question, bot_markets)
         whale_sig = whale_signals_map.get(market.condition_id)
+        copy_lb   = copy_signals_map.get(market.condition_id)
+
+        # Leaderboard copy-signal: top wallets agree → boost; disagree → cut
+        lb_tag = ""
+        if copy_lb:
+            if copy_lb.direction == classification.direction and classification.direction != "neutral":
+                classification.materiality = min(1.0, classification.materiality + 0.15)
+                lb_tag = f" 👑LB+{copy_lb.wallet_count}w"
+            elif copy_lb.direction != "neutral" and classification.direction != "neutral" \
+                 and copy_lb.direction != classification.direction:
+                classification.materiality = max(0.0, classification.materiality - 0.12)
+                lb_tag = f" ⚠️LB-vs-gemini"
+            elif classification.direction == "neutral" and copy_lb.direction != "neutral":
+                # Let leaderboard drive direction when Gemini is uncertain
+                classification.direction   = copy_lb.direction
+                classification.materiality = max(classification.materiality, 0.50)
+                lb_tag = f" 👑LB→{copy_lb.direction[:4]}"
 
         # Tight spread boost (Polycool backup)
         if bot_sig and bot_sig.get("spread") is not None and bot_sig["spread"] < 0.05:
@@ -469,7 +490,7 @@ def scan_and_trade() -> dict:
         console.print(
             f"  [{('cyan' if classification.direction != 'neutral' else 'dim')}]"
             f"⚡research→ {classification.direction} mat:{classification.materiality:.2f}"
-            f"{clob_tag}{bot_tag}{whale_tag} {closes_tag}[/] {market.question[:48]}"
+            f"{clob_tag}{lb_tag}{bot_tag}{whale_tag} {closes_tag}[/] {market.question[:48]}"
         )
         # ── Copy-trade override: recent whale buys → force signal ────────────
         copy_sig = copy_trade_signal(market.condition_id,

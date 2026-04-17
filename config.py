@@ -41,32 +41,75 @@ TELEGRAM_CHANNEL_IDS = [
 # --- NewsAPI (optional, RSS fallback) ---
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "")
 
-# --- RSS Feeds (fallback — expanded for broader coverage) ---
+# --- RSS Feeds (primary source — broad coverage across all market categories) ---
 RSS_FEEDS = [
-    # General / AI / Tech
-    "https://news.google.com/rss/search?q=AI+artificial+intelligence&hl=en-US&gl=US&ceid=US:en",
+    # ── General / Breaking News ──────────────────────────────────────────────
+    "https://feeds.bbci.co.uk/news/rss.xml",
+    "https://feeds.bbci.co.uk/news/world/rss.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml",
+    "https://www.reuters.com/rssFeed/topNews",
+    "https://feeds.npr.org/1001/rss.xml",
+
+    # ── AI / Tech ────────────────────────────────────────────────────────────
+    "https://news.google.com/rss/search?q=AI+artificial+intelligence+OpenAI+Anthropic&hl=en-US&gl=US&ceid=US:en",
     "https://feeds.feedburner.com/TechCrunch",
     "https://feeds.arstechnica.com/arstechnica/technology-lab",
     "https://www.theverge.com/rss/index.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
-    # Crypto
+    "https://news.google.com/rss/search?q=ChatGPT+OR+GPT-5+OR+Gemini+OR+Claude+AI&hl=en-US&gl=US&ceid=US:en",
+
+    # ── Crypto ───────────────────────────────────────────────────────────────
     "https://cointelegraph.com/rss",
     "https://www.coindesk.com/arc/outboundfeeds/rss/",
-    # Politics / World
+    "https://decrypt.co/feed",
+    "https://news.google.com/rss/search?q=Bitcoin+OR+Ethereum+OR+crypto+price&hl=en-US&gl=US&ceid=US:en",
+    "https://news.google.com/rss/search?q=BTC+price+OR+ETH+price+OR+Solana&hl=en-US&gl=US&ceid=US:en",
+
+    # ── Politics / World / Economics ─────────────────────────────────────────
     "https://rss.nytimes.com/services/xml/rss/nyt/Politics.xml",
-    "https://feeds.bbci.co.uk/news/world/rss.xml",
-    "https://news.google.com/rss/search?q=tariff+OR+congress+OR+sanctions&hl=en-US&gl=US&ceid=US:en",
-    # Sports (IPL, NBA, NFL, Soccer)
-    "https://news.google.com/rss/search?q=IPL+cricket+2026&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=NBA+playoffs+2026&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=NFL+2026&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=Champions+League+soccer+2026&hl=en-US&gl=US&ceid=US:en",
-    # Entertainment / Pop culture
-    "https://news.google.com/rss/search?q=Oscars+OR+Grammy+OR+Emmy+OR+box+office&hl=en-US&gl=US&ceid=US:en",
-    # Science / Space
-    "https://news.google.com/rss/search?q=SpaceX+OR+NASA+OR+climate+change&hl=en-US&gl=US&ceid=US:en",
-    # Finance / Economy
-    "https://news.google.com/rss/search?q=Federal+Reserve+OR+interest+rate+OR+inflation&hl=en-US&gl=US&ceid=US:en",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Economy.xml",
+    "https://news.google.com/rss/search?q=tariff+OR+congress+OR+sanctions+OR+Trump&hl=en-US&gl=US&ceid=US:en",
+    "https://news.google.com/rss/search?q=Federal+Reserve+OR+interest+rate+OR+inflation+OR+recession&hl=en-US&gl=US&ceid=US:en",
+    "https://news.google.com/rss/search?q=election+2026+OR+Supreme+Court+OR+White+House&hl=en-US&gl=US&ceid=US:en",
+
+    # ── Soccer / Football ────────────────────────────────────────────────────
+    "https://feeds.bbci.co.uk/sport/football/rss.xml",
+    "https://news.google.com/rss/search?q=Premier+League+2026&hl=en-US&gl=US&ceid=US:en",
+    "https://news.google.com/rss/search?q=Champions+League+2026+soccer&hl=en-US&gl=US&ceid=US:en",
+    "https://news.google.com/rss/search?q=FC+Bayern+OR+Manchester+United+OR+Arsenal+OR+Chelsea&hl=en-US&gl=US&ceid=US:en",
+    "https://news.google.com/rss/search?q=La+Liga+OR+Bundesliga+OR+Serie+A+2026&hl=en-US&gl=US&ceid=US:en",
+    "https://www.goal.com/feeds/en/news",
+
+    # ── NBA / Basketball ─────────────────────────────────────────────────────
+    "https://feeds.bbci.co.uk/sport/basketball/rss.xml",
+    "https://news.google.com/rss/search?q=NBA+2026+playoffs&hl=en-US&gl=US&ceid=US:en",
+    "https://news.google.com/rss/search?q=NBA+game+result+OR+NBA+trade+OR+NBA+injury&hl=en-US&gl=US&ceid=US:en",
+    "https://news.google.com/rss/search?q=76ers+OR+Lakers+OR+Celtics+OR+Warriors+OR+Bucks&hl=en-US&gl=US&ceid=US:en",
+
+    # ── Cricket / IPL ────────────────────────────────────────────────────────
+    "https://news.google.com/rss/search?q=IPL+2026+cricket&hl=en-US&gl=US&ceid=US:en",
+    "https://news.google.com/rss/search?q=IPL+match+result+OR+cricket+T20+2026&hl=en-US&gl=US&ceid=US:en",
+    "https://feeds.bbci.co.uk/sport/cricket/rss.xml",
+
+    # ── Tennis ───────────────────────────────────────────────────────────────
+    "https://news.google.com/rss/search?q=ATP+tennis+2026+OR+WTA+tennis+2026&hl=en-US&gl=US&ceid=US:en",
+    "https://news.google.com/rss/search?q=Djokovic+OR+Alcaraz+OR+Sinner+OR+Medvedev+tennis&hl=en-US&gl=US&ceid=US:en",
+    "https://feeds.bbci.co.uk/sport/tennis/rss.xml",
+
+    # ── NFL / American Football ──────────────────────────────────────────────
+    "https://news.google.com/rss/search?q=NFL+2026+OR+NFL+draft&hl=en-US&gl=US&ceid=US:en",
+
+    # ── Finance / Markets ────────────────────────────────────────────────────
+    "https://feeds.marketwatch.com/marketwatch/topstories/",
+    "https://news.google.com/rss/search?q=stock+market+OR+S%26P+500+OR+NASDAQ+2026&hl=en-US&gl=US&ceid=US:en",
+    "https://news.google.com/rss/search?q=earnings+report+OR+IPO+OR+merger+acquisition&hl=en-US&gl=US&ceid=US:en",
+
+    # ── Entertainment ────────────────────────────────────────────────────────
+    "https://news.google.com/rss/search?q=Oscars+OR+Grammy+OR+Emmy+OR+box+office+2026&hl=en-US&gl=US&ceid=US:en",
+    "https://news.google.com/rss/search?q=Netflix+OR+Disney+OR+Hollywood+movie&hl=en-US&gl=US&ceid=US:en",
+
+    # ── Science / Space ──────────────────────────────────────────────────────
+    "https://news.google.com/rss/search?q=SpaceX+OR+NASA+OR+Starship+2026&hl=en-US&gl=US&ceid=US:en",
 ]
 
 # --- Pipeline Settings (tuned for $20 bankroll) ---
@@ -75,10 +118,10 @@ DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 MAX_BET_USD = float(os.getenv("MAX_BET_USD", "2"))         # $2 max per trade on $20 bankroll
 DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "5"))  # Stop after $5 loss/day
 EDGE_THRESHOLD = float(os.getenv("EDGE_THRESHOLD", "0.15"))  # Higher threshold = fewer but better trades
-NEWS_LOOKBACK_HOURS = 6
+NEWS_LOOKBACK_HOURS = 12
 
 # --- Demo Runner Settings ---
-DEMO_HOURS_WINDOW = float(os.getenv("DEMO_HOURS_WINDOW", "24"))       # Only trade markets closing in ≤N hours
+DEMO_HOURS_WINDOW = float(os.getenv("DEMO_HOURS_WINDOW", "48"))       # Only trade markets closing in ≤N hours (expanded 24→48 for 2x volume)
 SCAN_INTERVAL_MIN = int(os.getenv("SCAN_INTERVAL_MIN", "30"))          # Re-scan every N minutes
 RESOLVE_INTERVAL_MIN = int(os.getenv("RESOLVE_INTERVAL_MIN", "10"))    # Check resolutions every N minutes
 ACCURACY_THRESHOLD = float(os.getenv("ACCURACY_THRESHOLD", "70.0"))   # % accuracy to unlock live trading
@@ -87,13 +130,22 @@ MIN_RESOLVED_TRADES = int(os.getenv("MIN_RESOLVED_TRADES", "10"))      # Min res
 # --- V2 Settings ---
 MAX_RESOLVE_HOURS = float(os.getenv("MAX_RESOLVE_HOURS", "72"))  # 3 days max
 MAX_VOLUME_USD = float(os.getenv("MAX_VOLUME_USD", "500000"))
-MIN_VOLUME_USD = float(os.getenv("MIN_VOLUME_USD", "500"))   # Lowered to catch more niche markets
-MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.65"))  # Slightly higher for quality
+MIN_VOLUME_USD = float(os.getenv("MIN_VOLUME_USD", "5000"))    # Skip micro-markets (5-min windows ~$100 vol)
+MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.20"))
+
+# --- Market Quality Filters (maximise signal accuracy) ---
+MIN_CLOSE_HOURS = float(os.getenv("MIN_CLOSE_HOURS", "0.5"))   # Skip markets closing in < 30min (priced in)
+MIN_YES_PRICE   = float(os.getenv("MIN_YES_PRICE",   "0.20"))   # Skip if YES < 20% (nearly impossible)
+MAX_YES_PRICE   = float(os.getenv("MAX_YES_PRICE",   "0.80"))   # Skip if YES > 80% (nearly certain)
+MIN_WINDOW_HOURS = float(os.getenv("MIN_WINDOW_HOURS", "0.5"))  # Skip < 30-min duration markets
 SPEED_TARGET_SECONDS = float(os.getenv("SPEED_TARGET_SECONDS", "5"))
 CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "gemma3:4b")
 SCORING_MODEL = os.getenv("SCORING_MODEL", "gemma3:4b")
 # Alias for V1 scorer compatibility
 CLAUDE_MODEL = SCORING_MODEL
+
+# --- Gemini Search Grounding (live web search during classification) ---
+USE_SEARCH_GROUNDING = os.getenv("USE_SEARCH_GROUNDING", "true").lower() == "true"
 
 # --- Consensus Settings (multi-agent inspired by MiroFish debate pattern) ---
 CONSENSUS_ENABLED = os.getenv("CONSENSUS_ENABLED", "true").lower() == "true"
