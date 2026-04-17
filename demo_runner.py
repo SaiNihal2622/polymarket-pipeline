@@ -435,11 +435,18 @@ def scan_and_trade() -> dict:
 
         classification: Classification = research_market(market)
 
-        # ── Signal fusion: Polycool spread + whale alignment ────────────────
+        # ── Signal fusion: CLOB orderbook (direct) + Polycool + whale ───────
+        from orderbook import fetch_book, book_edge_adjustment
+        token_id = token_map.get(market.condition_id)
+        book = fetch_book(token_id) if token_id else None
+        book_delta, book_tag = book_edge_adjustment(book, classification.direction)
+        if book_delta != 0:
+            classification.materiality = max(0.0, min(1.0, classification.materiality + book_delta))
+
         bot_sig   = polycool_signal(market.question, bot_markets)
         whale_sig = whale_signals_map.get(market.condition_id)
 
-        # Tight spread boost
+        # Tight spread boost (Polycool backup)
         if bot_sig and bot_sig.get("spread") is not None and bot_sig["spread"] < 0.05:
             classification.materiality = min(1.0, classification.materiality + 0.05)
 
@@ -458,10 +465,11 @@ def scan_and_trade() -> dict:
 
         closes_tag = f"[{hours_left:.1f}h]"
         bot_tag = f" spread:{bot_sig['spread']:.3f}" if bot_sig and bot_sig.get("spread") else ""
+        clob_tag = f" 📖{book.spread:.2f}/{book.liquidity_tier}" if book else ""
         console.print(
             f"  [{('cyan' if classification.direction != 'neutral' else 'dim')}]"
             f"⚡research→ {classification.direction} mat:{classification.materiality:.2f}"
-            f"{bot_tag}{whale_tag} {closes_tag}[/] {market.question[:48]}"
+            f"{clob_tag}{bot_tag}{whale_tag} {closes_tag}[/] {market.question[:48]}"
         )
         # ── Copy-trade override: recent whale buys → force signal ────────────
         copy_sig = copy_trade_signal(market.condition_id,
@@ -498,13 +506,26 @@ def scan_and_trade() -> dict:
             signal = None
 
         if signal:
+            # Kelly sizing based on current bankroll
+            from bankroll import kelly_bet_size, get_current_bankroll, can_trade_today
+            allowed, reason = can_trade_today()
+            if not allowed:
+                console.print(f"  [red]⛔ {reason} — skipping[/red]")
+                continue
+            bk = get_current_bankroll()
+            kelly_amt = kelly_bet_size(bk, signal.edge, market.yes_price, classification.materiality)
+            if kelly_amt < 0.50:
+                console.print(f"  [dim]Kelly: bet <$0.50 — skipping[/dim]")
+                continue
+            signal.bet_amount = kelly_amt
+
             console.print(
                 f"  [bright_green]SIGNAL ⚡FAST[/bright_green] "
                 f"[bold]{signal.side}[/bold] | "
                 f"mat:{classification.materiality:.2f} "
                 f"composite:{signal.composite_score:.2f} "
                 f"edge:{signal.edge:.1%} "
-                f"closes:{hours_left:.1f}h\n"
+                f"closes:{hours_left:.1f}h | bankroll:${bk:.2f}\n"
                 f"    Market: \"{market.question[:55]}\"\n"
                 f"    Reason: {classification.reasoning[:120]}"
             )
