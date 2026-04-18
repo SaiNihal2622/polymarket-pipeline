@@ -79,26 +79,31 @@ def _get_token_id_for_trade(market_id: str) -> str | None:
             return row["token_id"]
     conn.close()
 
-    # Fallback: fetch from Gamma API
-    try:
-        r = httpx.get(f"{GAMMA_API}/markets",
-                      params={"id": market_id, "limit": 1}, timeout=10)
-        print(f"[resolver:token] market {market_id[:16]} → Gamma status {r.status_code}")
-        if r.status_code == 200:
+    # Fallback: fetch from Gamma API using multiple param formats
+    param_attempts = [
+        {"conditionId": market_id, "limit": 1},
+        {"condition_id": market_id, "limit": 1},
+        {"clob_token_ids": market_id, "limit": 1},
+    ]
+    for params in param_attempts:
+        try:
+            r = httpx.get(f"{GAMMA_API}/markets", params=params, timeout=10)
+            if r.status_code != 200:
+                continue
             data = r.json()
             items = data if isinstance(data, list) else data.get("data", [])
+            if not items:
+                continue
             for m in items:
                 tokens = m.get("tokens") or m.get("clobTokenIds") or []
                 if isinstance(tokens, str):
-                    import json as _json
-                    try: tokens = _json.loads(tokens)
+                    try: tokens = json.loads(tokens)
                     except Exception: tokens = []
                 if tokens:
-                    # First token = YES token
-                    t = tokens[0]
+                    t   = tokens[0]
                     tid = t.get("token_id") if isinstance(t, dict) else str(t)
-                    if tid:
-                        # Cache it back to DB
+                    if tid and len(tid) > 5:
+                        print(f"[resolver:token] {market_id[:16]} → tid={tid[:16]} (param={list(params.keys())[0]})")
                         try:
                             conn2 = _conn()
                             if "token_id" in cols:
@@ -111,8 +116,10 @@ def _get_token_id_for_trade(market_id: str) -> str | None:
                         except Exception:
                             pass
                         return tid
-    except Exception as e:
-        log.debug(f"[resolver] token lookup {market_id[:16]}: {e}")
+        except Exception as e:
+            log.debug(f"[resolver] token lookup {market_id[:16]}: {e}")
+
+    print(f"[resolver:token] {market_id[:16]} → NOT FOUND (all params failed)")
     return None
 
 
@@ -176,9 +183,9 @@ def _resolve_via_gamma_direct(market_id: str, timeout: int = 10) -> float | None
     if not market_id:
         return None
     attempts = [
-        {"id": market_id, "limit": 1},
+        {"conditionId": market_id, "limit": 1},
         {"condition_id": market_id, "limit": 1},
-        {"conditionIds": market_id, "limit": 5},
+        {"clob_token_ids": market_id, "limit": 1},
     ]
     for params in attempts:
         try:
