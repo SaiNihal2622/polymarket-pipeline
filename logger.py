@@ -4,7 +4,10 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent / "trades.db"
+import os
+_db_env = os.getenv("DB_PATH", "")
+DB_PATH = Path(_db_env) if _db_env else Path(__file__).parent / "trades.db"
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def _conn() -> sqlite3.Connection:
@@ -99,6 +102,7 @@ def _migrate_v2_columns(conn):
         ("news_latency_ms", "INTEGER"),
         ("classification_latency_ms", "INTEGER"),
         ("total_latency_ms", "INTEGER"),
+        ("token_id", "TEXT"),   # YES-token id for CLOB-based resolution
     ]
     for col_name, col_type in new_cols:
         if col_name not in columns:
@@ -124,6 +128,7 @@ def log_trade(
     news_latency_ms: int | None = None,
     classification_latency_ms: int | None = None,
     total_latency_ms: int | None = None,
+    token_id: str | None = None,
 ) -> int:
     conn = _conn()
     cur = conn.execute(
@@ -131,12 +136,12 @@ def log_trade(
            (market_id, market_question, claude_score, market_price, edge,
             side, amount_usd, order_id, status, reasoning, headlines,
             news_source, classification, materiality,
-            news_latency_ms, classification_latency_ms, total_latency_ms)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            news_latency_ms, classification_latency_ms, total_latency_ms, token_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (market_id, market_question, claude_score, market_price, edge,
          side, amount_usd, order_id, status, reasoning, headlines,
          news_source, classification, materiality,
-         news_latency_ms, classification_latency_ms, total_latency_ms),
+         news_latency_ms, classification_latency_ms, total_latency_ms, token_id),
     )
     trade_id = cur.lastrowid
     conn.commit()
@@ -323,6 +328,20 @@ def get_latency_stats() -> dict:
         "avg_class_ms": round(row["avg_class"] or 0),
         "count": row["count"],
     }
+
+
+def get_pending_market_ids() -> set:
+    """Return set of market_ids already logged as pending demo trades.
+    Prevents logging the same market multiple times across scans."""
+    try:
+        conn = _conn()
+        rows = conn.execute(
+            "SELECT market_id FROM trades WHERE status IN ('demo','dry_run')"
+        ).fetchall()
+        conn.close()
+        return {r["market_id"] for r in rows}
+    except Exception:
+        return set()
 
 
 init_db()

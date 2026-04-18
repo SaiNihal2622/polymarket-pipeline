@@ -253,7 +253,7 @@ def filter_quality_markets(markets, now: datetime) -> tuple[list, dict]:
     return result, skipped
 
 
-def _log_demo_trade(signal: Signal) -> int:
+def _log_demo_trade(signal: Signal, token_id: str | None = None) -> int:
     """Log a demo trade to the DB with status='demo'. Always virtual — no real money."""
     trade_id = logger.log_trade(
         market_id=signal.market.condition_id,
@@ -273,6 +273,7 @@ def _log_demo_trade(signal: Signal) -> int:
         news_latency_ms=signal.news_latency_ms,
         classification_latency_ms=signal.classification_latency_ms,
         total_latency_ms=signal.total_latency_ms,
+        token_id=token_id,
     )
     return trade_id
 
@@ -401,10 +402,14 @@ def scan_and_trade() -> dict:
             tid = t.get("token_id") if isinstance(t, dict) else str(t)
             if tid:
                 token_map[m.condition_id] = tid
-    # Whale + leaderboard endpoints return empty from Railway — skipping to save time
-    whale_signals_map = {}
-    copy_signals_map  = {}
-    # (Previously called bulk_whale_signals + build_copy_signals — dead weight)
+    # Leaderboard copy-trade (re-enabled with fixed endpoints + hardcoded wallets)
+    from leaderboard import build_copy_signals
+    copy_signals_map = build_copy_signals(set(fast_ids), top_n=20)
+    console.print(f"   [dim]Leaderboard copy signals: {len(copy_signals_map)} markets[/dim]")
+
+    # Whale holder signals (data-api.polymarket.com)
+    from whale import bulk_whale_signals
+    whale_signals_map = bulk_whale_signals(fast_ids[:20], token_map=token_map)
 
     if fast_markets:
         console.print(f"\n  [cyan]⚡ TRACK 1: Researching {min(len(fast_markets), MAX_FAST)} fast markets with Gemini search...[/cyan]")
@@ -566,7 +571,9 @@ def scan_and_trade() -> dict:
                 f"    Market: \"{market.question[:55]}\"\n"
                 f"    Reason: {classification.reasoning[:120]}"
             )
-            trade_id = _log_demo_trade(signal)
+            # Store YES token_id so CLOB-based resolver can check prices directly
+            yes_token = token_map.get(market.condition_id)
+            trade_id = _log_demo_trade(signal, token_id=yes_token)
             console.print(f"    → [green]Demo trade #{trade_id} logged (${signal.bet_amount:.2f} virtual)[/green]")
             signals_found.append(signal)
             demos_logged += 1
