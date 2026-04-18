@@ -52,7 +52,7 @@ from classifier import classify, research_market, Classification
 from matcher import match_news_to_markets
 from edge import detect_edge_v2, Signal
 from news_stream import NewsEvent
-from resolver import run_resolution_check, get_accuracy_stats, get_resolved_trade_list
+from resolver import run_resolution_check, get_accuracy_stats, get_resolved_trade_list, get_pipeline_comparison
 
 console = Console()
 log = logging.getLogger(__name__)
@@ -79,6 +79,30 @@ def _print_accuracy_oneliner():
         f"| logged={total_logged}  resolved={total_resolved}  "
         f"| need {need} more to go-live"
     )
+
+    # Side-by-side pipeline comparison
+    try:
+        cmp = get_pipeline_comparison()
+        old = cmp["old"]
+        new = cmp["new"]
+        old_acc = f"{old['accuracy_pct']:.1f}%" if old['resolved'] > 0 else "n/a"
+        new_acc_val = new['accuracy_pct']
+        new_color = "bright_green" if new_acc_val >= 65 else "yellow" if new_acc_val >= 50 else "red"
+        new_acc = f"[{new_color}]{new_acc_val:.1f}%[/{new_color}]" if new['resolved'] > 0 else "[dim]no data yet[/dim]"
+        console.print(
+            f"  [dim]  OLD pipeline (#{1}–#191):[/dim] {old_acc} ({old['wins']}W/{old['losses']}L, {old['resolved']} resolved)  "
+            f"[bold]NEW pipeline (#192+):[/bold] {new_acc} ({new['wins']}W/{new['losses']}L, {new['resolved']} resolved)"
+        )
+        # Category breakdown for new pipeline
+        cats = cmp.get("new_categories", {})
+        if cats:
+            cat_parts = []
+            for cat, s in sorted(cats.items()):
+                c_acc = f"{s['accuracy_pct']:.0f}%" if s['resolved'] > 0 else "?"
+                cat_parts.append(f"{cat}:{c_acc}({s['wins']}W/{s['losses']}L)")
+            console.print(f"  [dim]  New breakdown → {' | '.join(cat_parts)}[/dim]")
+    except Exception:
+        pass
 
 
 def _startup_cleanup():

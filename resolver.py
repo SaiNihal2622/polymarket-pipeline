@@ -485,6 +485,101 @@ def get_accuracy_stats() -> dict:
     }
 
 
+def get_pipeline_comparison(new_pipeline_start_id: int = 192) -> dict:
+    """
+    Side-by-side accuracy: OLD pipeline (id < new_pipeline_start_id) vs
+    NEW pipeline (id >= new_pipeline_start_id, verifiable-market era).
+    Returns dict with 'old' and 'new' sub-dicts each containing
+    wins/losses/accuracy_pct/total_pnl, plus a category breakdown for new.
+    """
+    conn = _conn()
+
+    def _stats(where_clause: str, params: tuple = ()) -> dict:
+        row = conn.execute(f"""
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN o.result = 'win'  THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN o.result = 'loss' THEN 1 ELSE 0 END) as losses,
+                SUM(CASE WHEN o.result = 'push' THEN 1 ELSE 0 END) as pushes,
+                COALESCE(SUM(o.pnl), 0) as total_pnl
+            FROM trades t
+            JOIN outcomes o ON t.id = o.trade_id
+            WHERE t.status IN ('demo', 'dry_run') AND {where_clause}
+        """, params).fetchone()
+        total   = int(row["total"]  or 0)
+        wins    = int(row["wins"]   or 0)
+        losses  = int(row["losses"] or 0)
+        pushes  = int(row["pushes"] or 0)
+        pnl     = float(row["total_pnl"] or 0)
+        decisive = total - pushes
+        acc = (wins / decisive * 100) if decisive > 0 else 0.0
+        return {"resolved": total, "wins": wins, "losses": losses,
+                "pushes": pushes, "accuracy_pct": round(acc, 1),
+                "total_pnl": round(pnl, 2)}
+
+    old = _stats("t.id < ?", (new_pipeline_start_id,))
+    new = _stats("t.id >= ?", (new_pipeline_start_id,))
+
+    # Category breakdown for new pipeline
+    cat_rows = conn.execute("""
+        SELECT
+            CASE
+                WHEN LOWER(t.market_question) LIKE '%bitcoin%'
+                  OR LOWER(t.market_question) LIKE '%btc%'
+                  OR LOWER(t.market_question) LIKE '%ethereum%'
+                  OR LOWER(t.market_question) LIKE '%eth %'
+                  OR LOWER(t.market_question) LIKE '%solana%'
+                  OR LOWER(t.market_question) LIKE '%xrp%'
+                  OR LOWER(t.market_question) LIKE '%crypto%'
+                  OR LOWER(t.market_question) LIKE '%up or down%'
+                  THEN 'crypto'
+                WHEN LOWER(t.market_question) LIKE '%trump%'
+                  OR LOWER(t.market_question) LIKE '%federal reserve%'
+                  OR LOWER(t.market_question) LIKE '%fed rate%'
+                  OR LOWER(t.market_question) LIKE '%tariff%'
+                  OR LOWER(t.market_question) LIKE '%ceasefire%'
+                  OR LOWER(t.market_question) LIKE '%congress%'
+                  OR LOWER(t.market_question) LIKE '%election%'
+                  THEN 'politics'
+                WHEN LOWER(t.market_question) LIKE '%amazon%'
+                  OR LOWER(t.market_question) LIKE '%tesla%'
+                  OR LOWER(t.market_question) LIKE '%s&p 500%'
+                  OR LOWER(t.market_question) LIKE '%nasdaq%'
+                  OR LOWER(t.market_question) LIKE '%stock%'
+                  THEN 'finance'
+                WHEN LOWER(t.market_question) LIKE '%ipl%'
+                  OR LOWER(t.market_question) LIKE '%cricket%'
+                  THEN 'cricket'
+                ELSE 'other'
+            END as category,
+            COUNT(*) as total,
+            SUM(CASE WHEN o.result = 'win'  THEN 1 ELSE 0 END) as wins,
+            SUM(CASE WHEN o.result = 'loss' THEN 1 ELSE 0 END) as losses,
+            COALESCE(SUM(o.pnl), 0) as pnl
+        FROM trades t
+        JOIN outcomes o ON t.id = o.trade_id
+        WHERE t.status IN ('demo', 'dry_run') AND t.id >= ?
+        GROUP BY category
+    """, (new_pipeline_start_id,)).fetchall()
+
+    categories = {}
+    for r in cat_rows:
+        wins = int(r["wins"] or 0)
+        losses = int(r["losses"] or 0)
+        decisive = wins + losses
+        acc = (wins / decisive * 100) if decisive > 0 else 0.0
+        categories[r["category"]] = {
+            "resolved": int(r["total"] or 0),
+            "wins": wins, "losses": losses,
+            "accuracy_pct": round(acc, 1),
+            "pnl": round(float(r["pnl"] or 0), 2),
+        }
+
+    conn.close()
+    return {"old": old, "new": new, "new_categories": categories,
+            "split_trade_id": new_pipeline_start_id}
+
+
 def get_resolved_trade_list() -> list[dict]:
     conn = _conn()
     rows = conn.execute("""
