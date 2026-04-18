@@ -79,12 +79,15 @@ def _get_token_id_for_trade(market_id: str) -> str | None:
             return row["token_id"]
     conn.close()
 
-    # Fallback: fetch from Gamma API using multiple param formats
+    # NOTE: Gamma's conditionId filter is known-broken — always returns the same
+    # default market (0x9c1a953fe92c8357f1) regardless of input.
+    # We detect this by checking if the returned conditionId matches our query.
+    # If it doesn't match, we know Gamma ignored our filter and skip it.
     param_attempts = [
         {"conditionId": market_id, "limit": 1},
         {"condition_id": market_id, "limit": 1},
-        {"clob_token_ids": market_id, "limit": 1},
     ]
+    BROKEN_DEFAULT_MARKET = "0x9c1a953fe92c8357f1"
     for params in param_attempts:
         try:
             r = httpx.get(f"{GAMMA_API}/markets", params=params, timeout=10)
@@ -94,32 +97,37 @@ def _get_token_id_for_trade(market_id: str) -> str | None:
             items = data if isinstance(data, list) else data.get("data", [])
             if not items:
                 continue
-            for m in items:
-                tokens = m.get("tokens") or m.get("clobTokenIds") or []
-                if isinstance(tokens, str):
-                    try: tokens = json.loads(tokens)
-                    except Exception: tokens = []
-                if tokens:
-                    t   = tokens[0]
-                    tid = t.get("token_id") if isinstance(t, dict) else str(t)
-                    if tid and len(tid) > 5:
-                        print(f"[resolver:token] {market_id[:16]} → tid={tid[:16]} (param={list(params.keys())[0]})")
-                        try:
-                            conn2 = _conn()
-                            if "token_id" in cols:
-                                conn2.execute(
-                                    "UPDATE trades SET token_id=? WHERE market_id=? AND token_id IS NULL",
-                                    (tid, market_id)
-                                )
-                                conn2.commit()
-                            conn2.close()
-                        except Exception:
-                            pass
-                        return tid
+            m = items[0]
+            returned_cid = (m.get("conditionId") or m.get("id") or "")
+            # Detect broken filter: returned market must match what we asked for
+            if returned_cid and not returned_cid.startswith(market_id[:16]) \
+               and returned_cid.startswith(BROKEN_DEFAULT_MARKET):
+                log.debug(f"[resolver:token] Gamma returned broken default, skipping")
+                break  # no point trying other params
+
+            tokens = m.get("tokens") or m.get("clobTokenIds") or []
+            if isinstance(tokens, str):
+                try: tokens = json.loads(tokens)
+                except Exception: tokens = []
+            if tokens:
+                t   = tokens[0]
+                tid = t.get("token_id") if isinstance(t, dict) else str(t)
+                if tid and len(tid) > 5 and returned_cid.startswith(market_id[:16]):
+                    try:
+                        conn2 = _conn()
+                        if "token_id" in cols:
+                            conn2.execute(
+                                "UPDATE trades SET token_id=? WHERE market_id=? AND token_id IS NULL",
+                                (tid, market_id)
+                            )
+                            conn2.commit()
+                        conn2.close()
+                    except Exception:
+                        pass
+                    return tid
         except Exception as e:
             log.debug(f"[resolver] token lookup {market_id[:16]}: {e}")
 
-    print(f"[resolver:token] {market_id[:16]} → NOT FOUND (all params failed)")
     return None
 
 
@@ -274,6 +282,8 @@ def _refresh_bulk_cache(pending_trades: list[dict]) -> None:
 
     matched = 0
     fetched_total = 0
+    first5_questions: list[str] = []  # debug: show what Gamma returns
+
     for offset in range(0, 3000, 100):
         try:
             r = httpx.get(f"{GAMMA_API}/markets",
@@ -286,29 +296,62 @@ def _refresh_bulk_cache(pending_trades: list[dict]) -> None:
                 break
             fetched_total += len(items)
             for m in items:
-                result = _parse_outcome(m)
-                if result is None:
-                    continue
                 gq_full = (m.get("question") or "").lower().strip()
+                if fetched_total <= 5:
+                    first5_questions.append(gq_full[:60])
+
+                # Index ALL closed markets — even without clear outcome prices yet
+                # We check outcome separately below
+                result = _parse_outcome(m)
+                # Match by question text
                 matched_cid = None
                 for ln in (80, 60, 40):
                     gq = _normalize_q(gq_full, ln)
                     if gq in pending_by_q:
                         matched_cid = pending_by_q[gq]
                         break
-                if matched_cid:
+                if matched_cid and result is not None:
                     _resolution_cache[matched_cid] = result
                     matched += 1
-                for id_field in ("conditionId", "id", "condition_id"):
+                    print(f"[resolver:bulk] MATCH '{gq_full[:50]}' → {result}")
+                # Index by IDs for CLOB strategy
+                for id_field in ("conditionId", "id"):
                     cid2 = m.get(id_field, "")
-                    if cid2:
+                    if cid2 and result is not None:
                         _resolution_cache[cid2] = result
         except Exception as e:
             log.warning(f"[resolver:bulk] offset={offset}: {e}")
             break
 
     _cache_fetched_at = now
-    print(f"[resolver] bulk: {fetched_total} markets scanned, {matched} text-matched")
+    if first5_questions:
+        print(f"[resolver] bulk sample questions: {first5_questions}")
+    print(f"[resolver] bulk: {fetched_total} closed markets scanned, {matched} text-matched")
+
+    # Bonus: direct question-text search for each pending trade
+    for t in pending_trades[:20]:  # cap to avoid rate limits
+        q = t.get("market_question", "")
+        mid = t["market_id"]
+        if mid in _resolution_cache:
+            continue  # already resolved
+        try:
+            r = httpx.get(f"{GAMMA_API}/markets",
+                params={"question": q[:100], "limit": 3, "closed": "true"}, timeout=8)
+            if r.status_code == 200:
+                data = r.json()
+                items = data if isinstance(data, list) else data.get("data", [])
+                for m in items:
+                    mq = (m.get("question") or "").strip()
+                    # Check if questions are close enough
+                    if _normalize_q(mq, 60) == _normalize_q(q, 60):
+                        result = _parse_outcome(m)
+                        if result is not None:
+                            _resolution_cache[mid] = result
+                            print(f"[resolver:qsearch] #{t['id']} matched! → {result}")
+                            matched += 1
+                            break
+        except Exception:
+            pass
 
 
 # ── Main resolution logic ────────────────────────────────────────────────────
