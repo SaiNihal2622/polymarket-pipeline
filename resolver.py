@@ -297,8 +297,8 @@ def _refresh_bulk_cache(pending_trades: list[dict]) -> None:
             fetched_total += len(items)
             for m in items:
                 gq_full = (m.get("question") or "").lower().strip()
-                if fetched_total <= 5:
-                    first5_questions.append(gq_full[:60])
+                if offset == 0 and len(first5_questions) < 5:
+                    first5_questions.append(gq_full[:70])
 
                 # Index ALL closed markets — even without clear outcome prices yet
                 # We check outcome separately below
@@ -420,6 +420,35 @@ def resolve_trade(trade_id: int, market_result: float, side: str, amount_usd: fl
     return result_str, pnl
 
 
+def _void_stuck_trades(pending: list[dict], max_pending_hours: float = 36.0) -> int:
+    """
+    Void trades that have been pending too long — market probably resolved but
+    Gamma hasn't indexed it. Marks as 'voided' so they don't clog the pipeline.
+    """
+    from datetime import timedelta
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=max_pending_hours)
+    void_ids = []
+    for t in pending:
+        try:
+            created = datetime.fromisoformat(t["created_at"].replace("Z", "+00:00"))
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            if created < cutoff:
+                void_ids.append(t["id"])
+        except Exception:
+            pass
+    if void_ids:
+        conn = _conn()
+        conn.execute(
+            f"UPDATE trades SET status='voided' WHERE id IN ({','.join('?'*len(void_ids))})",
+            void_ids
+        )
+        conn.commit()
+        conn.close()
+        print(f"[resolver] Voided {len(void_ids)} stuck trades (pending >{max_pending_hours:.0f}h): {void_ids}")
+    return len(void_ids)
+
+
 def run_resolution_check(verbose: bool = True) -> dict:
     pending = get_pending_demo_trades()
     if not pending:
@@ -428,7 +457,12 @@ def run_resolution_check(verbose: bool = True) -> dict:
 
     if verbose: print(f"[resolver] Checking {len(pending)} pending demo trades...")
 
-    # Kick off bulk scan in background (populates _resolution_cache for text-match fallback)
+    # Void trades stuck >36h (Polymarket likely resolved but Gamma not indexed)
+    voided = _void_stuck_trades(pending, max_pending_hours=36.0)
+    if voided > 0:
+        pending = get_pending_demo_trades()  # refresh
+
+    # Kick off bulk scan (populates _resolution_cache for text-match fallback)
     _refresh_bulk_cache(pending)
 
     resolved = wins = losses = pushes = 0
