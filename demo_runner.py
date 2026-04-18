@@ -224,8 +224,8 @@ def filter_quality_markets(markets, now: datetime) -> tuple[list, dict]:
                 continue
 
         # 2. Skip near-certain prices (market already knows outcome)
-        # Use wider range (0.08/0.92) to allow more markets — Gemini research handles near-certain ones
-        if m.yes_price < 0.08 or m.yes_price > 0.92:
+        # Allow 0.10–0.90 — Gemini research identifies remaining uncertainty
+        if m.yes_price < 0.10 or m.yes_price > 0.90:
             skipped["price_extreme"] += 1
             continue
 
@@ -328,7 +328,7 @@ def scan_and_trade() -> dict:
 
     # 2. Markets
     console.print("\n[bold]2. Fetching live markets...[/bold]")
-    all_markets = fetch_active_markets(limit=500)
+    all_markets = fetch_active_markets(limit=1000)
     category_filtered = filter_by_categories(all_markets)
     window_markets = filter_closing_soon(category_filtered, DEMO_HOURS_WINDOW)
     now = datetime.now(timezone.utc)
@@ -372,8 +372,8 @@ def scan_and_trade() -> dict:
     #   TRACK 1 — Fast markets (≤24h): research_market() with Gemini live search — no news needed
     #   TRACK 2 — Slow markets (>24h): news matching + classify() (existing approach)
 
-    MAX_FAST = int(os.getenv("MAX_FAST_PER_SCAN", "60"))   # research up to 60 fast markets
-    MAX_SLOW = int(os.getenv("MAX_PAIRS_PER_SCAN", "20"))  # keep top 20 slow news pairs
+    MAX_FAST = int(os.getenv("MAX_FAST_PER_SCAN", "80"))   # research up to 80 fast markets
+    MAX_SLOW = int(os.getenv("MAX_PAIRS_PER_SCAN", "25"))  # keep top 25 slow news pairs
 
     already_logged = get_pending_market_ids()
 
@@ -416,12 +416,25 @@ def scan_and_trade() -> dict:
         console.print(f"\n  [cyan]⚡ TRACK 1: Researching {min(len(fast_markets), MAX_FAST)} fast markets with Gemini search...[/cyan]")
     # Categories to skip — too noisy/unpredictable for 80%+ accuracy
     SKIP_PATTERNS = [
+        # Exact/correct scores — near-impossible to predict
         "exact score", "correct score",
+        # Social media post-count markets — zero signal
         "posts from", "post 20-", "post 40-", "post 60-", "post 80-", "post 100-",
         "post 120-", "post 140-", "post 160-", "post 180-",
-        "o/u 10.", "o/u 8.", "o/u 6.", "total corners",
-        "map handicap", "first blood", "first tower",
-        "both teams to score",  # too coin-flippy
+        # High-variance O/U markets
+        "o/u 10.", "o/u 8.", "o/u 6.", "o/u 12.", "o/u 14.",
+        "total corners", "total shots",
+        # Esports sub-markets — too volatile
+        "map handicap", "first blood", "first tower", "first dragon",
+        "first baron", "first rift herald",
+        # Both-teams-to-score — coin-flip
+        "both teams to score",
+        # Specific spread markets — very tight
+        "ats", "against the spread",
+        # Halftime results — too early
+        "leading at halftime", "halftime result", "half time",
+        # BO1 esports — single-game too random
+        "(bo1)", "- bo1",
     ]
 
     for market in fast_markets[:MAX_FAST]:
@@ -436,9 +449,11 @@ def scan_and_trade() -> dict:
         end = _parse_end_date(market.end_date)
         hours_left = ((end - now).total_seconds() / 3600) if end else 999
 
-        # Tuned thresholds — balance volume vs accuracy
-        mat_threshold  = 0.32   # raised back: 0.25 let in too many weak signals
-        comp_threshold = 0.45   # raised back: protects accuracy
+        # Two-tier threshold system:
+        # Sureshot (mat≥0.55): high-conviction, large bet → targets 75-85% accuracy
+        # Regular  (mat≥0.38): moderate conviction, small bet → targets 60-70% accuracy
+        mat_threshold  = 0.38   # minimum to even consider a signal
+        comp_threshold = 0.46   # composite must confirm multi-signal agreement
 
         classification: Classification = research_market(market)
 
@@ -561,14 +576,30 @@ def scan_and_trade() -> dict:
                 console.print(f"  [red]⛔ {reason} — skipping[/red]")
                 continue
             bk = get_current_bankroll()
-            kelly_amt = kelly_bet_size(bk, signal.edge, market.yes_price, classification.materiality)
+
+            # ── Sureshot tier: mat ≥ 0.55 + composite ≥ 0.55 → max Kelly ──────
+            is_sureshot = (classification.materiality >= 0.55
+                           and signal.composite_score >= 0.55)
+            if is_sureshot:
+                # Sureshot: up to 8% bankroll (double normal Kelly cap)
+                kelly_amt = kelly_bet_size(bk, signal.edge, market.yes_price,
+                                           classification.materiality)
+                kelly_amt = min(kelly_amt * 1.5, bk * 0.08)  # boost + 8% cap
+                tier_tag  = "🎯SURESHOT"
+                tier_col  = "bold bright_yellow"
+            else:
+                kelly_amt = kelly_bet_size(bk, signal.edge, market.yes_price,
+                                           classification.materiality)
+                tier_tag  = "⚡FAST"
+                tier_col  = "bright_green"
+
             if kelly_amt < 0.50:
                 console.print(f"  [dim]Kelly: bet <$0.50 — skipping[/dim]")
                 continue
-            signal.bet_amount = kelly_amt
+            signal.bet_amount = round(kelly_amt, 2)
 
             console.print(
-                f"  [bright_green]SIGNAL ⚡FAST[/bright_green] "
+                f"  [{tier_col}]SIGNAL {tier_tag}[/{tier_col}] "
                 f"[bold]{signal.side}[/bold] | "
                 f"mat:{classification.materiality:.2f} "
                 f"composite:{signal.composite_score:.2f} "
