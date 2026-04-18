@@ -420,46 +420,75 @@ def scan_and_trade() -> dict:
 
     if fast_markets:
         console.print(f"\n  [cyan]⚡ TRACK 1: Researching {min(len(fast_markets), MAX_FAST)} fast markets with Gemini search...[/cyan]")
-    # Categories to skip — too noisy/unpredictable for 80%+ accuracy
+    # ── Hard whitelist: only trade verifiable-fact markets ───────────────────
+    # Sports results are future uncertainty — no real edge over the market price.
+    # Crypto/stock price markets: Gemini can verify current price vs threshold.
+    # Political events: Gemini can verify if vote/announcement already happened.
+    VERIFIABLE_PATTERNS = [
+        # Crypto price (checkable NOW)
+        "bitcoin", "btc", "ethereum", "eth", "solana", "sol",
+        "xrp", "bnb", "dogecoin", "up or down",
+        "price of bitcoin", "price of ethereum", "price of solana",
+        "above $", "below $", "between $",
+        # Stock / finance (checkable after market close)
+        "up or down on april", "s&p 500", "nasdaq", "dow jones",
+        "amazon", "tesla", "apple", "google", "meta", "nvidia",
+        "microsoft", "netflix", "opens up or down",
+        # Major political (verifiable outcomes)
+        "will trump", "will biden", "federal reserve", "fed rate",
+        "supreme court", "congressional", "election result",
+        # IPL / Cricket (score-based, verifiable after match)
+        "ipl", "cricket", "t20", "odi",
+        # Earthquake/natural (verifiable via USGS)
+        "earthquake", "magnitude",
+    ]
+
+    def _is_verifiable(q: str) -> bool:
+        q = q.lower()
+        return any(p in q for p in VERIFIABLE_PATTERNS)
+
+    # Categories to always skip regardless
     SKIP_PATTERNS = [
-        # Exact/correct scores — near-impossible to predict
         "exact score", "correct score",
-        # Social media post-count markets — zero signal
         "posts from", "post 20-", "post 40-", "post 60-", "post 80-", "post 100-",
         "post 120-", "post 140-", "post 160-", "post 180-",
-        # High-variance O/U markets
         "o/u 10.", "o/u 8.", "o/u 6.", "o/u 12.", "o/u 14.",
         "total corners", "total shots",
-        # Esports sub-markets — too volatile
         "map handicap", "first blood", "first tower", "first dragon",
         "first baron", "first rift herald",
-        # Both-teams-to-score — coin-flip
         "both teams to score",
-        # Specific spread markets — very tight
-        "ats", "against the spread",
-        # Halftime results — too early
         "leading at halftime", "halftime result", "half time",
-        # BO1 esports — single-game too random
         "(bo1)", "- bo1",
+        # Sports win/loss markets — future uncertainty, no verifiable edge
+        "will sc ", "will cf ", "will fc ", "will cd ", "will ca ",
+        " win on 2026", "win on april",
+        # Celebrity / entertainment — pure speculation
+        "justin bieber", "taylor swift", "feature ", "album",
+        "box office", "oscars", "grammy",
     ]
 
     for market in fast_markets[:MAX_FAST]:
         analyzed += 1
 
-        # Skip low-quality categories
         q_lower = market.question.lower()
+
+        # Skip explicitly blocked patterns
         if any(pat in q_lower for pat in SKIP_PATTERNS):
-            console.print(f"  [dim]⛔ SKIP (low-quality category): {market.question[:60]}[/dim]")
+            console.print(f"  [dim]⛔ SKIP (blocked): {market.question[:60]}[/dim]")
+            continue
+
+        # Only trade verifiable-fact markets (crypto price, stocks, politics)
+        # Skip sports win/loss — future uncertainty gives no real edge
+        if not _is_verifiable(market.question):
+            console.print(f"  [dim]⛔ SKIP (not verifiable): {market.question[:60]}[/dim]")
             continue
 
         end = _parse_end_date(market.end_date)
         hours_left = ((end - now).total_seconds() / 3600) if end else 999
 
-        # Two-tier threshold system:
-        # Sureshot (mat≥0.55): high-conviction, large bet → targets 75-85% accuracy
-        # Regular  (mat≥0.38): moderate conviction, small bet → targets 60-70% accuracy
-        mat_threshold  = 0.38   # minimum to even consider a signal
-        comp_threshold = 0.46   # composite must confirm multi-signal agreement
+        # High-accuracy thresholds — verifiable markets only, high conviction required
+        mat_threshold  = 0.45   # minimum materiality (Gemini must be confident)
+        comp_threshold = 0.48   # composite confirms multi-signal agreement
 
         classification: Classification = research_market(market)
 

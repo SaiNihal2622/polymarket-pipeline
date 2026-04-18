@@ -430,15 +430,19 @@ def research_market(market: Market) -> Classification:
         f"You are a prediction market analyst with live web search access.\n\n"
         f"Market Question: {market.question}\n"
         f"Current YES price: {market.yes_price:.2f} ({market.yes_price:.0%} implied probability)\n\n"
-        f"Search the web RIGHT NOW for the latest information.\n"
-        f"For sports: recent form, head-to-head, injuries, lineups.\n"
-        f"For crypto: price trend, moves, sentiment.\n"
-        f"For politics/events: latest polls, news, announcements.\n\n"
-        f"Does evidence favor YES or NO?\n"
-        f"Materiality: 0.0=no info, 0.5=moderate, 0.7=strong, 0.9=near-definitive\n\n"
+        f"Search the web RIGHT NOW. Your ONLY job is to find VERIFIABLE FACTS:\n\n"
+        f"HIGH materiality (0.7-0.95) ONLY if you can confirm ONE of these:\n"
+        f"  - The event has ALREADY HAPPENED and you know the result\n"
+        f"  - A price/metric is CURRENTLY at a level that makes YES/NO near-certain\n"
+        f"  - An official announcement has been made that settles the question\n"
+        f"  - Recent hard data (last 24h) makes one outcome overwhelmingly likely\n\n"
+        f"LOW materiality (0.0-0.35) for:\n"
+        f"  - Future sports results (uncertain, use 0.0 unless one team has withdrawn/forfeited)\n"
+        f"  - Markets where the YES price already reflects the known information\n"
+        f"  - Anything speculative about what MIGHT happen\n\n"
         f"Respond ONLY with valid JSON:\n"
         f'{{"direction": "bullish"|"bearish"|"neutral", '
-        f'"materiality": <0.0-1.0>, "reasoning": "<1 sentence>"}}'
+        f'"materiality": <0.0-1.0>, "reasoning": "<1 sentence stating the specific fact>"}}'
     )
 
     try:
@@ -452,7 +456,7 @@ def research_market(market: Market) -> Classification:
         a_reason = a_res.get("reasoning", "")
 
         # If analyst is neutral or weak, don't bother with skeptic
-        if a_dir == "neutral" or a_mat < 0.4:
+        if a_dir == "neutral" or a_mat < 0.45:
             latency = int((time.time() - start) * 1000)
             return Classification(
                 direction=a_dir, materiality=a_mat,
@@ -500,14 +504,15 @@ def research_market(market: Market) -> Classification:
         else:
             # Skeptic actively disagrees → DAMPEN (not kill) analyst signal
             # Only kill if skeptic is very confident in the opposite direction
-            if s_mat >= 0.6:
+            if s_mat >= 0.45:
+                # Skeptic is confident in opposite → KILL signal
                 final_dir = "neutral"
                 final_mat = 0.0
-                final_reason = f"[MiroFish ✗ SPLIT strong] Analyst:{a_dir} vs Skeptic:{s_dir}({s_mat:.2f})"
+                final_reason = f"[MiroFish ✗ KILLED] Analyst:{a_dir} vs Skeptic:{s_dir}({s_mat:.2f})"
             else:
-                # Weak skeptic disagreement → keep analyst but halve materiality
+                # Weak skeptic disagreement → keep analyst but cut materiality by 60%
                 final_dir = a_dir
-                final_mat = a_mat * 0.5
+                final_mat = a_mat * 0.4
                 final_reason = f"[MiroFish ? weak-split] {a_reason} | Skeptic weakly: {s_reason}"
 
         latency = int((time.time() - start) * 1000)
