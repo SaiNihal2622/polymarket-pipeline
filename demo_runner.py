@@ -39,7 +39,13 @@ from rich.table import Table
 
 import config
 import logger
-from logger import get_pending_market_ids
+from resolver import get_pending_demo_trades as _get_pending_raw
+
+def get_pending_market_ids() -> set:
+    try:
+        return {t["market_id"] for t in _get_pending_raw()}
+    except Exception:
+        return set()
 from markets import fetch_active_markets, filter_by_categories
 from scraper import scrape_all
 from classifier import classify, research_market, Classification
