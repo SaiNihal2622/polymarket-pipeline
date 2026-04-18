@@ -498,10 +498,17 @@ def research_market(market: Market) -> Classification:
             final_mat = a_mat * 0.7
             final_reason = f"[MiroFish ~] {a_reason} | Skeptic neutral: {s_reason}"
         else:
-            # Skeptic actively disagrees → KILL the signal
-            final_dir = "neutral"
-            final_mat = 0.0
-            final_reason = f"[MiroFish ✗ SPLIT] Analyst: {a_dir} / Skeptic: {s_dir} — {s_reason}"
+            # Skeptic actively disagrees → DAMPEN (not kill) analyst signal
+            # Only kill if skeptic is very confident in the opposite direction
+            if s_mat >= 0.6:
+                final_dir = "neutral"
+                final_mat = 0.0
+                final_reason = f"[MiroFish ✗ SPLIT strong] Analyst:{a_dir} vs Skeptic:{s_dir}({s_mat:.2f})"
+            else:
+                # Weak skeptic disagreement → keep analyst but halve materiality
+                final_dir = a_dir
+                final_mat = a_mat * 0.5
+                final_reason = f"[MiroFish ? weak-split] {a_reason} | Skeptic weakly: {s_reason}"
 
         latency = int((time.time() - start) * 1000)
         return Classification(

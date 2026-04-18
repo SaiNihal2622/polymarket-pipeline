@@ -401,13 +401,10 @@ def scan_and_trade() -> dict:
             tid = t.get("token_id") if isinstance(t, dict) else str(t)
             if tid:
                 token_map[m.condition_id] = tid
-    whale_signals_map = bulk_whale_signals(fast_ids[:20], token_map=token_map)  # cap to 20/scan
-    console.print(f"   [dim]Whale signals: {len(whale_signals_map)} markets with whale data[/dim]")
-
-    # ── Leaderboard copy-trade: top wallets' recent buys (replaces Polycool) ─
-    from leaderboard import build_copy_signals
-    copy_signals_map = build_copy_signals(set(fast_ids), top_n_wallets=25, lookback_hours=6)
-    console.print(f"   [dim]Leaderboard: {len(copy_signals_map)} markets with top-wallet activity[/dim]")
+    # Whale + leaderboard endpoints return empty from Railway — skipping to save time
+    whale_signals_map = {}
+    copy_signals_map  = {}
+    # (Previously called bulk_whale_signals + build_copy_signals — dead weight)
 
     if fast_markets:
         console.print(f"\n  [cyan]⚡ TRACK 1: Researching {min(len(fast_markets), MAX_FAST)} fast markets with Gemini search...[/cyan]")
@@ -433,9 +430,9 @@ def scan_and_trade() -> dict:
         end = _parse_end_date(market.end_date)
         hours_left = ((end - now).total_seconds() / 3600) if end else 999
 
-        # Balanced thresholds — strict enough to avoid junk, loose enough to trade
-        mat_threshold  = 0.40   # was 0.55 (no trades) / 0.10 (too loose)
-        comp_threshold = 0.55   # was 0.65 (no trades) / 0.25 (too loose)
+        # Tuned thresholds — avoid junk but actually trade
+        mat_threshold  = 0.35   # lowered from 0.40 → more volume
+        comp_threshold = 0.50   # lowered from 0.55 → more volume
 
         classification: Classification = research_market(market)
 
@@ -471,6 +468,25 @@ def scan_and_trade() -> dict:
         if bot_sig and bot_sig.get("spread") is not None and bot_sig["spread"] < 0.05:
             classification.materiality = min(1.0, classification.materiality + 0.05)
 
+        # News-alignment boost: if recent RSS headlines strongly mention this market's
+        # key entities, the signal is corroborated by external news → +0.08 materiality
+        news_boost_tag = ""
+        try:
+            q_words = [w.lower() for w in market.question.split()
+                       if len(w) >= 5 and w.lower() not in
+                       {"will", "vs.", "vs", "their", "there", "would", "could", "about"}]
+            if q_words:
+                hits = 0
+                for h in news_items[:200]:
+                    h_txt = (h.headline or "").lower()
+                    if sum(1 for w in q_words[:6] if w in h_txt) >= 2:
+                        hits += 1
+                if hits >= 3 and classification.direction != "neutral":
+                    classification.materiality = min(1.0, classification.materiality + 0.08)
+                    news_boost_tag = f" 📰{hits}hits"
+        except Exception:
+            pass
+
         whale_tag = ""
         if whale_sig:
             gemini_dir = classification.direction  # bullish/bearish/neutral
@@ -490,7 +506,7 @@ def scan_and_trade() -> dict:
         console.print(
             f"  [{('cyan' if classification.direction != 'neutral' else 'dim')}]"
             f"⚡research→ {classification.direction} mat:{classification.materiality:.2f}"
-            f"{clob_tag}{lb_tag}{bot_tag}{whale_tag} {closes_tag}[/] {market.question[:48]}"
+            f"{clob_tag}{news_boost_tag}{lb_tag}{bot_tag}{whale_tag} {closes_tag}[/] {market.question[:48]}"
         )
         # ── Copy-trade override: recent whale buys → force signal ────────────
         copy_sig = copy_trade_signal(market.condition_id,
