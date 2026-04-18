@@ -425,22 +425,29 @@ def scan_and_trade() -> dict:
     # Crypto/stock price markets: Gemini can verify current price vs threshold.
     # Political events: Gemini can verify if vote/announcement already happened.
     VERIFIABLE_PATTERNS = [
-        # Crypto price (checkable NOW)
-        "bitcoin", "btc", "ethereum", "eth", "solana", "sol",
-        "xrp", "bnb", "dogecoin", "up or down",
+        # Crypto price (checkable NOW via live price)
+        "bitcoin", "btc ", "ethereum", "eth ", "solana", "sol ",
+        "xrp", "bnb", "dogecoin", "cardano", "avalanche", "polygon",
+        "up or down", "above $", "below $", "between $",
         "price of bitcoin", "price of ethereum", "price of solana",
-        "above $", "below $", "between $",
+        "crypto", "coin",
         # Stock / finance (checkable after market close)
-        "up or down on april", "s&p 500", "nasdaq", "dow jones",
-        "amazon", "tesla", "apple", "google", "meta", "nvidia",
-        "microsoft", "netflix", "opens up or down",
-        # Major political (verifiable outcomes)
-        "will trump", "will biden", "federal reserve", "fed rate",
-        "supreme court", "congressional", "election result",
+        "up or down on april", "opens up or down",
+        "s&p 500", "s&p500", "spx", "nasdaq", "dow jones",
+        "amazon", "tesla", "apple", "google", "alphabet",
+        "meta ", "nvidia", "microsoft", "netflix", "openai",
+        "unitedhealth", "jpmorgan", "berkshire",
+        # US political (verifiable outcomes)
+        "will trump", "trump ", "federal reserve", "fed rate",
+        "supreme court", "congress", "senate bill",
+        "election result", "ceasefire", "iran ", "ukraine",
+        "us x iran", "tariff",
         # IPL / Cricket (score-based, verifiable after match)
-        "ipl", "cricket", "t20", "odi",
+        "ipl", "cricket", "t20", "odi", "test match",
         # Earthquake/natural (verifiable via USGS)
         "earthquake", "magnitude",
+        # Constitutional/legal (verifiable)
+        "constitutional amendment", "referendum", "ballot",
     ]
 
     def _is_verifiable(q: str) -> bool:
@@ -725,8 +732,13 @@ def scan_and_trade() -> dict:
 
             end = _parse_end_date(market.end_date)
             hours_left = ((end - now).total_seconds() / 3600) if end else 999
-            mat_threshold  = 0.40   # balanced — not too strict, not too loose
-            comp_threshold = 0.55   # balanced
+            # Lower threshold for verifiable markets (crypto/stock/political)
+            if _is_verifiable(market.question):
+                mat_threshold  = 0.32   # verifiable = more trustworthy
+                comp_threshold = 0.46
+            else:
+                mat_threshold  = 0.50   # non-verifiable = need very high confidence
+                comp_threshold = 0.58
 
             classification: Classification = classify(
                 headline=news_item.headline,
