@@ -47,9 +47,10 @@ def _conn() -> sqlite3.Connection:
 
 def get_pending_demo_trades() -> list[dict]:
     conn = _conn()
+    # Include token_id so CLOB resolution works directly without extra DB lookup
     rows = conn.execute("""
         SELECT t.id, t.market_id, t.market_question, t.side, t.amount_usd,
-               t.claude_score, t.market_price, t.edge, t.created_at
+               t.claude_score, t.market_price, t.edge, t.created_at, t.token_id
         FROM trades t
         LEFT JOIN outcomes o ON t.id = o.trade_id
         WHERE t.status IN ('demo', 'dry_run')
@@ -63,72 +64,26 @@ def get_pending_demo_trades() -> list[dict]:
 
 def _get_token_id_for_trade(market_id: str) -> str | None:
     """
-    Look up YES-token id: first from DB (fast), then from Gamma API (fallback).
-    Caches Gamma result back to DB so subsequent calls are instant.
+    Look up YES-token id from DB only.
+    NOTE: Gamma's conditionId filter is fundamentally broken — it always returns
+    the same default market regardless of the conditionId queried. We do NOT
+    attempt Gamma lookup here. token_id is only available for trades logged
+    after the token_id fix (trades #187+).
     """
-    conn = _conn()
-    # Check if token_id column exists (migration may not have run yet)
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(trades)").fetchall()}
-    if "token_id" in cols:
+    try:
+        conn = _conn()
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(trades)").fetchall()}
+        if "token_id" not in cols:
+            conn.close()
+            return None
         row = conn.execute(
             "SELECT token_id FROM trades WHERE market_id=? AND token_id IS NOT NULL LIMIT 1",
             (market_id,)
         ).fetchone()
-        if row and row["token_id"]:
-            conn.close()
-            return row["token_id"]
-    conn.close()
-
-    # NOTE: Gamma's conditionId filter is known-broken — always returns the same
-    # default market (0x9c1a953fe92c8357f1) regardless of input.
-    # We detect this by checking if the returned conditionId matches our query.
-    # If it doesn't match, we know Gamma ignored our filter and skip it.
-    param_attempts = [
-        {"conditionId": market_id, "limit": 1},
-        {"condition_id": market_id, "limit": 1},
-    ]
-    BROKEN_DEFAULT_MARKET = "0x9c1a953fe92c8357f1"
-    for params in param_attempts:
-        try:
-            r = httpx.get(f"{GAMMA_API}/markets", params=params, timeout=10)
-            if r.status_code != 200:
-                continue
-            data = r.json()
-            items = data if isinstance(data, list) else data.get("data", [])
-            if not items:
-                continue
-            m = items[0]
-            returned_cid = (m.get("conditionId") or m.get("id") or "")
-            # Detect broken filter: returned market must match what we asked for
-            if returned_cid and not returned_cid.startswith(market_id[:16]) \
-               and returned_cid.startswith(BROKEN_DEFAULT_MARKET):
-                log.debug(f"[resolver:token] Gamma returned broken default, skipping")
-                break  # no point trying other params
-
-            tokens = m.get("tokens") or m.get("clobTokenIds") or []
-            if isinstance(tokens, str):
-                try: tokens = json.loads(tokens)
-                except Exception: tokens = []
-            if tokens:
-                t   = tokens[0]
-                tid = t.get("token_id") if isinstance(t, dict) else str(t)
-                if tid and len(tid) > 5 and returned_cid.startswith(market_id[:16]):
-                    try:
-                        conn2 = _conn()
-                        if "token_id" in cols:
-                            conn2.execute(
-                                "UPDATE trades SET token_id=? WHERE market_id=? AND token_id IS NULL",
-                                (tid, market_id)
-                            )
-                            conn2.commit()
-                        conn2.close()
-                    except Exception:
-                        pass
-                    return tid
-        except Exception as e:
-            log.debug(f"[resolver] token lookup {market_id[:16]}: {e}")
-
-    return None
+        conn.close()
+        return row["token_id"] if row else None
+    except Exception:
+        return None
 
 
 # ── Strategy 1: CLOB book prices ────────────────────────────────────────────
@@ -203,13 +158,14 @@ def _resolve_via_gamma_direct(market_id: str, timeout: int = 10) -> float | None
             data = r.json()
             items = data if isinstance(data, list) else data.get("data", [])
             for m in items:
-                # Accept this market if its id/conditionId matches ours
+                # Only accept this market if its conditionId/id matches ours
                 m_id = m.get("conditionId") or m.get("id") or ""
-                if m_id == market_id or not m_id:
-                    result = _parse_outcome(m)
-                    if result is not None:
-                        log.debug(f"[resolver:gamma] {market_id[:16]} → {result}")
-                        return result
+                if m_id and m_id != market_id:
+                    continue  # wrong market — skip (Gamma filter is broken, must verify)
+                result = _parse_outcome(m)
+                if result is not None:
+                    log.debug(f"[resolver:gamma] {market_id[:16]} → {result}")
+                    return result
         except Exception as e:
             log.debug(f"[resolver:gamma] {market_id[:16]} attempt failed: {e}")
     return None
