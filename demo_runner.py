@@ -224,7 +224,8 @@ def filter_quality_markets(markets, now: datetime) -> tuple[list, dict]:
                 continue
 
         # 2. Skip near-certain prices (market already knows outcome)
-        if m.yes_price < config.MIN_YES_PRICE or m.yes_price > config.MAX_YES_PRICE:
+        # Use wider range (0.08/0.92) to allow more markets — Gemini research handles near-certain ones
+        if m.yes_price < 0.08 or m.yes_price > 0.92:
             skipped["price_extreme"] += 1
             continue
 
@@ -540,10 +541,15 @@ def scan_and_trade() -> dict:
         news_event = _news_item_to_event(dummy_news)
 
         import config as _cfg
-        _orig_mat = _cfg.MATERIALITY_THRESHOLD
+        _orig_mat  = _cfg.MATERIALITY_THRESHOLD
+        _orig_edge = _cfg.EDGE_THRESHOLD
         _cfg.MATERIALITY_THRESHOLD = mat_threshold
+        # Track 1 uses Gemini live research — lower edge threshold so near-certain
+        # markets (YES>0.80 or YES<0.20) can still be traded (edge formula = mat×room)
+        _cfg.EDGE_THRESHOLD = 0.03
         signal = detect_edge_v2(market, classification, news_event)
         _cfg.MATERIALITY_THRESHOLD = _orig_mat
+        _cfg.EDGE_THRESHOLD = _orig_edge
         if signal and signal.composite_score < comp_threshold:
             signal = None
 
@@ -680,10 +686,13 @@ def scan_and_trade() -> dict:
                 continue
 
             import config as _cfg
-            _orig_mat = _cfg.MATERIALITY_THRESHOLD
+            _orig_mat  = _cfg.MATERIALITY_THRESHOLD
+            _orig_edge = _cfg.EDGE_THRESHOLD
             _cfg.MATERIALITY_THRESHOLD = mat_threshold
+            _cfg.EDGE_THRESHOLD = 0.06   # Track 2: lower than default 0.15 (news+classify)
             signal = detect_edge_v2(market, classification, news_event)
             _cfg.MATERIALITY_THRESHOLD = _orig_mat
+            _cfg.EDGE_THRESHOLD = _orig_edge
             if signal and signal.composite_score < comp_threshold:
                 signal = None
 

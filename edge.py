@@ -97,14 +97,14 @@ def detect_edge_v2(
 
     if classification.direction == "bullish":
         side = "YES"
-        if market_price > 0.85:
-            return None
+        if market_price > 0.92:
+            return None  # already near-certain YES, nothing to gain
         raw_edge = classification.materiality * (1.0 - market_price)
         price_room = 1.0 - market_price
     else:  # bearish
         side = "NO"
-        if market_price < 0.15:
-            return None
+        if market_price < 0.08:
+            return None  # already near-certain NO, nothing to gain
         raw_edge = classification.materiality * market_price
         price_room = market_price
 
@@ -184,15 +184,19 @@ def compute_composite_score(
     score += weights["volume_niche"] * niche_signal
 
     # 5. News recency — fresher = better edge before market absorbs
-    age_seconds = news_event.age_seconds() if hasattr(news_event, 'age_seconds') else 60
-    if age_seconds < 30:
+    # RSS news is typically 30min-6h old; calibrate thresholds accordingly
+    age_seconds = news_event.age_seconds() if hasattr(news_event, 'age_seconds') else 3600
+    age_hours = age_seconds / 3600
+    if age_hours < 0.5:       # < 30 min: very fresh
         recency_signal = 1.0
-    elif age_seconds < 120:
+    elif age_hours < 1.5:     # < 1.5h: fresh
         recency_signal = 0.8
-    elif age_seconds < 300:
+    elif age_hours < 3.0:     # < 3h: usable
         recency_signal = 0.5
-    else:
-        recency_signal = 0.2
+    elif age_hours < 6.0:     # < 6h: stale but consider
+        recency_signal = 0.3
+    else:                     # > 6h: very stale
+        recency_signal = 0.1
     score += weights["recency"] * recency_signal
 
     return round(score, 4)
