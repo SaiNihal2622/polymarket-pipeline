@@ -437,8 +437,8 @@ def scan_and_trade() -> dict:
         hours_left = ((end - now).total_seconds() / 3600) if end else 999
 
         # Tuned thresholds — avoid junk but actually trade
-        mat_threshold  = 0.28   # lowered from 0.35 → catch more signals
-        comp_threshold = 0.44   # lowered from 0.50 → catch more signals
+        mat_threshold  = 0.25   # Gemini research quality means lower bar is OK
+        comp_threshold = 0.40   # composite captures multi-signal confidence
 
         classification: Classification = research_market(market)
 
