@@ -433,9 +433,9 @@ def scan_and_trade() -> dict:
         end = _parse_end_date(market.end_date)
         hours_left = ((end - now).total_seconds() / 3600) if end else 999
 
-        # High-bar thresholds — only take trades where Gemini is confident
-        mat_threshold  = 0.55   # was 0.10–0.15
-        comp_threshold = 0.65   # was 0.25–0.30
+        # Balanced thresholds — strict enough to avoid junk, loose enough to trade
+        mat_threshold  = 0.40   # was 0.55 (no trades) / 0.10 (too loose)
+        comp_threshold = 0.55   # was 0.65 (no trades) / 0.25 (too loose)
 
         classification: Classification = research_market(market)
 
@@ -630,8 +630,8 @@ def scan_and_trade() -> dict:
 
             end = _parse_end_date(market.end_date)
             hours_left = ((end - now).total_seconds() / 3600) if end else 999
-            mat_threshold  = 0.55   # raised for quality — was 0.20
-            comp_threshold = 0.65   # raised for quality — was 0.40
+            mat_threshold  = 0.40   # balanced — not too strict, not too loose
+            comp_threshold = 0.55   # balanced
 
             classification: Classification = classify(
                 headline=news_item.headline,

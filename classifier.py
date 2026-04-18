@@ -50,7 +50,7 @@ def _call_llm(prompt: str, temperature: float = 0.1, max_tokens: int = 200) -> s
 
 
 _gemini_last_call    = 0.0
-_GEMINI_MIN_INTERVAL = 4.0   # 4s spacing ≈ 15 RPM — well under 2000 RPM limit
+_GEMINI_MIN_INTERVAL = 6.0   # 6s spacing ≈ 10 RPM — safer for free tier (MiroFish doubles calls)
 
 
 def _call_gemini(prompt: str, temperature: float, max_tokens: int, use_search: bool = False) -> str:
@@ -75,7 +75,7 @@ def _call_gemini(prompt: str, temperature: float, max_tokens: int, use_search: b
     if wait > 0:
         _time.sleep(wait)
 
-    _429_backoffs = [2, 4]   # truncated exponential backoff before Groq fallback
+    _429_backoffs = [4, 10, 20]   # longer backoff: 4s, 10s, 20s before Groq fallback
 
     for attempt in range(3):
         try:

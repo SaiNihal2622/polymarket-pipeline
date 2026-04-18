@@ -172,13 +172,31 @@ def _refresh_resolution_cache(pending_trades: list[dict]) -> None:
 
 def check_market_resolution(condition_id: str) -> float | None:
     """
-    Check if a market has resolved. Uses bulk-fetch cache since
-    the Gamma API conditionId filter doesn't work reliably.
+    Check if a market has resolved. Tries cache first, then per-trade fallback.
     Returns 1.0 (YES), 0.0 (NO), 0.5 (push), or None (still open).
     """
     if not condition_id:
         return None
-    return _resolution_cache.get(condition_id, None)
+    # Cache hit
+    if condition_id in _resolution_cache:
+        return _resolution_cache[condition_id]
+    # Per-trade direct lookup by conditionId
+    try:
+        r = httpx.get(f"{GAMMA_API}/markets",
+                      params={"condition_ids": condition_id, "closed": "true", "limit": 5},
+                      timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            items = data if isinstance(data, list) else data.get("data", [])
+            for m in items:
+                if m.get("conditionId") == condition_id or m.get("id") == condition_id:
+                    result = _parse_outcome(m)
+                    if result is not None:
+                        _resolution_cache[condition_id] = result
+                        return result
+    except Exception as e:
+        log.debug(f"[resolver] direct lookup failed for {condition_id[:16]}: {e}")
+    return None
 
 
 def resolve_trade(trade_id: int, market_result: float, side: str, amount_usd: float):
