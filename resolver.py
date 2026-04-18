@@ -83,6 +83,7 @@ def _get_token_id_for_trade(market_id: str) -> str | None:
     try:
         r = httpx.get(f"{GAMMA_API}/markets",
                       params={"id": market_id, "limit": 1}, timeout=10)
+        print(f"[resolver:token] market {market_id[:16]} → Gamma status {r.status_code}")
         if r.status_code == 200:
             data = r.json()
             items = data if isinstance(data, list) else data.get("data", [])
@@ -135,6 +136,7 @@ def _resolve_via_clob(token_id: str, timeout: int = 8) -> float | None:
         asks = data.get("asks", []) or []
 
         # If no book at all, market may be resolved (no liquidity post-resolution)
+        print(f"[resolver:CLOB_book] token={token_id[:12]} bids={len(bids)} asks={len(asks)} raw={str(data)[:120]}")
         if not bids and not asks:
             # Try midpoint from last_trade_price or hash field
             lp = data.get("last_trade_price") or data.get("midpoint")
@@ -310,22 +312,32 @@ def check_market_resolution(trade: dict) -> float | None:
     Returns 1.0/0.0/0.5 or None if still unresolved.
     """
     market_id = trade.get("market_id", "")
-    token_id  = trade.get("token_id") or _get_token_id_for_trade(market_id)
+    tid       = trade.get("token_id")
 
-    # Strategy 1: CLOB book (most reliable — confirmed working from Railway)
-    if token_id:
-        result = _resolve_via_clob(token_id)
+    # Fetch token_id if not stored with this trade
+    if not tid:
+        tid = _get_token_id_for_trade(market_id)
+
+    # Strategy 1: CLOB book prices (most reliable — confirmed working from Railway)
+    if tid:
+        result = _resolve_via_clob(tid)
         if result is not None:
-            log.debug(f"[resolver] #{trade['id']} CLOB→{result}")
+            print(f"[resolver:CLOB] #{trade['id']} token={tid[:12]}… → {result}")
             return result
+    else:
+        print(f"[resolver:CLOB] #{trade['id']} no token_id — skipping CLOB")
 
     # Strategy 2: Gamma direct REST lookup
     result = _resolve_via_gamma_direct(market_id)
     if result is not None:
+        print(f"[resolver:Gamma] #{trade['id']} → {result}")
         return result
 
     # Strategy 3: Bulk cache hit
-    return _resolution_cache.get(market_id)
+    cached = _resolution_cache.get(market_id)
+    if cached is not None:
+        print(f"[resolver:cache] #{trade['id']} → {cached}")
+    return cached
 
 
 def resolve_trade(trade_id: int, market_result: float, side: str, amount_usd: float):
