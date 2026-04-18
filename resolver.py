@@ -128,8 +128,8 @@ def _resolve_via_clob(token_id: str, timeout: int = 8) -> float | None:
             return None
 
         avg_price = sum(prices) / len(prices)
-        if avg_price >= 0.97:  return 1.0
-        if avg_price <= 0.03:  return 0.0
+        if avg_price >= 0.93:  return 1.0   # lowered from 0.97 — resolved YES
+        if avg_price <= 0.07:  return 0.0   # raised from 0.03 — resolved NO
         return None  # still trading
     except Exception as e:
         log.debug(f"[resolver:clob] {token_id[:12]}: {e}")
@@ -198,8 +198,8 @@ def _parse_outcome(m: dict) -> float | None:
             if len(prices) >= 2:
                 yes_price = float(prices[0])
                 no_price  = float(prices[1])
-                if yes_price >= 0.95:   return 1.0
-                if no_price  >= 0.95:   return 0.0
+                if yes_price >= 0.90:   return 1.0   # lowered 0.95→0.90 for early resolution
+                if no_price  >= 0.90:   return 0.0
                 if closed and 0.40 <= yes_price <= 0.60:
                     return 0.5
         except (json.JSONDecodeError, ValueError):

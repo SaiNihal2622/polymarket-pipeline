@@ -108,9 +108,14 @@ def book_edge_adjustment(book: BookSignal | None, gemini_direction: str) -> tupl
     if book.spread < 0.03 and book.liquidity_tier in ("deep", "medium"):
         delta += 0.08
         tags.append(f"tight-spread")
-    elif book.spread > 0.10:
-        delta -= 0.10
+    elif book.spread > 0.50:
+        # Only penalise truly empty/placeholder books (spread ≥ 50¢)
+        delta -= 0.06
         tags.append(f"wide-spread{book.spread:.2f}")
+    elif book.spread > 0.10:
+        # Moderate spread — small penalty
+        delta -= 0.04
+        tags.append(f"mod-spread{book.spread:.2f}")
 
     if book.liquidity_tier == "thin":
         delta -= 0.05
