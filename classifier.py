@@ -427,22 +427,28 @@ def research_market(market: Market) -> Classification:
     model_name = "gemini/" + config.GEMINI_MODEL + "+search+miro"
 
     analyst_prompt = (
-        f"You are a prediction market analyst with live web search access.\n\n"
+        f"You are a prediction market FACT-CHECKER with live web search.\n\n"
         f"Market Question: {market.question}\n"
         f"Current YES price: {market.yes_price:.2f} ({market.yes_price:.0%} implied probability)\n\n"
-        f"Search the web RIGHT NOW. Your ONLY job is to find VERIFIABLE FACTS:\n\n"
-        f"HIGH materiality (0.7-0.95) ONLY if you can confirm ONE of these:\n"
-        f"  - The event has ALREADY HAPPENED and you know the result\n"
-        f"  - A price/metric is CURRENTLY at a level that makes YES/NO near-certain\n"
-        f"  - An official announcement has been made that settles the question\n"
-        f"  - Recent hard data (last 24h) makes one outcome overwhelmingly likely\n\n"
-        f"LOW materiality (0.0-0.35) for:\n"
-        f"  - Future sports results (uncertain, use 0.0 unless one team has withdrawn/forfeited)\n"
-        f"  - Markets where the YES price already reflects the known information\n"
-        f"  - Anything speculative about what MIGHT happen\n\n"
+        f"Search the web RIGHT NOW. STRICT RULES:\n\n"
+        f"RULE 1 — ONLY trade if the outcome is ALREADY DETERMINED:\n"
+        f"  - Event has ALREADY HAPPENED → you know the result for certain\n"
+        f"  - Price/metric is RIGHT NOW at a level that makes YES/NO mathematically certain\n"
+        f"    (e.g. BTC is at $87,000 and market asks 'will BTC be above $70,000?' → YES certain)\n"
+        f"  - Official result has been announced (election called, law signed, etc.)\n\n"
+        f"RULE 2 — Return neutral (0.0) for EVERYTHING ELSE:\n"
+        f"  - Any future event not yet determined → neutral 0.0\n"
+        f"  - Any prediction or forecast → neutral 0.0\n"
+        f"  - Any sports match not yet played → neutral 0.0\n"
+        f"  - Any crypto price that could still move before market closes → neutral 0.0\n"
+        f"  - If you are not 100% certain → neutral 0.0\n\n"
+        f"RULE 3 — Materiality scale:\n"
+        f"  0.85-0.95 = outcome is 100% certain (already resolved, just not closed)\n"
+        f"  0.65-0.84 = outcome is 90%+ certain based on current confirmed data\n"
+        f"  0.0       = anything else — DO NOT GUESS\n\n"
         f"Respond ONLY with valid JSON:\n"
         f'{{"direction": "bullish"|"bearish"|"neutral", '
-        f'"materiality": <0.0-1.0>, "reasoning": "<1 sentence stating the specific fact>"}}'
+        f'"materiality": <0.0-1.0>, "reasoning": "<1 sentence with the SPECIFIC FACT you found and its source>"}}'
     )
 
     try:

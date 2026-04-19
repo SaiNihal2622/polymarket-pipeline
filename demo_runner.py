@@ -597,30 +597,29 @@ def scan_and_trade() -> dict:
     # Sports results are future uncertainty — no real edge over the market price.
     # Crypto/stock price markets: Gemini can verify current price vs threshold.
     # Political events: Gemini can verify if vote/announcement already happened.
+    # STRICT whitelist — must match one of these exact categories
+    # "Other" category was 28% accurate — hard blocked now
     VERIFIABLE_PATTERNS = [
-        # Crypto price (checkable NOW via live price)
-        "bitcoin", "btc ", "ethereum", "eth ", "solana", "sol ",
-        "xrp", "bnb", "dogecoin", "cardano", "avalanche", "polygon",
+        # ── Crypto price (Gemini can check live price RIGHT NOW) ──────────────
+        "bitcoin", "btc ", "btc/", "ethereum", "eth ", "eth/",
+        "solana", "sol ", "xrp", "bnb", "dogecoin", "doge",
+        "cardano", "ada", "avalanche", "avax", "polygon", "matic",
+        "chainlink", "link", "uniswap", "shiba", "pepe",
         "up or down", "above $", "below $", "between $",
-        "price of bitcoin", "price of ethereum", "price of solana",
-        "crypto", "coin",
-        # Stock / finance (checkable after market close)
-        "up or down on april", "opens up or down",
+        "price of bitcoin", "price of ethereum",
+        # ── US Stocks (Gemini checks after market close) ──────────────────────
         "s&p 500", "s&p500", "spx", "nasdaq", "dow jones",
-        "amazon", "tesla", "apple", "google", "alphabet",
+        "amazon", "tesla", "apple ", "google", "alphabet",
         "meta ", "nvidia", "microsoft", "netflix", "openai",
-        "unitedhealth", "jpmorgan", "berkshire",
-        # US political (verifiable outcomes)
-        "will trump", "trump ", "federal reserve", "fed rate",
-        "supreme court", "congress", "senate bill",
-        "election result", "ceasefire", "iran ", "ukraine",
-        "us x iran", "tariff",
-        # IPL / Cricket (score-based, verifiable after match)
-        "ipl", "cricket", "t20", "odi", "test match",
-        # Earthquake/natural (verifiable via USGS)
-        "earthquake", "magnitude",
-        # Constitutional/legal (verifiable)
-        "constitutional amendment", "referendum", "ballot",
+        "unitedhealth", "jpmorgan", "berkshire", "coinbase",
+        # ── US Politics ONLY (verifiable — Trump signs/announces/tweets) ──────
+        "will trump", "trump sign", "trump announc", "trump tariff",
+        "federal reserve", "fed rate", "fed cut", "fed hike",
+        "supreme court", "ceasefire", "us-iran", "us x iran",
+        "ukraine ceasefire", "nato",
+        # ── IPL Cricket (score verifiable after match) ────────────────────────
+        "ipl", "indian premier league",
+        # ── Nothing else — no earthquakes, no elections, no governor races ────
     ]
 
     def _is_verifiable(q: str) -> bool:
@@ -725,16 +724,13 @@ def scan_and_trade() -> dict:
 
         whale_tag = ""
         if whale_sig:
-            gemini_dir = classification.direction  # bullish/bearish/neutral
+            gemini_dir = classification.direction
             whale_dir  = whale_sig.direction
-            if gemini_dir != "neutral" and whale_dir == gemini_dir:
-                # Whales agree → strong boost
-                classification.materiality = min(1.0, classification.materiality + 0.12)
-                whale_tag = f" 🐋{whale_sig.yes_bias:.0%}YES"
-            elif whale_dir != "neutral" and whale_dir != gemini_dir:
-                # Whales disagree → reduce materiality (smart money says opposite)
-                classification.materiality = max(0.0, classification.materiality - 0.10)
-                whale_tag = f" ⚠️whale-vs-gemini"
+            # Whale signals ONLY used to KILL signals (smart money disagrees = danger)
+            # Never boost — Gemini facts should stand alone. Boosting caused false positives.
+            if whale_dir != "neutral" and whale_dir != gemini_dir:
+                classification.materiality = max(0.0, classification.materiality - 0.15)
+                whale_tag = f" ⚠️whale-disagrees(−0.15)"
 
         closes_tag = f"[{hours_left:.1f}h]"
         bot_tag = f" spread:{bot_sig['spread']:.3f}" if bot_sig and bot_sig.get("spread") else ""
