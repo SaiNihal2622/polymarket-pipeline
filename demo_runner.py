@@ -457,10 +457,15 @@ def scan_and_trade() -> dict:
     # This is the primary driver for 80% accuracy + 15 trades/day.
     # ══════════════════════════════════════════════════════════════════════════
     from orderbook import fetch_book
-    CLOB_YES_THRESHOLD = float(os.getenv("CLOB_YES_THRESHOLD", "0.85"))
-    CLOB_NO_THRESHOLD  = float(os.getenv("CLOB_NO_THRESHOLD",  "0.15"))
-    CLOB_MAX_HOURS     = float(os.getenv("CLOB_MAX_HOURS",     "8"))
-    CLOB_MIN_VOL       = float(os.getenv("CLOB_MIN_VOL",       "2000"))
+    # Sweet spot: crowd 80%+ confident BUT price still at 0.70-0.88
+    # = real edge (you earn $0.12-0.30 per share AND win 80%+ of the time)
+    # Avoid 0.90+ markets — win rate barely covers the tiny payout
+    CLOB_YES_THRESHOLD = float(os.getenv("CLOB_YES_THRESHOLD", "0.72"))  # crowd ≥72% confident
+    CLOB_YES_MAX       = float(os.getenv("CLOB_YES_MAX",       "0.91"))  # cap — above 91% payout too small
+    CLOB_NO_THRESHOLD  = float(os.getenv("CLOB_NO_THRESHOLD",  "0.28"))  # crowd ≥72% on NO side
+    CLOB_NO_MIN        = float(os.getenv("CLOB_NO_MIN",        "0.09"))  # cap NO side
+    CLOB_MAX_HOURS     = float(os.getenv("CLOB_MAX_HOURS",     "12"))    # closes within 12h
+    CLOB_MIN_VOL       = float(os.getenv("CLOB_MIN_VOL",       "3000"))  # liquid markets only
 
     # Hard-block list for CLOB consensus (pure coin-flips regardless of price)
     CLOB_SKIP = [
@@ -513,16 +518,16 @@ def scan_and_trade() -> dict:
 
         hours_left_clob = _hours_left(market)
 
-        if mid >= CLOB_YES_THRESHOLD:
+        if CLOB_YES_THRESHOLD <= mid <= CLOB_YES_MAX:
             direction = "bullish"
             side = "YES"
             confidence = mid
-        elif mid <= CLOB_NO_THRESHOLD:
+        elif CLOB_NO_MIN <= mid <= CLOB_NO_THRESHOLD:
             direction = "bearish"
             side = "NO"
             confidence = 1 - mid
         else:
-            continue  # not confident enough
+            continue  # outside sweet spot
 
         # Skip if already logged
         if market.condition_id in already_logged:
