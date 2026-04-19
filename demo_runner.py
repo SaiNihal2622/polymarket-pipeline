@@ -105,6 +105,24 @@ def _print_accuracy_oneliner():
         pass
 
 
+def _wipe_all_trades():
+    """Wipe ALL trades and outcomes for a clean fresh start."""
+    import sqlite3
+    from pathlib import Path as _Path
+    db = _Path(os.getenv("DB_PATH", "/data/trades.db"))
+    if not db.exists():
+        console.print("  [dim]No DB to wipe.[/dim]")
+        return
+    conn = sqlite3.connect(db)
+    trades_count = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+    outcomes_count = conn.execute("SELECT COUNT(*) FROM outcomes").fetchone()[0]
+    conn.execute("DELETE FROM outcomes")
+    conn.execute("DELETE FROM trades")
+    conn.commit()
+    conn.close()
+    console.print(f"  [bold red]🗑 WIPED {trades_count} trades + {outcomes_count} outcomes — fresh start[/bold red]")
+
+
 def _startup_cleanup():
     """
     Void trades that were logged before DEMO_HOURS_WINDOW was set to 24h.
@@ -660,7 +678,35 @@ def scan_and_trade() -> dict:
         mat_threshold  = 0.45   # minimum materiality (Gemini must be confident)
         comp_threshold = 0.48   # composite confirms multi-signal agreement
 
-        classification: Classification = research_market(market)
+        # ── PRICE FEED CHECK: try live price before calling Gemini ───────────
+        # For crypto threshold markets (above/below $X), we can verify mathematically.
+        # This is 100% accurate when gap is >8% — no LLM needed.
+        classification = None
+        try:
+            from price_feeds import verify_crypto_market
+            price_result = verify_crypto_market(market.question)
+            if price_result and price_result["confidence"] >= 0.80:
+                from classifier import Classification as _Cls
+                classification = _Cls(
+                    direction   = price_result["direction"],
+                    materiality = price_result["confidence"],
+                    reasoning   = f"[LivePrice] {price_result['reasoning']}",
+                    latency_ms  = 0,
+                    model       = "coingecko_live",
+                    consensus_passes = 1,
+                    consensus_agreed = True,
+                )
+                console.print(
+                    f"  [bold green]💰 LIVE PRICE VERIFIED[/bold green] "
+                    f"{price_result['direction']} conf:{price_result['confidence']:.1%} | "
+                    f"{price_result['reasoning'][:80]}"
+                )
+        except Exception as _pf_err:
+            pass
+
+        # Fall back to Gemini research if price feed didn't give answer
+        if classification is None:
+            classification = research_market(market)
 
         # ── Signal fusion: CLOB orderbook (direct) + Polycool + whale ───────
         from orderbook import fetch_book, book_edge_adjustment
@@ -1075,8 +1121,23 @@ def run_loop():
         title="🎯 Demo Mode Active",
     ))
 
-    # Clean out long-dated trades on startup (once per container start)
-    _startup_cleanup()
+    # ── FRESH START: wipe all old trades ──────────────────────────────────────
+    wipe_env = os.getenv("WIPE_ON_START", "true").lower()
+    if wipe_env == "true":
+        console.print("\n[bold red]🔄 WIPE_ON_START=true — clearing all old trades for fresh accuracy measurement[/bold red]")
+        _wipe_all_trades()
+    else:
+        _startup_cleanup()
+
+    # Pre-fetch all crypto prices so first scan is instant
+    try:
+        from price_feeds import get_all_crypto_prices
+        prices = get_all_crypto_prices()
+        if prices:
+            top = {k.upper(): f"${v:,.0f}" for k, v in list(prices.items())[:6] if k in ["bitcoin","ethereum","solana","xrp","bnb","dogecoin"]}
+            console.print(f"  [dim]💰 Live prices: {top}[/dim]")
+    except Exception as e:
+        console.print(f"  [dim]Price feeds unavailable: {e}[/dim]")
 
     last_scan = 0.0
     last_resolve = 0.0

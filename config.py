@@ -16,7 +16,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
 # --- Google Gemini ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")  # fast + cheap
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-pro-preview-05-06")  # best reasoning + search
 
 # --- Ollama ---
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -121,11 +121,11 @@ EDGE_THRESHOLD = float(os.getenv("EDGE_THRESHOLD", "0.15"))  # Higher threshold 
 NEWS_LOOKBACK_HOURS = 12
 
 # --- Demo Runner Settings ---
-DEMO_HOURS_WINDOW = float(os.getenv("DEMO_HOURS_WINDOW", "72"))       # 72h window = 3x more markets
-SCAN_INTERVAL_MIN = int(os.getenv("SCAN_INTERVAL_MIN", "20"))          # Re-scan every 20min (was 30)
-RESOLVE_INTERVAL_MIN = int(os.getenv("RESOLVE_INTERVAL_MIN", "8"))     # Check resolutions every 8min
-ACCURACY_THRESHOLD = float(os.getenv("ACCURACY_THRESHOLD", "70.0"))   # % accuracy to unlock live trading
-MIN_RESOLVED_TRADES = int(os.getenv("MIN_RESOLVED_TRADES", "10"))      # Min resolved trades needed before going live
+DEMO_HOURS_WINDOW = float(os.getenv("DEMO_HOURS_WINDOW", "48"))       # 48h window
+SCAN_INTERVAL_MIN = int(os.getenv("SCAN_INTERVAL_MIN", "15"))          # Re-scan every 15min for more trades
+RESOLVE_INTERVAL_MIN = int(os.getenv("RESOLVE_INTERVAL_MIN", "6"))     # Check resolutions every 6min
+ACCURACY_THRESHOLD = float(os.getenv("ACCURACY_THRESHOLD", "80.0"))   # Target: 80% accuracy
+MIN_RESOLVED_TRADES = int(os.getenv("MIN_RESOLVED_TRADES", "30"))      # Need 30 resolved before going live
 
 # --- V2 Settings ---
 MAX_RESOLVE_HOURS = float(os.getenv("MAX_RESOLVE_HOURS", "72"))  # 3 days max
