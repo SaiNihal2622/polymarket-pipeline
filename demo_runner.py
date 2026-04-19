@@ -135,18 +135,37 @@ def _startup_cleanup():
 
     console.print(f"\n[bold]Startup cleanup:[/bold] checking {len(rows)} old trades (>2h)...")
 
-    LONG_DATED_KW = [
+    JUNK_KW = [
+        # Season-long futures
         "2027", "world series", "french open", "wimbledon", "us open",
         "nba champion", "nba finals", "super bowl", "afc champion", "nfc champion",
         "eurovision", "lpl 2026 season", "ipl champion", "grammy", "oscar",
         "nobel", "governor 2026", "senator 2026", "president", "fed chair",
         "confirmed as", "rbc heritage", "masters 2026", "tour de france",
+        # Sports win/loss coin flips
+        "nfl", "nhl playoff", "art ross", "clutch player of the year",
+        "coach of the year", "top goal scorer", "most assists",
+        "will the new york yankees", "will los angeles chargers",
+        "will macklin celebrini", "will omar marmoush", "will morgan rogers",
+        "will yoane wissa", "will joe mazzulla", "will anthony edwards",
+        "will the columbus blue jackets",
+        "will sunderland finish", "will wolverhampton",
+        "will qingdao", "will fc nordsjælland", "will viborg",
+        # Esports maps
+        "map 1 winner", "map 2 winner", "map 3 winner", "(bo1)", "(bo3)",
+        "kills over", "kills under", "nodwin", "counter-strike",
+        # Sports match results (short-dated but still coin flips)
+        "o/u 2.5", "o/u 3.5", "o/u 4.5", "o/u 1.5",
+        "both teams to score", "halftime result", "leading at halftime",
+        # Celebrity/entertainment
+        "justin bieber", "taylor swift", "feature ", "album drop",
+        "box office", "weekend gross",
     ]
 
     void_ids = []
     for r in rows:
         q = r["market_question"].lower()
-        if any(k in q for k in LONG_DATED_KW):
+        if any(k in q for k in JUNK_KW):
             void_ids.append(r["id"])
             console.print(f"  VOID #{r['id']}: {r['market_question'][:65]}")
 
