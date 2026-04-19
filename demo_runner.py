@@ -290,9 +290,11 @@ def filter_quality_markets(markets, now: datetime) -> tuple[list, dict]:
                 skipped["too_soon"] += 1
                 continue
 
-        # 2. Skip near-certain prices (market already knows outcome)
-        # Allow 0.10–0.90 — Gemini research identifies remaining uncertainty
-        if m.yes_price < 0.10 or m.yes_price > 0.90:
+        # 2. Skip near-certain prices
+        # PRIMARY TARGET: 0.35–0.70 (genuine uncertainty, big payout if right)
+        # ALSO ALLOW: 0.70–0.88 for CLOB consensus track
+        # SKIP: <0.10 or >0.92 (payout too small to be worth the risk)
+        if m.yes_price < 0.10 or m.yes_price > 0.92:
             skipped["price_extreme"] += 1
             continue
 
@@ -587,6 +589,100 @@ def scan_and_trade() -> dict:
         console.print(f"    → [yellow]CLOB trade #{trade_id} logged (${bet:.2f} virtual, {confidence:.1%} conf)[/yellow]")
 
     console.print(f"  [yellow]CLOB consensus: {clob_logged} trades logged[/yellow]")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # TRACK 0.5: SWEET SPOT — markets priced 0.35–0.65 (genuine uncertainty)
+    # WHY: At 0.50 price, winning earns $0.50 per share (vs $0.15 at 0.85)
+    # If Gemini/price-feed is 65%+ confident → EV = +$0.15/dollar (3x better)
+    # We only need 60% accuracy here to profit, vs 80% at high prices.
+    # ══════════════════════════════════════════════════════════════════════════
+    sweet_candidates = [
+        m for m in fast_markets
+        if 0.35 <= m.yes_price <= 0.65
+        and m.volume >= 1000
+        and m.condition_id not in already_logged
+        and _hours_left(m) <= 48
+    ]
+    # Only run on verifiable markets
+    sweet_candidates = [m for m in sweet_candidates if _is_verifiable(m.question)]
+    sweet_candidates.sort(key=lambda m: _hours_left(m))
+
+    console.print(f"\n  [bold magenta]💎 TRACK 0.5: Sweet Spot — {len(sweet_candidates)} markets at 0.35-0.65 price[/bold magenta]")
+    sweet_logged = 0
+
+    for market in sweet_candidates[:25]:
+        q_lower = market.question.lower()
+        if any(pat in q_lower for pat in CLOB_SKIP):
+            continue
+        if market.condition_id in already_logged:
+            continue
+
+        # Try price feed first (instant, no API cost)
+        price_result = None
+        try:
+            from price_feeds import verify_crypto_market
+            price_result = verify_crypto_market(market.question)
+        except Exception:
+            pass
+
+        if price_result and price_result["confidence"] >= 0.65:
+            direction = price_result["direction"]
+            side = "YES" if direction == "bullish" else "NO"
+            confidence = price_result["confidence"]
+            reasoning = price_result["reasoning"]
+        else:
+            # Use Gemini 2.5 Pro — worth it here because payout is 2x bigger
+            try:
+                cl = research_market(market)
+                if cl.direction == "neutral" or cl.materiality < 0.60:
+                    continue
+                direction = cl.direction
+                side = "YES" if direction == "bullish" else "NO"
+                confidence = cl.materiality
+                reasoning = cl.reasoning
+            except Exception:
+                continue
+
+        # At 0.50 price, winning $0.50 per share — Kelly is much better
+        from bankroll import kelly_bet_size, get_current_bankroll, can_trade_today
+        allowed, reason = can_trade_today()
+        if not allowed:
+            break
+        bk = get_current_bankroll()
+        price_for_kelly = market.yes_price if side == "YES" else (1 - market.yes_price)
+        edge = confidence - price_for_kelly  # real edge vs market price
+        if edge < 0.05:
+            continue  # no edge
+
+        bet = kelly_bet_size(bk, edge, price_for_kelly, materiality=confidence)
+        bet = max(0.50, min(bet * 1.5, bk * 0.07))  # 7% cap, 1.5x boost (big payout)
+
+        payout_per_dollar = (1 - price_for_kelly) / price_for_kelly
+        console.print(
+            f"  [bold magenta]💎 SWEET SPOT[/bold magenta] {side} | "
+            f"price={market.yes_price:.2f} payout={payout_per_dollar:.1f}x | "
+            f"conf={confidence:.1%} edge={edge:.1%} | "
+            f"\"{market.question[:50]}\"\n"
+            f"    {reasoning[:100]}"
+        )
+
+        from edge import Signal as _Signal
+        sweet_signal = _Signal(
+            market=market, claude_score=confidence, market_price=market.yes_price,
+            edge=edge, side=side, bet_amount=round(bet, 2),
+            reasoning=f"[SweetSpot] {reasoning}",
+            headlines="", news_source="sweet_spot",
+            classification=direction, materiality=confidence,
+            composite_score=confidence,
+        )
+        tok = token_map.get(market.condition_id)
+        trade_id = _log_demo_trade(sweet_signal, token_id=tok)
+        already_logged.add(market.condition_id)
+        sweet_logged += 1
+        demos_logged += 1
+        console.print(f"    → [magenta]Sweet spot trade #{trade_id} logged (${bet:.2f} virtual, {payout_per_dollar:.1f}x payout)[/magenta]")
+
+    console.print(f"  [magenta]Sweet spot: {sweet_logged} trades logged[/magenta]")
 
     # ── TRACK 1: Fast markets — Gemini live web search + whale signals ───────
     from whale import bulk_whale_signals, copy_trade_signal
