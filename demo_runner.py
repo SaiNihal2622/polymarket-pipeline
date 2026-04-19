@@ -464,8 +464,8 @@ def scan_and_trade() -> dict:
     CLOB_YES_MAX       = float(os.getenv("CLOB_YES_MAX",       "0.91"))  # cap — above 91% payout too small
     CLOB_NO_THRESHOLD  = float(os.getenv("CLOB_NO_THRESHOLD",  "0.28"))  # crowd ≥72% on NO side
     CLOB_NO_MIN        = float(os.getenv("CLOB_NO_MIN",        "0.09"))  # cap NO side
-    CLOB_MAX_HOURS     = float(os.getenv("CLOB_MAX_HOURS",     "12"))    # closes within 12h
-    CLOB_MIN_VOL       = float(os.getenv("CLOB_MIN_VOL",       "3000"))  # liquid markets only
+    CLOB_MAX_HOURS     = float(os.getenv("CLOB_MAX_HOURS",     "24"))    # closes within 24h
+    CLOB_MIN_VOL       = float(os.getenv("CLOB_MIN_VOL",       "500"))   # liquid markets only
 
     # Hard-block list for CLOB consensus (pure coin-flips regardless of price)
     CLOB_SKIP = [
@@ -502,19 +502,10 @@ def scan_and_trade() -> dict:
         if not tok:
             continue
 
-        try:
-            book = fetch_book(tok)
-        except Exception:
-            continue
-
-        if book is None:
-            continue
-
-        # Use mid-price (best bid / best ask average) as crowd consensus
-        mid = (book.best_bid + (1 - book.best_ask)) / 2 if book.best_bid and book.best_ask else None
-        if mid is None:
-            # fall back to market yes_price
-            mid = market.yes_price
+        # Use market.yes_price as crowd consensus — this is the last traded price
+        # from Gamma API and is reliable. CLOB book spreads are too wide (bids ~0.01)
+        # to compute a meaningful mid-price from the book itself.
+        mid = market.yes_price
 
         hours_left_clob = _hours_left(market)
 
