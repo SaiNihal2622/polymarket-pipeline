@@ -540,6 +540,12 @@ def scan_and_trade() -> dict:
             # Unpredictable direction questions — skip always
             "up or down", "opens up or down", "up or down on",
             "up or down -", "up or down –",
+            # Esports / gaming — unpredictable, no news coverage
+            "game 1 winner", "game 2 winner", "game 3 winner",
+            "game 4 winner", "game 5 winner",
+            "quadra kill", "penta kill", "first blood", "first baron",
+            "dota 2", "valorant", "counter-strike", "league of legends",
+            "any player", "dragon soul", "inhibitor",
         ]
         if any(pat in q_lower for pat in HARD_SKIP):
             continue

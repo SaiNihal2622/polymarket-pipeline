@@ -75,7 +75,7 @@ def _call_gemini(prompt: str, temperature: float, max_tokens: int, use_search: b
     if wait > 0:
         _time.sleep(wait)
 
-    _429_backoffs = [4, 10, 20]   # longer backoff: 4s, 10s, 20s before Groq fallback
+    _429_backoffs = [2, 5]   # short backoff — fall to Groq fast (2s, 5s, then Groq)
 
     for attempt in range(3):
         try:
@@ -125,7 +125,7 @@ def _call_groq(prompt: str, temperature: float, max_tokens: int) -> str:
     model = config.CLASSIFICATION_MODEL
     # Map non-groq model names to a safe default
     if not model or "claude" in model or "haiku" in model or "sonnet" in model or "gemma" in model:
-        model = "llama-3.1-8b-instant"
+        model = "llama-3.3-70b-versatile"  # best free Groq model — much better than 8b
 
     max_retries = 4
     backoff = 15
