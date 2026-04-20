@@ -484,6 +484,8 @@ def scan_and_trade() -> dict:
     from orderbook import fetch_book
     from whale import bulk_whale_signals, copy_trade_signal
     from leaderboard import build_copy_signals
+    from matcher import match_news_to_markets
+    from classifier import classify
 
     # Pre-fetch all crypto prices once (cache for whole scan)
     try:
@@ -500,6 +502,17 @@ def scan_and_trade() -> dict:
             tid = t.get("token_id") if isinstance(t, dict) else str(t)
             if tid:
                 token_map[m.condition_id] = tid
+
+    # Pre-match news to markets (used as Gemini fallback when 429)
+    news_map: dict[str, list] = {}
+    try:
+        _news_ev = [_news_item_to_event(n) for n in news_items]
+        pairs = match_news_to_markets(_news_ev, all_candidates, top_k=5)
+        for market, headlines in pairs:
+            news_map[market.condition_id] = headlines
+        log.info(f"[engine] News pre-matched {len(news_map)} markets")
+    except Exception as e:
+        log.warning(f"[engine] News matching failed: {e}")
 
     # Batch whale signals for all candidates
     all_ids = [m.condition_id for m in all_candidates[:100]]
@@ -550,21 +563,17 @@ def scan_and_trade() -> dict:
         if any(pat in q_lower for pat in HARD_SKIP):
             continue
 
-        # Strict verifiable whitelist
-        VERIFIABLE = [
-            "bitcoin", "btc ", "btc/", "ethereum", "eth ", "eth/",
-            "solana", "sol ", "xrp", "bnb", "dogecoin", "doge",
-            "cardano", "ada", "avalanche", "avax", "polygon", "matic",
-            "chainlink", "link", "uniswap", "shiba", "pepe",
-            "up or down", "above $", "below $", "between $",
-            "s&p 500", "s&p500", "spx", "nasdaq", "dow jones",
-            "amazon", "tesla", "apple ", "google", "alphabet",
-            "meta ", "nvidia", "microsoft", "netflix", "openai",
-            "will trump", "trump sign", "federal reserve", "fed rate",
-            "ceasefire", "us-iran", "ukraine ceasefire", "tariff",
-            "ipl", "indian premier league",
+        # Soft blocklist — skip markets we absolutely cannot research
+        CANT_RESEARCH = [
+            # Micro esports in-game events (no news exists)
+            "quadra kill", "penta kill", "first blood", "first baron", "first tower",
+            "inhibitor", "dragon soul", "any player",
+            # Pure player props without team context
+            "points o/u", "assists o/u", "rebounds o/u",
+            # Weather (no edge)
+            "temperature", "rainfall", "snow",
         ]
-        if not any(p in q_lower for p in VERIFIABLE):
+        if any(pat in q_lower for pat in CANT_RESEARCH):
             continue
 
         hours_left = _hours_left(market)
@@ -611,11 +620,10 @@ def scan_and_trade() -> dict:
         except Exception as e:
             log.debug(f"[pricefeed] Error: {e}")
 
-        # ── S3: Gemini research — run always (price feed can't cover non-crypto markets)
+        # ── S3: Research signal — Gemini web search first, news-match fallback
         gemini_dir  = "neutral"
         gemini_conf = 0.0
-        run_gemini = True  # always run — Gemini covers news/politics/sports that price feed can't
-        if run_gemini and hours_left <= 72:
+        if hours_left <= 72:
             try:
                 cl = research_market(market)
                 if cl.direction != "neutral" and cl.materiality >= 0.35:
@@ -623,6 +631,18 @@ def scan_and_trade() -> dict:
                     gemini_conf = cl.materiality
             except Exception:
                 pass
+            # Fallback: if Gemini gave nothing, use RSS news matching via Groq/classify
+            if gemini_dir == "neutral":
+                matched_headlines = news_map.get(market.condition_id, [])
+                if matched_headlines:
+                    try:
+                        cl2 = classify(market, matched_headlines)
+                        if cl2.direction != "neutral" and cl2.materiality >= 0.30:
+                            gemini_dir  = cl2.direction
+                            gemini_conf = cl2.materiality * 0.85  # slight discount vs live search
+                            log.info(f"[engine] News-match signal {market.question[:40]}: {cl2.direction} {cl2.materiality:.2f}")
+                    except Exception:
+                        pass
 
         # ── S4: Whale / leaderboard signal ───────────────────────────────
         whale_dir  = "neutral"
@@ -704,26 +724,33 @@ def scan_and_trade() -> dict:
                 continue
 
         # ── Final direction ───────────────────────────────────────────────
-        # Tier 1: needs score ≥ 0.38 (higher bar — uncertain crowd)
-        # Tier 2: needs score ≥ 0.32
-        # Tier 3: needs score ≥ 0.28 (crowd provides baseline)
-        MIN_SCORE = 0.38 if is_tier1 else (0.32 if is_sweet else 0.28)
+        MIN_SCORE = 0.20 if is_tier1 else (0.18 if is_sweet else 0.15)
         if score_bull >= score_bear and score_bull >= MIN_SCORE:
-            final_dir, final_side, final_score = "bullish", "YES", score_bull
+            final_dir, final_side, raw_score = "bullish", "YES", score_bull
         elif score_bear > score_bull and score_bear >= MIN_SCORE:
-            final_dir, final_side, final_score = "bearish", "NO",  score_bear
+            final_dir, final_side, raw_score = "bearish", "NO",  score_bear
         else:
             console.print(f"  [dim]Score too low ({max(score_bull,score_bear):.2f} < {MIN_SCORE}) skip[/dim]")
             continue
+
+        # ── Normalize raw_score → probability estimate ────────────────────
+        # raw_score is a weighted sum of (confidence × weight) for active signals.
+        # Dividing by sum of active weights gives actual probability estimate.
+        active_w = 0.0
+        if price_feed_dir != "neutral": active_w += W_PRICE
+        if gemini_dir    != "neutral": active_w += W_GEMINI
+        if clob_dir      != "neutral": active_w += W_CLOB
+        if whale_dir     != "neutral": active_w += W_WHALE
+        if active_w < 0.01: active_w = W_CLOB  # fallback
+        final_score = min(0.97, raw_score / active_w)  # normalized probability
 
         # ── EV gate ───────────────────────────────────────────────────────
         bet_price    = price if final_side == "YES" else (1.0 - price)
         payout_ratio = (1.0 - bet_price) / bet_price
         ev_per_dollar = final_score * payout_ratio - (1.0 - final_score)
 
-        # Tier 1/2: need EV ≥ $0.05/dollar (strong edge required at 1:1)
-        # Tier 3: need EV ≥ $0.01/dollar (crowd already helps)
-        min_ev = 0.05 if is_sweet else 0.01
+        # Min EV: sweet=0.04, tier3=0.005 (small positive edge sufficient for crowd-aligned tier3)
+        min_ev = 0.04 if is_sweet else 0.005
         if ev_per_dollar < min_ev:
             console.print(f"  [dim]EV={ev_per_dollar:.3f} < {min_ev} skip: {market.question[:40]}[/dim]")
             continue
