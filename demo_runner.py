@@ -564,11 +564,16 @@ def scan_and_trade() -> dict:
 
         # ── S1: CLOB crowd price → base direction + confidence ───────────
         # The market price IS the crowd's probability estimate.
-        # High-confidence zone: ≥0.72 YES or ≤0.28 NO  → crowd very sure
-        # Sweet spot zone:      0.35-0.65               → crowd uncertain, big payout
+        # THREE tiers by price — priority order:
+        # TIER 1 (BEST): 0.45-0.55 → near 1:1 payout, win $1 per $1 bet
+        # TIER 2 (GOOD): 0.35-0.45 or 0.55-0.65 → 1.2x-1.9x payout
+        # TIER 3 (OK):   0.72-0.92 or 0.08-0.28 → crowd confident, small payout
         clob_dir = "neutral"
         clob_conf = 0.0
-        is_sweet  = 0.35 <= price <= 0.65
+        is_tier1  = 0.45 <= price <= 0.55   # near 1:1 payout — BEST
+        is_tier2  = (0.35 <= price < 0.45) or (0.55 < price <= 0.65)
+        is_sweet  = is_tier1 or is_tier2
+
         if 0.72 <= price <= 0.92:
             clob_dir  = "bullish"
             clob_conf = price
@@ -576,9 +581,9 @@ def scan_and_trade() -> dict:
             clob_dir  = "bearish"
             clob_conf = 1.0 - price
         elif is_sweet:
-            clob_conf = 0.10  # uncertain — need other signals for direction
+            clob_conf = 0.10  # uncertain — other signals provide direction
         else:
-            continue  # skip: price in dead zones (0.28-0.35 or 0.65-0.72)
+            continue  # dead zone — skip
 
         # ── S2: Live price feed (CoinGecko) — pure math, highest weight ──
         price_feed_dir  = "neutral"
@@ -685,13 +690,18 @@ def scan_and_trade() -> dict:
         edge = final_score - bet_price
         bet = kelly_bet_size(bk, max(edge, 0.03), bet_price, materiality=final_score)
 
-        # Sweet spot bonus: 0.35-0.65 priced markets earn 2x payout → bigger bet ok
-        is_sweet_spot = 0.35 <= price <= 0.65
-        if is_sweet_spot:
+        # Bet sizing by tier:
+        # Tier 1 (0.45-0.55, near 1:1 payout): biggest bet — best risk/reward
+        # Tier 2 (0.35-0.65): good payout — larger bet
+        # Tier 3 (crowd confident): smaller bet — small payout
+        if is_tier1:
+            bet = min(bet * 2.0, bk * 0.08)  # 8% cap — best payout tier
+            spot_tag = "💎1:1"
+        elif is_sweet:
             bet = min(bet * 1.8, bk * 0.07)  # 7% cap
             spot_tag = "💎SWEET"
         elif final_score >= 0.75:
-            bet = min(bet * 1.5, bk * 0.08)  # sureshot
+            bet = min(bet * 1.5, bk * 0.06)  # sureshot
             spot_tag = "🎯SURE"
         else:
             bet = min(bet, bk * 0.05)
@@ -706,12 +716,16 @@ def scan_and_trade() -> dict:
         if clob_conf >= 0.60:       sources.append(f"📊CLOB:{clob_conf:.0%}")
         if whale_conf >= 0.40:      sources.append(f"🐋Whale:{whale_conf:.0%}")
 
+        win_profit = round(bet * payout_ratio, 2)
+        loss_cost  = round(bet, 2)
         console.print(
             f"  [bold green]{spot_tag}[/bold green] "
             f"[bold]{final_side}[/bold] | "
-            f"score:{final_score:.2f} ev:+{ev_per_dollar:.3f}/$ payout:{payout_ratio:.1f}x | "
-            f"closes:{hours_left:.1f}h price:{price:.2f}\n"
-            f"    {' + '.join(sources) if sources else 'weak multi-signal'}\n"
+            f"price:{price:.2f} payout:{payout_ratio:.1f}x | "
+            f"WIN:+${win_profit} LOSE:-${loss_cost} | "
+            f"score:{final_score:.2f} ev:+${ev_per_dollar*bet:.2f} | "
+            f"closes:{hours_left:.1f}h\n"
+            f"    {' + '.join(sources) if sources else 'multi-signal'}\n"
             f"    \"{market.question[:65]}\""
         )
 
