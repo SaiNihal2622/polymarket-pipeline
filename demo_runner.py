@@ -573,10 +573,15 @@ def scan_and_trade() -> dict:
             # Micro esports in-game events (no news exists)
             "quadra kill", "penta kill", "first blood", "first baron", "first tower",
             "inhibitor", "dragon soul", "any player",
-            # Pure player props without team context
-            "points o/u", "assists o/u", "rebounds o/u",
-            # Weather (no edge)
+            # Very specific sports props impossible to predict
+            "points o/u", "assists o/u", "rebounds o/u", "total corners",
+            "o/u 4.5", "o/u 5.5", "o/u 6.5", "o/u 7.5", "o/u 224", "o/u 225",
+            "o/u 226", "o/u 227", "o/u 228", "o/u 229", "o/u 230",
+            "exact score:", "correct score",
+            # Weather / temperature
             "temperature", "rainfall", "snow",
+            # Spreads (need specific point analysis)
+            "spread:", "handicap:",
         ]
         if any(pat in q_lower for pat in CANT_RESEARCH):
             continue
@@ -632,7 +637,7 @@ def scan_and_trade() -> dict:
             try:
                 matched_headlines = news_map.get(market.condition_id, [])
                 cl = research_market(market, news_context=matched_headlines)
-                if cl.direction != "neutral" and cl.materiality >= 0.33:
+                if cl.direction != "neutral" and cl.materiality >= 0.28:
                     gemini_dir  = cl.direction
                     gemini_conf = cl.materiality
             except Exception as e:

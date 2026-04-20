@@ -452,63 +452,66 @@ def research_market(market: Market) -> Classification:
     """
     start = time.time()
 
-    # ── Pass 1: Try Gemini with search grounding ──────────────────────────
-    gemini_prompt = _build_analyst_prompt(market, [])  # Gemini searches itself
     a_dir, a_mat, a_reason = "neutral", 0.0, ""
-    gemini_worked = False
+    model_used = "groq"
 
+    # ── Step 1: Live web search (DDG → Apify) ─────────────────────────────
+    web_results: list[str] = []
     try:
+        from apify_search import search_market
+        web_results = search_market(market.question, market.yes_price)
+    except Exception as e:
+        log.debug(f"[research] web search failed: {e}")
+
+    # ── Step 2: Try Gemini with built-in search grounding ─────────────────
+    # Gemini is best when not rate-limited because it searches with context
+    try:
+        gemini_prompt = _build_analyst_prompt(market, web_results)
         a_text = _call_gemini(gemini_prompt, temperature=0.1, max_tokens=300, use_search=True)
         a_res  = _parse_json_response(a_text)
-        a_dir  = a_res.get("direction", "neutral")
-        if a_dir not in ("bullish", "bearish", "neutral"):
-            a_dir = "neutral"
-        a_mat    = max(0.0, min(1.0, float(a_res.get("materiality", 0))))
-        a_reason = a_res.get("reasoning", "")
-        gemini_worked = True
-        log.info(f"[research] Gemini: {a_dir} {a_mat:.2f} for '{market.question[:35]}'")
+        g_dir  = a_res.get("direction", "neutral")
+        if g_dir not in ("bullish", "bearish", "neutral"):
+            g_dir = "neutral"
+        g_mat    = max(0.0, min(1.0, float(a_res.get("materiality", 0))))
+        g_reason = a_res.get("reasoning", "")
+        if g_dir != "neutral" and g_mat >= 0.30:
+            a_dir, a_mat, a_reason = g_dir, g_mat, g_reason
+            model_used = "gemini+search"
+            log.info(f"[research] Gemini: {g_dir} {g_mat:.2f} '{market.question[:35]}'")
     except Exception as e:
-        log.debug(f"[research] Gemini failed: {e}")
+        log.debug(f"[research] Gemini unavailable: {e}")
 
-    # ── Pass 2: Apify + Groq fallback (when Gemini fails or returns neutral) ──
-    if not gemini_worked or (a_dir == "neutral" and a_mat < 0.35):
+    # ── Step 3: Groq with DDG context (always runs as primary or supplement) ─
+    if a_dir == "neutral" or a_mat < 0.40:
         try:
-            from apify_search import search_market
-            web_results = search_market(market.question, market.yes_price)
-        except Exception:
-            web_results = []
-
-        groq_prompt = _build_analyst_prompt(market, web_results)
-        try:
-            g_text = _call_groq(groq_prompt, temperature=0.15, max_tokens=300)
-            g_res  = _parse_json_response(g_text)
-            g_dir  = g_res.get("direction", "neutral")
+            groq_prompt = _build_analyst_prompt(market, web_results)
+            g_text   = _call_groq(groq_prompt, temperature=0.15, max_tokens=300)
+            g_res    = _parse_json_response(g_text)
+            g_dir    = g_res.get("direction", "neutral")
             if g_dir not in ("bullish", "bearish", "neutral"):
                 g_dir = "neutral"
             g_mat    = max(0.0, min(1.0, float(g_res.get("materiality", 0))))
             g_reason = g_res.get("reasoning", "")
+            src_tag  = "DDG+Groq" if web_results else "Groq"
+            conf_mul = 0.92 if web_results else 0.80
 
-            src = "Apify+Groq" if web_results else "Groq"
-            log.info(f"[research] {src}: {g_dir} {g_mat:.2f} for '{market.question[:35]}'")
-
-            # Use Groq result if it's stronger, or if Gemini was neutral
-            if g_dir != "neutral" and g_mat >= 0.35:
-                if a_dir == "neutral" or g_mat > a_mat:
+            if g_dir != "neutral" and g_mat >= 0.28:
+                if a_dir == "neutral" or g_mat * conf_mul > a_mat:
                     a_dir    = g_dir
-                    a_mat    = g_mat * (0.90 if web_results else 0.80)  # slight discount
-                    a_reason = f"[{src}] {g_reason}"
+                    a_mat    = g_mat * conf_mul
+                    a_reason = f"[{src_tag}] {g_reason}"
+                    model_used = src_tag
+                    log.info(f"[research] {src_tag}: {g_dir} {g_mat:.2f} '{market.question[:35]}'")
         except Exception as e:
-            log.debug(f"[research] Groq fallback failed: {e}")
+            log.debug(f"[research] Groq failed: {e}")
 
-    latency  = int((time.time() - start) * 1000)
-    model_nm = "gemini+search" if gemini_worked else "apify+groq"
-
+    latency = int((time.time() - start) * 1000)
     return Classification(
         direction=a_dir,
         materiality=round(a_mat, 3),
-        reasoning=f"[MiroFish/{model_nm}] {a_reason}",
+        reasoning=f"[MiroFish/{model_used}] {a_reason}",
         latency_ms=latency,
-        model=model_nm,
+        model=model_used,
         consensus_passes=1,
         consensus_agreed=True,
     )
