@@ -174,8 +174,44 @@ def verify_crypto_market(question: str) -> Optional[dict]:
         return None
 
     if direction == "updown":
-        # "Up or Down" markets resolve at end of period based on price change
-        # We can't know the direction until close — skip these
+        return None  # can't know direction until period closes
+
+    if direction == "between_low" and threshold:
+        # "Will BTC be between $74,000 and $76,000?"
+        # Extract both bounds from original question
+        amounts = re.findall(r'[\d,]+(?:\.\d+)?', question.replace("$",""))
+        bounds = []
+        for a in amounts:
+            try:
+                v = float(a.replace(",",""))
+                if v > 100:  # filter out small numbers like years
+                    bounds.append(v)
+            except Exception:
+                pass
+        bounds.sort()
+        if len(bounds) >= 2:
+            low, high = bounds[0], bounds[1]
+            if price < low * 0.92 or price > high * 1.08:
+                # Price clearly outside the range → NO
+                gap = min(abs(price - low)/low, abs(price - high)/high)
+                conf = min(0.95, 0.80 + gap * 0.5)
+                return {
+                    "direction": "bearish",
+                    "confidence": round(conf, 3),
+                    "reasoning": f"{symbol.upper()} is ${price:,.0f}, outside range ${low:,.0f}-${high:,.0f} — NO very likely",
+                    "current_price": price,
+                    "threshold": low,
+                }
+            elif low * 1.01 <= price <= high * 0.99:
+                # Price clearly inside range → YES
+                conf = 0.82
+                return {
+                    "direction": "bullish",
+                    "confidence": round(conf, 3),
+                    "reasoning": f"{symbol.upper()} is ${price:,.0f}, inside range ${low:,.0f}-${high:,.0f} — YES likely",
+                    "current_price": price,
+                    "threshold": low,
+                }
         return None
 
     if direction == "above" and threshold:

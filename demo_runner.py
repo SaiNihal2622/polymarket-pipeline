@@ -290,19 +290,17 @@ def filter_quality_markets(markets, now: datetime) -> tuple[list, dict]:
                 skipped["too_soon"] += 1
                 continue
 
-        # 2. Skip near-certain prices
-        # PRIMARY TARGET: 0.35–0.70 (genuine uncertainty, big payout if right)
-        # ALSO ALLOW: 0.70–0.88 for CLOB consensus track
-        # SKIP: <0.10 or >0.92 (payout too small to be worth the risk)
-        if m.yes_price < 0.10 or m.yes_price > 0.92:
+        # 2. Skip near-certain prices — broaden to get more markets
+        # <0.05 or >0.95: payout so small it's never worth the risk
+        if m.yes_price < 0.05 or m.yes_price > 0.95:
             skipped["price_extreme"] += 1
             continue
 
-        # 3. Skip very low volume (filters out $100 micro-window markets)
-        # Fast markets (≤24h) get a lower volume floor — Gemini researches them directly
+        # 3. Volume filter — very low floor to maximise pool
+        # EV gate in unified engine handles bad risk/reward, not volume
         end2 = _parse_end_date(m.end_date)
         h_left = ((end2 - now).total_seconds() / 3600) if end2 else 9999
-        vol_min = 100 if h_left <= 24 else config.MIN_VOLUME_USD
+        vol_min = 50 if h_left <= 24 else 200
         if m.volume < vol_min:
             skipped["low_volume"] += 1
             continue
@@ -397,7 +395,7 @@ def scan_and_trade() -> dict:
 
     # 2. Markets
     console.print("\n[bold]2. Fetching live markets...[/bold]")
-    all_markets = fetch_active_markets(limit=1000)
+    all_markets = fetch_active_markets(limit=2000)
     category_filtered = filter_by_categories(all_markets)
     window_markets = filter_closing_soon(category_filtered, DEMO_HOURS_WINDOW)
     now = datetime.now(timezone.utc)
