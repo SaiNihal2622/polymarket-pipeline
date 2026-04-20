@@ -564,113 +564,116 @@ def scan_and_trade() -> dict:
         price = market.yes_price  # crowd's current probability
         tok = token_map.get(market.condition_id)
 
-        # ── S1: CLOB price signal ─────────────────────────────────────────
-        # Sweet spot: 0.35-0.65 (big payout) OR high confidence: 0.72-0.91
+        # ── S1: CLOB crowd price → base direction + confidence ───────────
+        # The market price IS the crowd's probability estimate.
+        # High-confidence zone: ≥0.72 YES or ≤0.28 NO  → crowd very sure
+        # Sweet spot zone:      0.35-0.65               → crowd uncertain, big payout
         clob_dir = "neutral"
         clob_conf = 0.0
-        if 0.35 <= price <= 0.65:
-            # Genuine uncertainty — needs other signals to confirm direction
-            clob_conf = 0.10  # small prior, direction unknown
-        elif 0.72 <= price <= 0.91:
-            clob_dir = "bullish"
-            clob_conf = price  # crowd is already confident YES
-        elif 0.09 <= price <= 0.28:
-            clob_dir = "bearish"
-            clob_conf = 1 - price  # crowd is already confident NO
+        is_sweet  = 0.35 <= price <= 0.65
+        if 0.72 <= price <= 0.92:
+            clob_dir  = "bullish"
+            clob_conf = price
+        elif 0.08 <= price <= 0.28:
+            clob_dir  = "bearish"
+            clob_conf = 1.0 - price
+        elif is_sweet:
+            clob_conf = 0.10  # uncertain — need other signals for direction
         else:
-            continue  # price outside all useful ranges
+            continue  # skip: price in dead zones (0.28-0.35 or 0.65-0.72)
 
-        # ── S2: Live price feed (CoinGecko) ──────────────────────────────
-        price_feed_dir = "neutral"
+        # ── S2: Live price feed (CoinGecko) — pure math, highest weight ──
+        price_feed_dir  = "neutral"
         price_feed_conf = 0.0
         try:
             pf = verify_crypto_market(market.question)
-            if pf and pf["confidence"] >= 0.65:
-                price_feed_dir = pf["direction"]
+            if pf and pf["confidence"] >= 0.60:
+                price_feed_dir  = pf["direction"]
                 price_feed_conf = pf["confidence"]
         except Exception:
             pass
 
-        # ── S3: Gemini 2.5 Pro research ───────────────────────────────────
-        # Only call Gemini if: price feed inconclusive OR sweet spot market
-        # (sweet spot needs direction confirmation)
-        gemini_dir = "neutral"
+        # ── S3: Gemini research — always run for sweet spot, optional otherwise
+        gemini_dir  = "neutral"
         gemini_conf = 0.0
-        needs_gemini = (price_feed_conf < 0.65) or (0.35 <= price <= 0.65)
-        if needs_gemini and hours_left <= 48:
+        run_gemini = is_sweet or price_feed_conf < 0.60
+        if run_gemini and hours_left <= 48:
             try:
                 cl = research_market(market)
-                if cl.direction != "neutral" and cl.materiality >= 0.55:
-                    gemini_dir = cl.direction
+                if cl.direction != "neutral" and cl.materiality >= 0.45:
+                    gemini_dir  = cl.direction
                     gemini_conf = cl.materiality
             except Exception:
                 pass
 
-        # ── S4: Whale / smart money ────────────────────────────────────────
-        whale_dir = "neutral"
+        # ── S4: Whale / leaderboard signal ───────────────────────────────
+        whale_dir  = "neutral"
         whale_conf = 0.0
-        whale_sig = whale_map.get(market.condition_id)
+        whale_sig  = whale_map.get(market.condition_id)
         if whale_sig and whale_sig.direction != "neutral":
-            whale_dir = whale_sig.direction
-            whale_conf = min(0.7, abs(whale_sig.yes_bias - 0.5) * 2)
+            whale_dir  = whale_sig.direction
+            whale_conf = min(0.65, abs(whale_sig.yes_bias - 0.5) * 2)
+        lb_sig = copy_map.get(market.condition_id)
+        if lb_sig and lb_sig.get("direction","neutral") != "neutral":
+            whale_dir  = lb_sig["direction"]
+            whale_conf = max(whale_conf, min(0.65, lb_sig.get("confidence", 0.5)))
 
-        # ── Combine all signals into one direction + score ─────────────────
-        # Weights: price_feed=0.40, gemini=0.35, clob=0.15, whale=0.10
-        W_PRICE = 0.40
-        W_GEMINI = 0.35
-        W_CLOB = 0.15
-        W_WHALE = 0.10
-
-        # Resolve direction: majority vote weighted by confidence
-        score_bullish = 0.0
-        score_bearish = 0.0
-
-        if price_feed_dir == "bullish":   score_bullish += W_PRICE * price_feed_conf
-        elif price_feed_dir == "bearish": score_bearish += W_PRICE * price_feed_conf
-
-        if gemini_dir == "bullish":   score_bullish += W_GEMINI * gemini_conf
-        elif gemini_dir == "bearish": score_bearish += W_GEMINI * gemini_conf
-
-        if clob_dir == "bullish":   score_bullish += W_CLOB * clob_conf
-        elif clob_dir == "bearish": score_bearish += W_CLOB * clob_conf
-
-        if whale_dir == "bullish":   score_bullish += W_WHALE * whale_conf
-        elif whale_dir == "bearish": score_bearish += W_WHALE * whale_conf
-
-        # Kill signal if sources strongly disagree (price_feed vs gemini opposite)
-        if price_feed_dir != "neutral" and gemini_dir != "neutral" and price_feed_dir != gemini_dir:
-            console.print(f"  [dim]⚡ CONFLICT price_feed vs gemini — skip: {market.question[:50]}[/dim]")
-            continue
-
-        # Kill signal if betting AGAINST the crowd on high-confidence markets
-        # e.g. crowd says 88% NO (price=0.12) → never bet YES against that
-        if clob_dir == "bearish" and score_bullish > score_bearish:
-            console.print(f"  [dim]⚡ CONTRA-CROWD YES vs {price:.0%} NO crowd — skip[/dim]")
-            continue
-        if clob_dir == "bullish" and score_bearish > score_bullish:
-            console.print(f"  [dim]⚡ CONTRA-CROWD NO vs {price:.0%} YES crowd — skip[/dim]")
-            continue
-
-        # Final direction — minimum score 0.35 (raised from 0.20)
-        if score_bullish >= score_bearish and score_bullish >= 0.35:
-            final_dir = "bullish"
-            final_side = "YES"
-            final_score = score_bullish
-        elif score_bearish > score_bullish and score_bearish >= 0.35:
-            final_dir = "bearish"
-            final_side = "NO"
-            final_score = score_bearish
+        # ── Weighted score combination ────────────────────────────────────
+        # For high-confidence CLOB markets: crowd IS the best signal
+        # For sweet spot: Gemini + price feed must provide direction
+        if clob_dir != "neutral":
+            # High-confidence zone — CLOB gets biggest weight
+            W_PRICE, W_GEMINI, W_CLOB, W_WHALE = 0.35, 0.30, 0.25, 0.10
         else:
-            continue  # not confident enough
+            # Sweet spot — Gemini + price feed must decide direction
+            W_PRICE, W_GEMINI, W_CLOB, W_WHALE = 0.45, 0.40, 0.05, 0.10
 
-        # ── EV calculation ─────────────────────────────────────────────────
-        bet_price = price if final_side == "YES" else (1 - price)
-        payout_ratio = (1 - bet_price) / bet_price  # e.g. 0.50 price → 1.0x payout
-        ev_per_dollar = final_score * payout_ratio - (1 - final_score) * 1.0
+        score_bull = 0.0
+        score_bear = 0.0
+        if price_feed_dir == "bullish":  score_bull += W_PRICE * price_feed_conf
+        elif price_feed_dir == "bearish": score_bear += W_PRICE * price_feed_conf
+        if gemini_dir == "bullish":      score_bull += W_GEMINI * gemini_conf
+        elif gemini_dir == "bearish":    score_bear += W_GEMINI * gemini_conf
+        if clob_dir == "bullish":        score_bull += W_CLOB * clob_conf
+        elif clob_dir == "bearish":      score_bear += W_CLOB * clob_conf
+        if whale_dir == "bullish":       score_bull += W_WHALE * whale_conf
+        elif whale_dir == "bearish":     score_bear += W_WHALE * whale_conf
 
-        # Minimum EV threshold: must be positive
-        if ev_per_dollar < 0.02:
-            console.print(f"  [dim]EV too low ({ev_per_dollar:.3f}) — skip: {market.question[:45]}[/dim]")
+        # ── Kill gates ────────────────────────────────────────────────────
+        # 1. Hard conflict: price feed vs Gemini point opposite ways
+        if (price_feed_dir != "neutral" and gemini_dir != "neutral"
+                and price_feed_dir != gemini_dir):
+            console.print(f"  [dim]⚡ CONFLICT feed↔gemini skip: {market.question[:45]}[/dim]")
+            continue
+
+        # 2. Never bet against strong crowd (crowd ≥72% NO → skip YES bet)
+        if clob_dir == "bearish" and score_bull > score_bear:
+            console.print(f"  [dim]⚡ CONTRA-CROWD skip (crowd {price:.0%}YES): {market.question[:40]}[/dim]")
+            continue
+        if clob_dir == "bullish" and score_bear > score_bull:
+            console.print(f"  [dim]⚡ CONTRA-CROWD skip (crowd {price:.0%}YES): {market.question[:40]}[/dim]")
+            continue
+
+        # 3. Sweet spot with NO clear direction signal → skip
+        if is_sweet and price_feed_conf < 0.60 and gemini_conf < 0.50:
+            console.print(f"  [dim]💎 Sweet spot but no clear direction — skip: {market.question[:40]}[/dim]")
+            continue
+
+        # ── Final direction ───────────────────────────────────────────────
+        MIN_SCORE = 0.28  # lowered from 0.35 to get 15-20 trades/day
+        if score_bull >= score_bear and score_bull >= MIN_SCORE:
+            final_dir, final_side, final_score = "bullish", "YES", score_bull
+        elif score_bear > score_bull and score_bear >= MIN_SCORE:
+            final_dir, final_side, final_score = "bearish", "NO",  score_bear
+        else:
+            continue
+
+        # ── EV gate: enforces 50-50 profit math ──────────────────────────
+        bet_price    = price if final_side == "YES" else (1.0 - price)
+        payout_ratio = (1.0 - bet_price) / bet_price
+        ev_per_dollar = final_score * payout_ratio - (1.0 - final_score)
+        if ev_per_dollar < 0.01:  # must have at least $0.01/dollar positive EV
+            console.print(f"  [dim]EV={ev_per_dollar:.3f} too low skip: {market.question[:40]}[/dim]")
             continue
 
         # ── Bet sizing ────────────────────────────────────────────────────

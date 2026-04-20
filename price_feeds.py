@@ -82,12 +82,15 @@ def get_all_crypto_prices() -> dict[str, float]:
             timeout=10,
         )
         data = resp.json()
+        if not isinstance(data, dict):
+            log.warning(f"[price_feeds] CoinGecko unexpected response: {str(data)[:100]}")
+            return {}
         result = {}
         now = time.time()
-        # Reverse map: cg_id → symbol
         for sym, cg_id in COINGECKO_IDS.items():
-            if cg_id in data:
-                price = float(data[cg_id]["usd"])
+            entry = data.get(cg_id, {})
+            if isinstance(entry, dict) and "usd" in entry:
+                price = float(entry["usd"])
                 result[sym] = price
                 _cache[f"cg:{cg_id}"] = (price, now)
         log.info(f"[price_feeds] Bulk fetched {len(result)} crypto prices")
