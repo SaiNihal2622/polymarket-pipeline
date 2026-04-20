@@ -414,7 +414,7 @@ def verify_crypto_market(question: str) -> Optional[dict]:
 
     if direction == "above" and threshold:
         gap_pct = (price - threshold) / threshold
-        if gap_pct > 0.05:
+        if gap_pct > 0.03:
             # Price is >8% above threshold — YES is nearly certain
             conf = min(0.95, 0.80 + gap_pct * 0.5)
             return {
@@ -424,7 +424,7 @@ def verify_crypto_market(question: str) -> Optional[dict]:
                 "current_price": price,
                 "threshold": threshold,
             }
-        elif gap_pct < -0.05:
+        elif gap_pct < -0.03:
             # Price is >8% below threshold — NO is nearly certain
             conf = min(0.95, 0.80 + abs(gap_pct) * 0.5)
             return {
@@ -437,7 +437,7 @@ def verify_crypto_market(question: str) -> Optional[dict]:
 
     elif direction == "below" and threshold:
         gap_pct = (threshold - price) / threshold
-        if gap_pct > 0.05:
+        if gap_pct > 0.03:
             conf = min(0.95, 0.80 + gap_pct * 0.5)
             return {
                 "direction": "bullish",
@@ -446,7 +446,7 @@ def verify_crypto_market(question: str) -> Optional[dict]:
                 "current_price": price,
                 "threshold": threshold,
             }
-        elif gap_pct < -0.05:
+        elif gap_pct < -0.03:
             conf = min(0.95, 0.80 + abs(gap_pct) * 0.5)
             return {
                 "direction": "bearish",

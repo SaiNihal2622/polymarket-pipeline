@@ -689,13 +689,17 @@ def scan_and_trade() -> dict:
             console.print(f"  [dim]⚡ CONFLICT skip: {market.question[:45]}[/dim]")
             continue
 
-        # Gate B: Never bet against strong crowd consensus
+        # Gate B: Contra-crowd — only skip if price feed is NOT backing our signal
+        # Exception: if price feed is very confident (>= 0.75), allow contra-crowd bet
+        # (mathematical evidence > crowd consensus)
         if clob_dir == "bearish" and score_bull > score_bear:
-            console.print(f"  [dim]⚡ CONTRA-CROWD skip: {market.question[:40]}[/dim]")
-            continue
+            if price_feed_conf < 0.75 or price_feed_dir != "bullish":
+                console.print(f"  [dim]⚡ CONTRA-CROWD skip: {market.question[:40]}[/dim]")
+                continue
         if clob_dir == "bullish" and score_bear > score_bull:
-            console.print(f"  [dim]⚡ CONTRA-CROWD skip: {market.question[:40]}[/dim]")
-            continue
+            if price_feed_conf < 0.75 or price_feed_dir != "bearish":
+                console.print(f"  [dim]⚡ CONTRA-CROWD skip: {market.question[:40]}[/dim]")
+                continue
 
         # Gate C: Tier 1 (1:1) — need price feed OR Gemini strong
         # Price feed alone at ≥0.65 is sufficient (e.g. ETH $1,580 vs $2,355 threshold = 87% NO)

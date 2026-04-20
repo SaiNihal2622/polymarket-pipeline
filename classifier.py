@@ -416,135 +416,102 @@ def classify(headline: str, market: Market, source: str = "unknown", use_search:
         )
 
 
-def research_market(market: Market) -> Classification:
-    """
-    MiroFish 2-pass research with Gemini live web search.
-      Pass 1 (Analyst): searches web, calls direction + materiality
-      Pass 2 (Skeptic): challenges — is edge already priced in?
-    Both must agree on direction OR skeptic says neutral for signal to pass.
-    """
-    start = time.time()
-    model_name = "gemini/" + config.GEMINI_MODEL + "+search+miro"
+def _build_analyst_prompt(market: Market, search_results: list[str]) -> str:
+    """Build the analyst prompt with optional web search results."""
+    context = ""
+    if search_results:
+        context = "\n\nLive web search results:\n" + "\n".join(f"  - {r[:200]}" for r in search_results[:5])
 
-    analyst_prompt = (
-        f"You are a prediction market FACT-CHECKER with live web search.\n\n"
-        f"Market Question: {market.question}\n"
-        f"Current YES price: {market.yes_price:.2f} ({market.yes_price:.0%} implied probability)\n\n"
-        f"Search the web RIGHT NOW. STRICT RULES:\n\n"
-        f"RULE 1 — ONLY trade if the outcome is ALREADY DETERMINED:\n"
-        f"  - Event has ALREADY HAPPENED → you know the result for certain\n"
-        f"  - Price/metric is RIGHT NOW at a level that makes YES/NO mathematically certain\n"
-        f"    (e.g. BTC is at $87,000 and market asks 'will BTC be above $70,000?' → YES certain)\n"
-        f"  - Official result has been announced (election called, law signed, etc.)\n\n"
-        f"RULE 2 — Return neutral (0.0) for EVERYTHING ELSE:\n"
-        f"  - Any future event not yet determined → neutral 0.0\n"
-        f"  - Any sports match not yet played → neutral 0.0\n"
-        f"  - If you are not 80%+ certain → neutral 0.0\n\n"
-        f"RULE 3 — Crypto/price markets: Look up the CURRENT live price.\n"
-        f"  If current price is already above/below the threshold with >5% margin → give direction.\n"
-        f"  e.g. ETH is $1,580, market asks 'above $2,000?' → bearish (price is 21% below threshold)\n\n"
-        f"RULE 4 — Materiality scale:\n"
-        f"  0.80-0.95 = outcome is very certain (strong confirmed data)\n"
-        f"  0.55-0.79 = outcome is likely based on current data\n"
-        f"  0.35-0.54 = moderate signal\n"
-        f"  0.0       = uncertain — DO NOT GUESS\n\n"
+    return (
+        f"You are a prediction market analyst. Today is April 2026.\n\n"
+        f"Market: {market.question}\n"
+        f"Current YES price: {market.yes_price:.2f} ({market.yes_price:.0%} implied probability)\n"
+        f"{context}\n\n"
+        f"Analyze this market using the search results above (if any) plus your knowledge.\n\n"
+        f"Direction rules:\n"
+        f"  bullish = YES is likely to resolve YES (you think outcome > {market.yes_price:.0%})\n"
+        f"  bearish = NO is likely (you think outcome < {market.yes_price:.0%})\n"
+        f"  neutral = genuinely uncertain, skip\n\n"
+        f"Materiality:\n"
+        f"  0.80-0.95 = very confident (90%+)\n"
+        f"  0.55-0.79 = confident (70-90%)\n"
+        f"  0.35-0.54 = moderate edge (60-70%)\n"
+        f"  0.0       = uncertain, return neutral\n\n"
         f"Respond ONLY with valid JSON:\n"
-        f'{{"direction": "bullish"|"bearish"|"neutral", '
-        f'"materiality": <0.0-1.0>, "reasoning": "<1 sentence with the SPECIFIC FACT you found and its source>"}}'
+        f'{{"direction":"bullish"|"bearish"|"neutral","materiality":0.0-1.0,"reasoning":"1 sentence fact"}}'
     )
 
+
+def research_market(market: Market) -> Classification:
+    """
+    MiroFish research: Gemini search → Apify+Groq fallback.
+    Strategy:
+      1. Try Gemini with live web search (fast, accurate)
+      2. If Gemini 429/fails → Apify Google Search + Groq llama-3.3-70b
+      3. Return best signal found
+    """
+    start = time.time()
+
+    # ── Pass 1: Try Gemini with search grounding ──────────────────────────
+    gemini_prompt = _build_analyst_prompt(market, [])  # Gemini searches itself
+    a_dir, a_mat, a_reason = "neutral", 0.0, ""
+    gemini_worked = False
+
     try:
-        # Pass 1: Analyst
-        a_text = _call_gemini(analyst_prompt, temperature=0.1, max_tokens=250, use_search=True)
+        a_text = _call_gemini(gemini_prompt, temperature=0.1, max_tokens=300, use_search=True)
         a_res  = _parse_json_response(a_text)
         a_dir  = a_res.get("direction", "neutral")
         if a_dir not in ("bullish", "bearish", "neutral"):
             a_dir = "neutral"
-        a_mat  = max(0.0, min(1.0, float(a_res.get("materiality", 0))))
+        a_mat    = max(0.0, min(1.0, float(a_res.get("materiality", 0))))
         a_reason = a_res.get("reasoning", "")
-
-        # If analyst is neutral or weak, don't bother with skeptic
-        if a_dir == "neutral" or a_mat < 0.45:
-            latency = int((time.time() - start) * 1000)
-            return Classification(
-                direction=a_dir, materiality=a_mat,
-                reasoning="[Research] " + a_reason,
-                latency_ms=latency, model=model_name,
-                consensus_passes=1, consensus_agreed=(a_dir == "neutral"),
-            )
-
-        # Pass 2: Skeptic — challenges the analyst's call
-        skeptic_prompt = (
-            f"You are a SKEPTICAL prediction market analyst. Another analyst says:\n"
-            f'  Direction: {a_dir}, Materiality: {a_mat:.2f}\n'
-            f'  Reasoning: "{a_reason}"\n\n'
-            f"Market: {market.question}\n"
-            f"Current YES price: {market.yes_price:.2f} ({market.yes_price:.0%})\n\n"
-            f"Search the web and CHALLENGE the analyst:\n"
-            f"- Is this already priced in at {market.yes_price:.0%}?\n"
-            f"- Could the opposite outcome easily happen?\n"
-            f"- Is there conflicting recent evidence?\n"
-            f"- Only rate > 0.4 if you genuinely agree with a strong directional edge.\n\n"
-            f"Respond ONLY with valid JSON:\n"
-            f'{{"direction": "bullish"|"bearish"|"neutral", '
-            f'"materiality": <0.0-1.0>, "reasoning": "<1 sentence>"}}'
-        )
-        s_text = _call_gemini(skeptic_prompt, temperature=0.2, max_tokens=250, use_search=True)
-        s_res  = _parse_json_response(s_text)
-        s_dir  = s_res.get("direction", "neutral")
-        if s_dir not in ("bullish", "bearish", "neutral"):
-            s_dir = "neutral"
-        s_mat  = max(0.0, min(1.0, float(s_res.get("materiality", 0))))
-        s_reason = s_res.get("reasoning", "")
-
-        # Consensus logic
-        agreed = (a_dir == s_dir) or (s_dir == "neutral" and s_mat < 0.4)
-        if a_dir == s_dir:
-            # Both agree → use min materiality (conservative)
-            final_dir = a_dir
-            final_mat = min(a_mat, s_mat) if s_mat > 0 else a_mat * 0.8
-            final_reason = f"[MiroFish ✓] {a_reason} | Skeptic: {s_reason}"
-        elif s_dir == "neutral" and s_mat < 0.4:
-            # Skeptic weakly neutral → keep analyst but haircut materiality
-            final_dir = a_dir
-            final_mat = a_mat * 0.7
-            final_reason = f"[MiroFish ~] {a_reason} | Skeptic neutral: {s_reason}"
-        else:
-            # Skeptic actively disagrees → DAMPEN (not kill) analyst signal
-            # Only kill if skeptic is very confident in the opposite direction
-            if s_mat >= 0.45:
-                # Skeptic is confident in opposite → KILL signal
-                final_dir = "neutral"
-                final_mat = 0.0
-                final_reason = f"[MiroFish ✗ KILLED] Analyst:{a_dir} vs Skeptic:{s_dir}({s_mat:.2f})"
-            else:
-                # Weak skeptic disagreement → keep analyst but cut materiality by 60%
-                final_dir = a_dir
-                final_mat = a_mat * 0.4
-                final_reason = f"[MiroFish ? weak-split] {a_reason} | Skeptic weakly: {s_reason}"
-
-        latency = int((time.time() - start) * 1000)
-        return Classification(
-            direction=final_dir,
-            materiality=final_mat,
-            reasoning=final_reason,
-            latency_ms=latency,
-            model=model_name,
-            consensus_passes=2,
-            consensus_agreed=agreed,
-        )
+        gemini_worked = True
+        log.info(f"[research] Gemini: {a_dir} {a_mat:.2f} for '{market.question[:35]}'")
     except Exception as e:
-        latency = int((time.time() - start) * 1000)
-        log.warning(f"[research] Error for '{market.question[:40]}': {e}")
-        return Classification(
-            direction="neutral",
-            materiality=0.0,
-            reasoning=f"Research error: {type(e).__name__}",
-            latency_ms=latency,
-            model=model_name,
-            consensus_passes=1,
-            consensus_agreed=False,
-        )
+        log.debug(f"[research] Gemini failed: {e}")
+
+    # ── Pass 2: Apify + Groq fallback (when Gemini fails or returns neutral) ──
+    if not gemini_worked or (a_dir == "neutral" and a_mat < 0.35):
+        try:
+            from apify_search import search_market
+            web_results = search_market(market.question, market.yes_price)
+        except Exception:
+            web_results = []
+
+        groq_prompt = _build_analyst_prompt(market, web_results)
+        try:
+            g_text = _call_groq(groq_prompt, temperature=0.15, max_tokens=300)
+            g_res  = _parse_json_response(g_text)
+            g_dir  = g_res.get("direction", "neutral")
+            if g_dir not in ("bullish", "bearish", "neutral"):
+                g_dir = "neutral"
+            g_mat    = max(0.0, min(1.0, float(g_res.get("materiality", 0))))
+            g_reason = g_res.get("reasoning", "")
+
+            src = "Apify+Groq" if web_results else "Groq"
+            log.info(f"[research] {src}: {g_dir} {g_mat:.2f} for '{market.question[:35]}'")
+
+            # Use Groq result if it's stronger, or if Gemini was neutral
+            if g_dir != "neutral" and g_mat >= 0.35:
+                if a_dir == "neutral" or g_mat > a_mat:
+                    a_dir    = g_dir
+                    a_mat    = g_mat * (0.90 if web_results else 0.80)  # slight discount
+                    a_reason = f"[{src}] {g_reason}"
+        except Exception as e:
+            log.debug(f"[research] Groq fallback failed: {e}")
+
+    latency  = int((time.time() - start) * 1000)
+    model_nm = "gemini+search" if gemini_worked else "apify+groq"
+
+    return Classification(
+        direction=a_dir,
+        materiality=round(a_mat, 3),
+        reasoning=f"[MiroFish/{model_nm}] {a_reason}",
+        latency_ms=latency,
+        model=model_nm,
+        consensus_passes=1,
+        consensus_agreed=True,
+    )
 
 
 async def classify_async(headline: str, market: Market, source: str = "unknown") -> Classification:
