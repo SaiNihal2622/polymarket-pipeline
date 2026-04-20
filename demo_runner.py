@@ -642,41 +642,76 @@ def scan_and_trade() -> dict:
         if whale_dir == "bullish":       score_bull += W_WHALE * whale_conf
         elif whale_dir == "bearish":     score_bear += W_WHALE * whale_conf
 
-        # ── Kill gates ────────────────────────────────────────────────────
-        # 1. Hard conflict: price feed vs Gemini point opposite ways
+        # ══════════════════════════════════════════════════════════════════
+        # KILL GATES — applied BEFORE final score
+        # Sweet/1:1 markets need STRICTER gates because crowd is uncertain
+        # (no free CLOB confidence to lean on — must earn the edge ourselves)
+        # ══════════════════════════════════════════════════════════════════
+
+        # Gate A: Hard conflict — price feed vs Gemini disagree → always skip
         if (price_feed_dir != "neutral" and gemini_dir != "neutral"
                 and price_feed_dir != gemini_dir):
-            console.print(f"  [dim]⚡ CONFLICT feed↔gemini skip: {market.question[:45]}[/dim]")
+            console.print(f"  [dim]⚡ CONFLICT skip: {market.question[:45]}[/dim]")
             continue
 
-        # 2. Never bet against strong crowd (crowd ≥72% NO → skip YES bet)
+        # Gate B: Never bet against strong crowd consensus
         if clob_dir == "bearish" and score_bull > score_bear:
-            console.print(f"  [dim]⚡ CONTRA-CROWD skip (crowd {price:.0%}YES): {market.question[:40]}[/dim]")
+            console.print(f"  [dim]⚡ CONTRA-CROWD skip: {market.question[:40]}[/dim]")
             continue
         if clob_dir == "bullish" and score_bear > score_bull:
-            console.print(f"  [dim]⚡ CONTRA-CROWD skip (crowd {price:.0%}YES): {market.question[:40]}[/dim]")
+            console.print(f"  [dim]⚡ CONTRA-CROWD skip: {market.question[:40]}[/dim]")
             continue
 
-        # 3. Sweet spot with NO clear direction signal → skip
-        if is_sweet and price_feed_conf < 0.60 and gemini_conf < 0.50:
-            console.print(f"  [dim]💎 Sweet spot but no clear direction — skip: {market.question[:40]}[/dim]")
-            continue
+        # Gate C: Tier 1 (1:1) — STRICTEST — need price feed OR Gemini very strong
+        # At 0.50 price, accuracy needs to be 60%+ to profit at all
+        # So we only trade if at least one signal is highly confident (≥0.70)
+        if is_tier1:
+            strong_price = price_feed_conf >= 0.70 and price_feed_dir != "neutral"
+            strong_gemini = gemini_conf >= 0.65 and gemini_dir != "neutral"
+            both_agree = (price_feed_dir == gemini_dir and
+                         price_feed_dir != "neutral" and
+                         price_feed_conf >= 0.55 and gemini_conf >= 0.55)
+            if not (strong_price or strong_gemini or both_agree):
+                console.print(f"  [dim]💎 1:1 needs strong signal (pf:{price_feed_conf:.0%} gem:{gemini_conf:.0%}) skip: {market.question[:35]}[/dim]")
+                continue
+
+        # Gate D: Tier 2 (sweet) — need at least one signal ≥ 0.60
+        elif is_sweet:
+            strong_price  = price_feed_conf >= 0.60 and price_feed_dir != "neutral"
+            strong_gemini = gemini_conf >= 0.58 and gemini_dir != "neutral"
+            if not (strong_price or strong_gemini):
+                console.print(f"  [dim]💎 Sweet needs signal (pf:{price_feed_conf:.0%} gem:{gemini_conf:.0%}) skip: {market.question[:35]}[/dim]")
+                continue
+
+        # Gate E: Tier 3 (crowd-confident) — Gemini or price feed must agree with crowd
+        else:
+            if price_feed_conf < 0.50 and gemini_conf < 0.45:
+                console.print(f"  [dim]⚡ Crowd confident but no research confirmation skip[/dim]")
+                continue
 
         # ── Final direction ───────────────────────────────────────────────
-        MIN_SCORE = 0.28  # lowered from 0.35 to get 15-20 trades/day
+        # Tier 1: needs score ≥ 0.38 (higher bar — uncertain crowd)
+        # Tier 2: needs score ≥ 0.32
+        # Tier 3: needs score ≥ 0.28 (crowd provides baseline)
+        MIN_SCORE = 0.38 if is_tier1 else (0.32 if is_sweet else 0.28)
         if score_bull >= score_bear and score_bull >= MIN_SCORE:
             final_dir, final_side, final_score = "bullish", "YES", score_bull
         elif score_bear > score_bull and score_bear >= MIN_SCORE:
             final_dir, final_side, final_score = "bearish", "NO",  score_bear
         else:
+            console.print(f"  [dim]Score too low ({max(score_bull,score_bear):.2f} < {MIN_SCORE}) skip[/dim]")
             continue
 
-        # ── EV gate: enforces 50-50 profit math ──────────────────────────
+        # ── EV gate ───────────────────────────────────────────────────────
         bet_price    = price if final_side == "YES" else (1.0 - price)
         payout_ratio = (1.0 - bet_price) / bet_price
         ev_per_dollar = final_score * payout_ratio - (1.0 - final_score)
-        if ev_per_dollar < 0.01:  # must have at least $0.01/dollar positive EV
-            console.print(f"  [dim]EV={ev_per_dollar:.3f} too low skip: {market.question[:40]}[/dim]")
+
+        # Tier 1/2: need EV ≥ $0.05/dollar (strong edge required at 1:1)
+        # Tier 3: need EV ≥ $0.01/dollar (crowd already helps)
+        min_ev = 0.05 if is_sweet else 0.01
+        if ev_per_dollar < min_ev:
+            console.print(f"  [dim]EV={ev_per_dollar:.3f} < {min_ev} skip: {market.question[:40]}[/dim]")
             continue
 
         # ── Bet sizing ────────────────────────────────────────────────────
