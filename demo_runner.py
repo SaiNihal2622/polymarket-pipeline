@@ -484,8 +484,6 @@ def scan_and_trade() -> dict:
     from orderbook import fetch_book
     from whale import bulk_whale_signals, copy_trade_signal
     from leaderboard import build_copy_signals
-    from matcher import match_news_to_markets
-    from classifier import classify
 
     # Pre-fetch all crypto prices once (cache for whole scan)
     try:
@@ -503,14 +501,21 @@ def scan_and_trade() -> dict:
             if tid:
                 token_map[m.condition_id] = tid
 
-    # Pre-match news to markets (used as Gemini fallback when 429)
-    news_map: dict[str, list] = {}
+    # Pre-match news headlines to markets (keyword overlap, used as LLM context)
+    news_map: dict[str, list[str]] = {}
     try:
-        _news_ev = [_news_item_to_event(n) for n in news_items]
-        pairs = match_news_to_markets(_news_ev, all_candidates, top_k=5)
-        for market, headlines in pairs:
-            news_map[market.condition_id] = headlines
-        log.info(f"[engine] News pre-matched {len(news_map)} markets")
+        for market in all_candidates:
+            q_words = set(w.lower().strip("?.,!\"'()") for w in market.question.split() if len(w) > 3)
+            hits: list[tuple[int, str]] = []
+            for ni in news_items[:300]:
+                h_words = set(w.lower() for w in ni.headline.split())
+                overlap = len(q_words & h_words)
+                if overlap >= 2:
+                    hits.append((overlap, ni.headline))
+            hits.sort(reverse=True)
+            if hits:
+                news_map[market.condition_id] = [h for _, h in hits[:4]]
+        log.info(f"[engine] News pre-matched {len(news_map)}/{len(all_candidates)} markets")
     except Exception as e:
         log.warning(f"[engine] News matching failed: {e}")
 
@@ -620,29 +625,18 @@ def scan_and_trade() -> dict:
         except Exception as e:
             log.debug(f"[pricefeed] Error: {e}")
 
-        # ── S3: Research signal — Gemini web search first, news-match fallback
+        # ── S3: Research signal — Gemini search → Apify+Groq fallback
         gemini_dir  = "neutral"
         gemini_conf = 0.0
         if hours_left <= 72:
             try:
-                cl = research_market(market)
-                if cl.direction != "neutral" and cl.materiality >= 0.35:
+                matched_headlines = news_map.get(market.condition_id, [])
+                cl = research_market(market, news_context=matched_headlines)
+                if cl.direction != "neutral" and cl.materiality >= 0.33:
                     gemini_dir  = cl.direction
                     gemini_conf = cl.materiality
-            except Exception:
-                pass
-            # Fallback: if Gemini gave nothing, use RSS news matching via Groq/classify
-            if gemini_dir == "neutral":
-                matched_headlines = news_map.get(market.condition_id, [])
-                if matched_headlines:
-                    try:
-                        cl2 = classify(market, matched_headlines)
-                        if cl2.direction != "neutral" and cl2.materiality >= 0.30:
-                            gemini_dir  = cl2.direction
-                            gemini_conf = cl2.materiality * 0.85  # slight discount vs live search
-                            log.info(f"[engine] News-match signal {market.question[:40]}: {cl2.direction} {cl2.materiality:.2f}")
-                    except Exception:
-                        pass
+            except Exception as e:
+                log.debug(f"[engine] research_market error: {e}")
 
         # ── S4: Whale / leaderboard signal ───────────────────────────────
         whale_dir  = "neutral"
