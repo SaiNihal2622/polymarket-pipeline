@@ -3,8 +3,8 @@ price_feeds.py — Real-time price data from free APIs.
 Used to verify crypto/stock market outcomes mathematically.
 
 Sources:
-  - CoinGecko (free, no key) — BTC, ETH, SOL, XRP, BNB, DOGE, ADA, AVAX
-  - Yahoo Finance via yfinance — S&P 500, NASDAQ, stocks
+  - Binance (primary, free, no key, high rate limits) — BTC, ETH, SOL etc.
+  - CoinGecko (fallback, free, no key) — BTC, ETH, SOL, XRP, BNB, DOGE, ADA, AVAX
   - All prices cached 60s to avoid hammering APIs
 """
 from __future__ import annotations
@@ -22,7 +22,27 @@ _cache: dict[str, tuple[float, float]] = {}  # symbol → (price, timestamp)
 CACHE_TTL = 60  # seconds
 
 
-# ── CoinGecko ID map ────────────────────────────────────────────────────────
+# ── Binance symbol map (primary — no key, high rate limits) ─────────────────
+BINANCE_SYMBOLS: dict[str, str] = {
+    "btc": "BTCUSDT", "bitcoin": "BTCUSDT",
+    "eth": "ETHUSDT", "ethereum": "ETHUSDT",
+    "sol": "SOLUSDT", "solana": "SOLUSDT",
+    "xrp": "XRPUSDT", "ripple": "XRPUSDT",
+    "bnb": "BNBUSDT",
+    "doge": "DOGEUSDT", "dogecoin": "DOGEUSDT",
+    "ada": "ADAUSDT", "cardano": "ADAUSDT",
+    "avax": "AVAXUSDT", "avalanche": "AVAXUSDT",
+    "matic": "MATICUSDT", "polygon": "MATICUSDT",
+    "link": "LINKUSDT", "chainlink": "LINKUSDT",
+    "uni": "UNIUSDT", "uniswap": "UNIUSDT",
+    "shib": "SHIBUSDT",
+    "pepe": "PEPEUSDT",
+    "dot": "DOTUSDT", "polkadot": "DOTUSDT",
+    "ltc": "LTCUSDT", "litecoin": "LTCUSDT",
+    "atom": "ATOMUSDT", "cosmos": "ATOMUSDT",
+}
+
+# ── CoinGecko ID map (fallback) ──────────────────────────────────────────────
 COINGECKO_IDS = {
     "btc": "bitcoin", "bitcoin": "bitcoin",
     "eth": "ethereum", "ethereum": "ethereum",
@@ -43,9 +63,79 @@ COINGECKO_IDS = {
 }
 
 
+def _get_binance_price(symbol: str) -> Optional[float]:
+    """Fetch price from Binance public API (no key required)."""
+    bn_sym = BINANCE_SYMBOLS.get(symbol.lower().strip())
+    if not bn_sym:
+        return None
+    cache_key = f"bn:{bn_sym}"
+    if cache_key in _cache:
+        price, ts = _cache[cache_key]
+        if time.time() - ts < CACHE_TTL:
+            return price
+    try:
+        resp = httpx.get(
+            "https://api.binance.com/api/v3/ticker/price",
+            params={"symbol": bn_sym},
+            timeout=5,
+        )
+        data = resp.json()
+        price = float(data["price"])
+        _cache[cache_key] = (price, time.time())
+        log.info(f"[price_feeds] Binance {symbol.upper()} = ${price:,.4f}")
+        return price
+    except Exception as e:
+        log.debug(f"[price_feeds] Binance error for {symbol}: {e}")
+        return None
+
+
+def _get_binance_all() -> dict[str, float]:
+    """Fetch all prices from Binance in one call."""
+    cache_key = "bn:all"
+    if cache_key in _cache:
+        _, ts = _cache[cache_key]
+        if time.time() - ts < CACHE_TTL:
+            # Return cached values for each symbol
+            result = {}
+            for sym, bn_sym in BINANCE_SYMBOLS.items():
+                k = f"bn:{bn_sym}"
+                if k in _cache:
+                    result[sym] = _cache[k][0]
+            if result:
+                return result
+
+    try:
+        resp = httpx.get(
+            "https://api.binance.com/api/v3/ticker/price",
+            timeout=8,
+        )
+        data = resp.json()  # list of {symbol, price}
+        price_map = {item["symbol"]: float(item["price"]) for item in data if "symbol" in item}
+        now = time.time()
+        result = {}
+        for sym, bn_sym in BINANCE_SYMBOLS.items():
+            if bn_sym in price_map:
+                price = price_map[bn_sym]
+                result[sym] = price
+                _cache[f"bn:{bn_sym}"] = (price, now)
+        _cache[cache_key] = (0.0, now)  # marker
+        log.info(f"[price_feeds] Binance bulk: {len(result)} prices")
+        return result
+    except Exception as e:
+        log.warning(f"[price_feeds] Binance bulk error: {e}")
+        return {}
+
+
 def get_crypto_price(symbol: str) -> Optional[float]:
-    """Get current USD price for a crypto symbol. Returns None on failure."""
+    """Get current USD price for a crypto symbol. Tries Binance first, then CoinGecko."""
     symbol = symbol.lower().strip()
+
+    # Try Binance first (fast, no rate limit)
+    price = _get_binance_price(symbol)
+    if price is not None:
+        return price
+
+    # Fallback: CoinGecko
     cg_id = COINGECKO_IDS.get(symbol)
     if not cg_id:
         return None
@@ -63,9 +153,12 @@ def get_crypto_price(symbol: str) -> Optional[float]:
             timeout=8,
         )
         data = resp.json()
-        price = float(data[cg_id]["usd"])
+        entry = data.get(cg_id, {})
+        if not isinstance(entry, dict) or "usd" not in entry:
+            return None
+        price = float(entry["usd"])
         _cache[cache_key] = (price, time.time())
-        log.info(f"[price_feeds] {symbol.upper()} = ${price:,.2f}")
+        log.info(f"[price_feeds] CoinGecko {symbol.upper()} = ${price:,.2f}")
         return price
     except Exception as e:
         log.warning(f"[price_feeds] CoinGecko error for {symbol}: {e}")
@@ -73,7 +166,13 @@ def get_crypto_price(symbol: str) -> Optional[float]:
 
 
 def get_all_crypto_prices() -> dict[str, float]:
-    """Fetch all tracked cryptos in one request."""
+    """Fetch all tracked cryptos in one request. Binance primary, CoinGecko fallback."""
+    # Try Binance bulk first
+    result = _get_binance_all()
+    if result:
+        return result
+
+    # Fallback: CoinGecko bulk
     ids = ",".join(set(COINGECKO_IDS.values()))
     try:
         resp = httpx.get(
@@ -85,7 +184,6 @@ def get_all_crypto_prices() -> dict[str, float]:
         if not isinstance(data, dict):
             log.warning(f"[price_feeds] CoinGecko unexpected response: {str(data)[:100]}")
             return {}
-        result = {}
         now = time.time()
         for sym, cg_id in COINGECKO_IDS.items():
             entry = data.get(cg_id, {})
@@ -93,10 +191,10 @@ def get_all_crypto_prices() -> dict[str, float]:
                 price = float(entry["usd"])
                 result[sym] = price
                 _cache[f"cg:{cg_id}"] = (price, now)
-        log.info(f"[price_feeds] Bulk fetched {len(result)} crypto prices")
+        log.info(f"[price_feeds] CoinGecko bulk: {len(result)} prices")
         return result
     except Exception as e:
-        log.warning(f"[price_feeds] Bulk CoinGecko error: {e}")
+        log.warning(f"[price_feeds] CoinGecko bulk error: {e}")
         return {}
 
 
@@ -135,7 +233,7 @@ def _extract_threshold(question: str) -> Optional[tuple[str, str, float]]:
         except Exception:
             pass
 
-    if "up or down" in q or "up or down" in q:
+    if "up or down" in q:
         return (symbol, "updown", None)
     elif "above" in q and thresholds:
         return (symbol, "above", thresholds[0])
@@ -264,13 +362,14 @@ def verify_crypto_market(question: str) -> Optional[dict]:
 if __name__ == "__main__":
     # Quick test
     prices = get_all_crypto_prices()
-    print("Live prices:", {k: f"${v:,.0f}" for k, v in list(prices.items())[:8]})
+    print("Live prices:", {k: f"${v:,.4f}" for k, v in list(prices.items())[:8]})
 
     tests = [
         "Will Bitcoin be above $70,000 on April 20?",
         "Will ETH be below $1,000 on April 20?",
         "Will BTC dip to $50,000?",
         "Bitcoin Up or Down - April 20?",
+        "Will Ethereum be above $2,355 on April 20?",
     ]
     for q in tests:
         result = verify_crypto_market(q)

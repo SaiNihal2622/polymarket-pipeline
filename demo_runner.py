@@ -537,6 +537,9 @@ def scan_and_trade() -> dict:
             "nfl afc", "nfl nfc", "nba finals", "nhl playoffs",
             "french open", "wimbledon", "lpl 2026",
             "justin bieber", "taylor swift", "box office",
+            # Unpredictable direction questions — skip always
+            "up or down", "opens up or down", "up or down on",
+            "up or down -", "up or down –",
         ]
         if any(pat in q_lower for pat in HARD_SKIP):
             continue
@@ -596,14 +599,14 @@ def scan_and_trade() -> dict:
         except Exception:
             pass
 
-        # ── S3: Gemini research — always run for sweet spot, optional otherwise
+        # ── S3: Gemini research — run always (price feed can't cover non-crypto markets)
         gemini_dir  = "neutral"
         gemini_conf = 0.0
-        run_gemini = is_sweet or price_feed_conf < 0.60
-        if run_gemini and hours_left <= 48:
+        run_gemini = True  # always run — Gemini covers news/politics/sports that price feed can't
+        if run_gemini and hours_left <= 72:
             try:
                 cl = research_market(market)
-                if cl.direction != "neutral" and cl.materiality >= 0.45:
+                if cl.direction != "neutral" and cl.materiality >= 0.35:
                     gemini_dir  = cl.direction
                     gemini_conf = cl.materiality
             except Exception:
@@ -662,30 +665,29 @@ def scan_and_trade() -> dict:
             console.print(f"  [dim]⚡ CONTRA-CROWD skip: {market.question[:40]}[/dim]")
             continue
 
-        # Gate C: Tier 1 (1:1) — STRICTEST — need price feed OR Gemini very strong
-        # At 0.50 price, accuracy needs to be 60%+ to profit at all
-        # So we only trade if at least one signal is highly confident (≥0.70)
+        # Gate C: Tier 1 (1:1) — need price feed OR Gemini strong
+        # Price feed alone at ≥0.65 is sufficient (e.g. ETH $1,580 vs $2,355 threshold = 87% NO)
         if is_tier1:
-            strong_price = price_feed_conf >= 0.70 and price_feed_dir != "neutral"
-            strong_gemini = gemini_conf >= 0.65 and gemini_dir != "neutral"
-            both_agree = (price_feed_dir == gemini_dir and
-                         price_feed_dir != "neutral" and
-                         price_feed_conf >= 0.55 and gemini_conf >= 0.55)
+            strong_price  = price_feed_conf >= 0.65 and price_feed_dir != "neutral"
+            strong_gemini = gemini_conf >= 0.60 and gemini_dir != "neutral"
+            both_agree    = (price_feed_dir == gemini_dir and
+                             price_feed_dir != "neutral" and
+                             price_feed_conf >= 0.50 and gemini_conf >= 0.50)
             if not (strong_price or strong_gemini or both_agree):
-                console.print(f"  [dim]💎 1:1 needs strong signal (pf:{price_feed_conf:.0%} gem:{gemini_conf:.0%}) skip: {market.question[:35]}[/dim]")
+                console.print(f"  [dim]💎 1:1 needs signal (pf:{price_feed_conf:.0%} gem:{gemini_conf:.0%}) skip: {market.question[:35]}[/dim]")
                 continue
 
-        # Gate D: Tier 2 (sweet) — need at least one signal ≥ 0.60
+        # Gate D: Tier 2 (sweet) — need at least one signal ≥ 0.55
         elif is_sweet:
-            strong_price  = price_feed_conf >= 0.60 and price_feed_dir != "neutral"
-            strong_gemini = gemini_conf >= 0.58 and gemini_dir != "neutral"
+            strong_price  = price_feed_conf >= 0.55 and price_feed_dir != "neutral"
+            strong_gemini = gemini_conf >= 0.50 and gemini_dir != "neutral"
             if not (strong_price or strong_gemini):
                 console.print(f"  [dim]💎 Sweet needs signal (pf:{price_feed_conf:.0%} gem:{gemini_conf:.0%}) skip: {market.question[:35]}[/dim]")
                 continue
 
         # Gate E: Tier 3 (crowd-confident) — Gemini or price feed must agree with crowd
         else:
-            if price_feed_conf < 0.50 and gemini_conf < 0.45:
+            if price_feed_conf < 0.45 and gemini_conf < 0.40:
                 console.print(f"  [dim]⚡ Crowd confident but no research confirmation skip[/dim]")
                 continue
 
