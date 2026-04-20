@@ -18,7 +18,7 @@ import httpx
 
 log = logging.getLogger(__name__)
 
-APIFY_TOKEN = os.getenv("APIFY_TOKEN", "APIFY_PLACEHOLDER")
+APIFY_TOKEN = os.getenv("APIFY_TOKEN", "")
 
 # Cache: query -> (results, timestamp)
 _search_cache: dict[str, tuple[list[str], float]] = {}
