@@ -642,17 +642,26 @@ def scan_and_trade() -> dict:
             console.print(f"  [dim]⚡ CONFLICT price_feed vs gemini — skip: {market.question[:50]}[/dim]")
             continue
 
-        # Final direction
-        if score_bullish >= score_bearish and score_bullish >= 0.20:
+        # Kill signal if betting AGAINST the crowd on high-confidence markets
+        # e.g. crowd says 88% NO (price=0.12) → never bet YES against that
+        if clob_dir == "bearish" and score_bullish > score_bearish:
+            console.print(f"  [dim]⚡ CONTRA-CROWD YES vs {price:.0%} NO crowd — skip[/dim]")
+            continue
+        if clob_dir == "bullish" and score_bearish > score_bullish:
+            console.print(f"  [dim]⚡ CONTRA-CROWD NO vs {price:.0%} YES crowd — skip[/dim]")
+            continue
+
+        # Final direction — minimum score 0.35 (raised from 0.20)
+        if score_bullish >= score_bearish and score_bullish >= 0.35:
             final_dir = "bullish"
             final_side = "YES"
             final_score = score_bullish
-        elif score_bearish > score_bullish and score_bearish >= 0.20:
+        elif score_bearish > score_bullish and score_bearish >= 0.35:
             final_dir = "bearish"
             final_side = "NO"
             final_score = score_bearish
         else:
-            continue  # no confident direction
+            continue  # not confident enough
 
         # ── EV calculation ─────────────────────────────────────────────────
         bet_price = price if final_side == "YES" else (1 - price)
