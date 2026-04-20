@@ -89,6 +89,93 @@ def _get_binance_price(symbol: str) -> Optional[float]:
         return None
 
 
+# CryptoCompare symbol map (fallback 1)
+CRYPTOCOMPARE_SYMS = {
+    "btc": "BTC", "bitcoin": "BTC",
+    "eth": "ETH", "ethereum": "ETH",
+    "sol": "SOL", "solana": "SOL",
+    "xrp": "XRP", "ripple": "XRP",
+    "bnb": "BNB",
+    "doge": "DOGE", "dogecoin": "DOGE",
+    "ada": "ADA", "cardano": "ADA",
+    "avax": "AVAX", "avalanche": "AVAX",
+    "matic": "MATIC", "polygon": "MATIC",
+    "link": "LINK", "chainlink": "LINK",
+    "dot": "DOT", "polkadot": "DOT",
+    "ltc": "LTC", "litecoin": "LTC",
+    "atom": "ATOM", "cosmos": "ATOM",
+}
+
+# Kraken symbol map (fallback 2)
+KRAKEN_SYMS = {
+    "btc": "XBTUSD", "bitcoin": "XBTUSD",
+    "eth": "ETHUSD", "ethereum": "ETHUSD",
+    "sol": "SOLUSD", "solana": "SOLUSD",
+    "xrp": "XRPUSD", "ripple": "XRPUSD",
+    "doge": "XDGUSD", "dogecoin": "XDGUSD",
+    "ada": "ADAUSD", "cardano": "ADAUSD",
+    "dot": "DOTUSD", "polkadot": "DOTUSD",
+    "ltc": "XLTCZUSD", "litecoin": "XLTCZUSD",
+    "atom": "ATOMUSD", "cosmos": "ATOMUSD",
+    "link": "LINKUSD", "chainlink": "LINKUSD",
+}
+
+
+def _get_cryptocompare_price(symbol: str) -> Optional[float]:
+    """Fetch price from CryptoCompare (free, no key, different CDN than Binance)."""
+    cc_sym = CRYPTOCOMPARE_SYMS.get(symbol.lower().strip())
+    if not cc_sym:
+        return None
+    cache_key = f"cc:{cc_sym}"
+    if cache_key in _cache:
+        price, ts = _cache[cache_key]
+        if time.time() - ts < CACHE_TTL:
+            return price
+    try:
+        resp = httpx.get(
+            "https://min-api.cryptocompare.com/data/price",
+            params={"fsym": cc_sym, "tsyms": "USD"},
+            timeout=5,
+        )
+        data = resp.json()
+        price = float(data["USD"])
+        _cache[cache_key] = (price, time.time())
+        log.info(f"[price_feeds] CryptoCompare {symbol.upper()} = ${price:,.4f}")
+        return price
+    except Exception as e:
+        log.debug(f"[price_feeds] CryptoCompare error for {symbol}: {e}")
+        return None
+
+
+def _get_kraken_price(symbol: str) -> Optional[float]:
+    """Fetch price from Kraken public API (no key, different CDN)."""
+    kr_sym = KRAKEN_SYMS.get(symbol.lower().strip())
+    if not kr_sym:
+        return None
+    cache_key = f"kr:{kr_sym}"
+    if cache_key in _cache:
+        price, ts = _cache[cache_key]
+        if time.time() - ts < CACHE_TTL:
+            return price
+    try:
+        resp = httpx.get(
+            "https://api.kraken.com/0/public/Ticker",
+            params={"pair": kr_sym},
+            timeout=5,
+        )
+        data = resp.json()
+        result = data.get("result", {})
+        if result:
+            pair_data = list(result.values())[0]
+            price = float(pair_data["c"][0])  # last trade price
+            _cache[cache_key] = (price, time.time())
+            log.info(f"[price_feeds] Kraken {symbol.upper()} = ${price:,.4f}")
+            return price
+    except Exception as e:
+        log.debug(f"[price_feeds] Kraken error for {symbol}: {e}")
+    return None
+
+
 def _get_binance_all() -> dict[str, float]:
     """Fetch all prices from Binance in one call."""
     cache_key = "bn:all"
@@ -127,15 +214,28 @@ def _get_binance_all() -> dict[str, float]:
 
 
 def get_crypto_price(symbol: str) -> Optional[float]:
-    """Get current USD price for a crypto symbol. Tries Binance first, then CoinGecko."""
+    """
+    Get current USD price for a crypto symbol.
+    Tries Binance → CryptoCompare → Kraken → CoinGecko in order.
+    """
     symbol = symbol.lower().strip()
 
-    # Try Binance first (fast, no rate limit)
+    # 1. Binance (fastest, highest limits)
     price = _get_binance_price(symbol)
     if price is not None:
         return price
 
-    # Fallback: CoinGecko
+    # 2. CryptoCompare (different CDN — works when Binance is blocked)
+    price = _get_cryptocompare_price(symbol)
+    if price is not None:
+        return price
+
+    # 3. Kraken (European exchange, different infrastructure)
+    price = _get_kraken_price(symbol)
+    if price is not None:
+        return price
+
+    # 4. CoinGecko (final fallback)
     cg_id = COINGECKO_IDS.get(symbol)
     if not cg_id:
         return None
@@ -161,7 +261,7 @@ def get_crypto_price(symbol: str) -> Optional[float]:
         log.info(f"[price_feeds] CoinGecko {symbol.upper()} = ${price:,.2f}")
         return price
     except Exception as e:
-        log.warning(f"[price_feeds] CoinGecko error for {symbol}: {e}")
+        log.warning(f"[price_feeds] All price APIs failed for {symbol}: {e}")
         return None
 
 
@@ -314,7 +414,7 @@ def verify_crypto_market(question: str) -> Optional[dict]:
 
     if direction == "above" and threshold:
         gap_pct = (price - threshold) / threshold
-        if gap_pct > 0.08:
+        if gap_pct > 0.05:
             # Price is >8% above threshold — YES is nearly certain
             conf = min(0.95, 0.80 + gap_pct * 0.5)
             return {
@@ -324,7 +424,7 @@ def verify_crypto_market(question: str) -> Optional[dict]:
                 "current_price": price,
                 "threshold": threshold,
             }
-        elif gap_pct < -0.08:
+        elif gap_pct < -0.05:
             # Price is >8% below threshold — NO is nearly certain
             conf = min(0.95, 0.80 + abs(gap_pct) * 0.5)
             return {
@@ -337,7 +437,7 @@ def verify_crypto_market(question: str) -> Optional[dict]:
 
     elif direction == "below" and threshold:
         gap_pct = (threshold - price) / threshold
-        if gap_pct > 0.08:
+        if gap_pct > 0.05:
             conf = min(0.95, 0.80 + gap_pct * 0.5)
             return {
                 "direction": "bullish",
@@ -346,7 +446,7 @@ def verify_crypto_market(question: str) -> Optional[dict]:
                 "current_price": price,
                 "threshold": threshold,
             }
-        elif gap_pct < -0.08:
+        elif gap_pct < -0.05:
             conf = min(0.95, 0.80 + abs(gap_pct) * 0.5)
             return {
                 "direction": "bearish",

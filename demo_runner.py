@@ -599,11 +599,17 @@ def scan_and_trade() -> dict:
         price_feed_conf = 0.0
         try:
             pf = verify_crypto_market(market.question)
-            if pf and pf["confidence"] >= 0.60:
-                price_feed_dir  = pf["direction"]
-                price_feed_conf = pf["confidence"]
-        except Exception:
-            pass
+            if pf:
+                if pf["confidence"] >= 0.55:
+                    price_feed_dir  = pf["direction"]
+                    price_feed_conf = pf["confidence"]
+                    log.info(f"[pricefeed] {market.question[:50]} → {pf['direction']} {pf['confidence']:.0%} (${pf.get('current_price',0):,.0f} vs ${pf.get('threshold',0):,.0f})")
+                else:
+                    log.debug(f"[pricefeed] Low conf {pf['confidence']:.0%} for {market.question[:40]}")
+            else:
+                log.debug(f"[pricefeed] No signal for {market.question[:40]}")
+        except Exception as e:
+            log.debug(f"[pricefeed] Error: {e}")
 
         # ── S3: Gemini research — run always (price feed can't cover non-crypto markets)
         gemini_dir  = "neutral"
