@@ -488,7 +488,16 @@ def scan_and_trade() -> dict:
         if hours_left > 24:
             continue
 
-        # Skip dead zone prices (too extreme or middle dead zone)
+        # PROFIT FILTER: Only trade categories with proven accuracy
+        # Crypto: 79% | Finance/stocks: decent with price feed
+        # Sports exact scores, O/U, spreads: 25% → money drain
+        is_crypto = any(k in q_lower for k in ["bitcoin", "btc", "ethereum", "eth", "solana", "sol", "crypto", "dogecoin", "xrp", "bnb"])
+        is_finance = any(k in q_lower for k in ["s&p", "spy", "nasdaq", "nvda", "nvidia", "tsla", "tesla", "apple", "aapl", "stock", "close above", "close below"])
+        is_politics = any(k in q_lower for k in ["trump", "biden", "tariff", "fed ", "congress", "senate", "sanctions"])
+        if not (is_crypto or is_finance or is_politics):
+            continue
+
+        # Skip dead zone prices (too extreme)
         if price < 0.08 or price > 0.92:
             continue
 
@@ -526,11 +535,27 @@ def scan_and_trade() -> dict:
         elif price <= 0.45:
             clob_dir, clob_conf = "bearish", 1.0 - price
 
+        # ── Signal 5: Gemini Flash research (sweet-zone only) ─────────
+        # Uses Gemini 2.0 Flash + web search to verify if outcome is known
+        # Only for sweet-zone (0.35-0.65) where we need more conviction
+        gem_dir, gem_conf = "neutral", 0.0
+        is_sweet = 0.35 <= price <= 0.65
+        if is_sweet and (pf_conf < 0.55 and cp_conf < 0.50 and wh_conf < 0.50):
+            try:
+                from classifier import research_market
+                res = research_market(market)
+                if res.direction in ("bullish", "bearish") and res.materiality >= 0.40:
+                    gem_dir = res.direction
+                    gem_conf = min(0.85, res.materiality)
+            except Exception:
+                pass
+
         # ── Combine: MAX-based scoring ────────────────────────────────
         bull_sigs = []
         bear_sigs = []
         for name, d, c in [("pf", pf_dir, pf_conf), ("copy", cp_dir, cp_conf),
-                           ("whale", wh_dir, wh_conf), ("crowd", clob_dir, clob_conf)]:
+                           ("whale", wh_dir, wh_conf), ("crowd", clob_dir, clob_conf),
+                           ("gem", gem_dir, gem_conf)]:
             if d == "bullish" and c > 0:
                 bull_sigs.append((name, c))
             elif d == "bearish" and c > 0:
@@ -550,10 +575,10 @@ def scan_and_trade() -> dict:
             continue
 
         # ── Minimum signal requirement ─────────────────────────────────
-        # Sweet zone (0.35-0.65): need crowd ≥55% OR any real signal
+        # Sweet zone (0.35-0.65): need crowd ≥55% OR any real signal OR Gemini
         is_sweet = 0.35 <= price <= 0.65
         if is_sweet:
-            has_signal = pf_conf >= 0.55 or cp_conf >= 0.50 or wh_conf >= 0.50 or clob_conf >= 0.55
+            has_signal = pf_conf >= 0.55 or cp_conf >= 0.50 or wh_conf >= 0.50 or clob_conf >= 0.55 or gem_conf >= 0.40
             if not has_signal:
                 continue
         # Crowd zone (outside 0.35-0.65): crowd IS the signal
@@ -596,7 +621,8 @@ def scan_and_trade() -> dict:
         if pf_conf >= 0.50:   sources.append(f"💰PF:{pf_conf:.0%}")
         if cp_conf >= 0.40:   sources.append(f"👛Copy:{cp_conf:.0%}({cp_wallets}w)")
         if wh_conf >= 0.40:   sources.append(f"🐋Whale:{wh_conf:.0%}")
-        if clob_conf >= 0.60: sources.append(f"📊Crowd:{clob_conf:.0%}")
+        if clob_conf >= 0.50: sources.append(f"📊Crowd:{clob_conf:.0%}")
+        if gem_conf >= 0.30:  sources.append(f"🔬Gemini:{gem_conf:.0%}")
 
         win_profit = round(bet * payout_ratio, 2)
         console.print(

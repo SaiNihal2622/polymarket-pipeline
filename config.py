@@ -16,7 +16,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
 # --- Google Gemini ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-pro-preview-05-06")  # best reasoning + search
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")  # Flash = 2000 RPM (Tier 1). Pro-preview was 2 RPM = 429s
 
 # --- Ollama ---
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
