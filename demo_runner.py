@@ -47,11 +47,7 @@ def get_pending_market_ids() -> set:
     except Exception:
         return set()
 from markets import fetch_active_markets, filter_by_categories
-from scraper import scrape_all
-from classifier import classify, research_market, Classification
-from matcher import match_news_to_markets
 from edge import detect_edge_v2, Signal
-from news_stream import NewsEvent
 from resolver import run_resolution_check, get_accuracy_stats, get_resolved_trade_list, get_pipeline_comparison
 
 console = Console()
@@ -346,55 +342,40 @@ def _log_demo_trade(signal: Signal, token_id: str | None = None) -> int:
     return trade_id
 
 
-def _news_item_to_event(news_item) -> NewsEvent:
-    """Convert a scraper NewsItem into a NewsEvent for the V2 pipeline."""
-    now = datetime.now(timezone.utc)
-    age_secs = int(news_item.age_hours() * 3600)
-    published = now - timedelta(seconds=age_secs)
-    return NewsEvent(
-        headline=news_item.headline,
-        source=news_item.source,
-        url=getattr(news_item, "url", ""),
-        received_at=now,
-        published_at=published,
-        summary=getattr(news_item, "summary", ""),
-        latency_ms=age_secs * 1000,
-    )
+
+def _get_db_pending_condition_ids() -> set:
+    """Get condition_ids of ALL pending trades from database — prevents cross-scan duplicates."""
+    import sqlite3
+    from pathlib import Path as _Path
+    db = _Path(os.getenv("DB_PATH", "/data/trades.db"))
+    if not db.exists():
+        db = _Path(__file__).parent / "trades.db"
+    if not db.exists():
+        return set()
+    try:
+        conn = sqlite3.connect(db)
+        rows = conn.execute(
+            "SELECT DISTINCT market_id FROM trades WHERE status IN ('demo','dry_run') "
+            "AND market_id != ''"
+        ).fetchall()
+        conn.close()
+        return {r[0] for r in rows}
+    except Exception:
+        return set()
 
 
 def scan_and_trade() -> dict:
     """
-    One full scan cycle using the FULL V2 analysis engine:
-      News → Match → Analyst+Skeptic Consensus → RRF Composite → Demo trade
+    Simplified scan: 3 signals (price feed, copy-trade, crowd CLOB).
+    No AI research. No tier system. Just data-driven signals.
     """
-    console.print("\n[bold cyan]── Demo Scan (Full V2 Analysis) ───────────[/bold cyan]")
+    console.print("\n[bold cyan]── Scan ───────────[/bold cyan]")
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    consensus_tag = f"consensus={'ON' if config.CONSENSUS_ENABLED else 'OFF'} passes={config.CONSENSUS_PASSES}"
-    console.print(f"  {now_str}  |  ≤{DEMO_HOURS_WINDOW:.0f}h window  |  {consensus_tag}  |  model={config.LLM_PROVIDER}")
-
-    # Show accuracy at the top of every scan
+    console.print(f"  {now_str}  |  ≤{DEMO_HOURS_WINDOW:.0f}h window")
     _print_accuracy_oneliner()
 
-    # 1. News scraping (Polycool removed — leaderboard used instead)
-    console.print("\n[bold]1. Scraping news...[/bold]")
-    bot_markets: list = []  # Polycool disabled; placeholder for polycool_signal()
-    def polycool_signal(_q, _mkts): return None  # no-op stub
-
-    news_items = scrape_all(config.NEWS_LOOKBACK_HOURS)
-    # Count by source type
-    rss_count     = sum(1 for n in news_items if not n.source.startswith("Reddit") and n.source != "Hacker News" and n.source != "CryptoPanic" and n.source != "Twitter")
-    reddit_count  = sum(1 for n in news_items if n.source.startswith("Reddit"))
-    hn_count      = sum(1 for n in news_items if n.source == "Hacker News")
-    crypto_count  = sum(1 for n in news_items if n.source == "CryptoPanic")
-    twitter_count = sum(1 for n in news_items if n.source == "Twitter")
-    console.print(
-        f"   {len(news_items)} headlines "
-        f"[dim](RSS:{rss_count} Reddit:{reddit_count} HN:{hn_count} "
-        f"CryptoPanic:{crypto_count} Twitter:{twitter_count})[/dim]"
-    )
-
-    # 2. Markets
-    console.print("\n[bold]2. Fetching live markets...[/bold]")
+    # 1. Fetch markets
+    console.print("\n[bold]1. Fetching markets...[/bold]")
     all_markets = fetch_active_markets(limit=2000)
     category_filtered = filter_by_categories(all_markets)
     window_markets = filter_closing_soon(category_filtered, DEMO_HOURS_WINDOW)
@@ -402,90 +383,64 @@ def scan_and_trade() -> dict:
     day_markets, skipped = filter_quality_markets(window_markets, now)
 
     console.print(
-        f"   {len(all_markets)} total → {len(category_filtered)} in categories "
-        f"→ {len(window_markets)} in {DEMO_HOURS_WINDOW:.0f}h window "
-        f"→ [bold yellow]{len(day_markets)} quality markets[/bold yellow] "
-        f"[dim](dropped: {skipped['too_soon']} too-soon, {skipped['price_extreme']} price-extreme, "
-        f"{skipped['low_volume']} low-vol, {skipped['micro_window']} micro-window, {skipped['weather']} weather)[/dim]"
+        f"   {len(all_markets)} total → {len(category_filtered)} categories "
+        f"→ {len(window_markets)} in window → [bold yellow]{len(day_markets)} quality[/bold yellow]"
     )
 
     if not day_markets:
-        console.print("   [yellow]No quality markets found this scan.[/yellow]")
+        console.print("   [yellow]No quality markets found.[/yellow]")
         return {"markets": 0, "signals": 0, "demos_logged": 0}
 
-    # Sort by closing time — soonest first so fast-resolving markets get priority
-    # This means accuracy shows up much faster (hours not days)
-    now = datetime.now(timezone.utc)
+    # Sort by closing time — soonest first
     def _hours_left(m):
         end = _parse_end_date(m.end_date)
         return (end - now).total_seconds() / 3600 if end else 9999
     day_markets.sort(key=_hours_left)
 
-    # Print the shortlist
-    now = datetime.now(timezone.utc)
-    table = Table(title=f"1-Day Markets ({len(day_markets)} found)", show_header=True, header_style="bold magenta")
-    table.add_column("#", width=3)
-    table.add_column("Question", no_wrap=False, max_width=52)
-    table.add_column("YES", justify="right", width=5)
-    table.add_column("Vol $", justify="right", width=10)
-    table.add_column("Closes In", justify="right", width=9)
-    for i, m in enumerate(day_markets[:20], 1):
-        end = _parse_end_date(m.end_date)
-        hours_left = ((end - now).total_seconds() / 3600) if end else 0
-        table.add_row(str(i), m.question[:52], f"{m.yes_price:.2f}", f"${m.volume:,.0f}", f"{hours_left:.1f}h")
-    console.print(table)
+    # ── DEDUP: Check BOTH in-memory and database for existing trades ────
+    already_logged = get_pending_market_ids() | _get_db_pending_condition_ids()
+    all_candidates = [m for m in day_markets if m.condition_id not in already_logged]
+    console.print(f"   {len(all_candidates)} new candidates (filtered {len(day_markets) - len(all_candidates)} already-traded)")
 
-    # 3. TWO-TRACK ANALYSIS:
-    #   TRACK 1 — Fast markets (≤24h): research_market() with Gemini live search — no news needed
-    #   TRACK 2 — Slow markets (>24h): news matching + classify() (existing approach)
+    if not all_candidates:
+        console.print("   [yellow]All markets already have pending trades.[/yellow]")
+        return {"markets": len(day_markets), "signals": 0, "demos_logged": 0}
 
-    MAX_FAST = int(os.getenv("MAX_FAST_PER_SCAN", "80"))   # research up to 80 fast markets
-    MAX_SLOW = int(os.getenv("MAX_PAIRS_PER_SCAN", "25"))  # keep top 25 slow news pairs
-
-    already_logged = get_pending_market_ids()
-
-    fast_markets = [m for m in day_markets if _hours_left(m) <= 24 and m.condition_id not in already_logged]
-    # Priority: fastest-ending first (they resolve soonest → fastest feedback + most urgent)
-    fast_markets.sort(key=lambda m: _hours_left(m))
-    slow_markets = [m for m in day_markets if _hours_left(m) > 24 and m.condition_id not in already_logged]
-
-    console.print(
-        f"\n[bold]3. Two-Track Analysis:[/bold] "
-        f"⚡ {len(fast_markets)} fast (≤24h, Gemini search) | "
-        f"📅 {len(slow_markets)} slow (>24h, news match)"
-    )
-
-    signals_found: list[Signal] = []
-    demos_logged = 0
-    analyzed = 0
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # UNIFIED SIGNAL ENGINE
-    # Every market goes through ALL signal sources. Each source votes.
-    # Final score = weighted combination. One bet per market. No duplicates.
-    #
-    # Signal sources (all considered together):
-    #   S1: CLOB price   — crowd consensus (how confident is the market?)
-    #   S2: Live price   — CoinGecko math (is threshold already crossed?)
-    #   S3: Gemini 2.5   — AI research (what does live web search say?)
-    #   S4: Whale signal — smart money direction
-    #
-    # Scoring weights:
-    #   S2 (price feed) = 0.40  ← most reliable, pure math
-    #   S3 (Gemini)     = 0.35  ← research quality
-    #   S1 (CLOB)       = 0.15  ← crowd wisdom
-    #   S4 (whale)      = 0.10  ← smart money
-    #
-    # Sweet spot bonus: if market price 0.35-0.65, multiply EV by 2x
-    # (same confidence but earns 2x more per share)
-    # ══════════════════════════════════════════════════════════════════════════
+    # ── HARD BLOCKLIST ──────────────────────────────────────────────────
+    HARD_SKIP = [
+        # Long-dated futures (can't resolve in 48h)
+        "world series", "super bowl", "stanley cup", "french open", "wimbledon",
+        "nba champion", "nba finals", "nfl afc", "nfl nfc", "nhl playoffs",
+        "lpl 2026", "ipl champion", "tour de france", "rbc heritage", "masters 2026",
+        "governor", "senator", "president", "fed chair", "confirmed as",
+        "2027", "grammy", "oscar", "nobel", "eurovision",
+        # Esports (pure luck/skill markets)
+        "(bo1)", "(bo3)", "map 1 winner", "map 2 winner", "map 3 winner",
+        "game 1 winner", "game 2 winner", "game 3 winner", "game 4 winner",
+        "first blood", "first tower", "first baron", "quadra kill", "penta kill",
+        "dragon soul", "inhibitor", "total kills",
+        "dota 2", "valorant", "counter-strike", "league of legends",
+        # Sports O/U / props (unresearchable)
+        "o/u 1.5", "o/u 2.5", "o/u 3.5", "o/u 4.5", "o/u 5.5",
+        "both teams to score", "leading at halftime", "half time",
+        "spread:", "correct score", "exact score", "handicap:",
+        "points o/u", "assists o/u", "rebounds o/u", "total corners",
+        "any player", "up or down", "opens up or down",
+        # Misc
+        "temperature", "rainfall", "snow",
+        "justin bieber", "taylor swift", "box office", "posts from",
+        "end in a draw", "art ross", "clutch player", "coach of the year",
+        "top goal scorer", "most assists",
+        # Player/team season awards
+        "win the 2025", "win the 2026", "win the 2027",
+        "finish in the top", "relegated",
+    ]
 
     from price_feeds import verify_crypto_market, get_all_crypto_prices
-    from orderbook import fetch_book
-    from whale import bulk_whale_signals, copy_trade_signal
+    from whale import bulk_whale_signals
     from leaderboard import build_copy_signals
 
-    # Pre-fetch all crypto prices once (cache for whole scan)
+    # Pre-fetch crypto prices
     try:
         get_all_crypto_prices()
     except Exception:
@@ -493,7 +448,6 @@ def scan_and_trade() -> dict:
 
     # Build token map
     token_map = {}
-    all_candidates = [m for m in day_markets if m.condition_id not in already_logged]
     for m in all_candidates:
         if m.tokens and isinstance(m.tokens, list) and m.tokens:
             t = m.tokens[0]
@@ -501,311 +455,150 @@ def scan_and_trade() -> dict:
             if tid:
                 token_map[m.condition_id] = tid
 
-    # Pre-match news headlines to markets (keyword overlap, used as LLM context)
-    news_map: dict[str, list[str]] = {}
-    try:
-        for market in all_candidates:
-            q_words = set(w.lower().strip("?.,!\"'()") for w in market.question.split() if len(w) > 3)
-            hits: list[tuple[int, str]] = []
-            for ni in news_items[:300]:
-                h_words = set(w.lower() for w in ni.headline.split())
-                overlap = len(q_words & h_words)
-                if overlap >= 2:
-                    hits.append((overlap, ni.headline))
-            hits.sort(reverse=True)
-            if hits:
-                news_map[market.condition_id] = [h for _, h in hits[:4]]
-        log.info(f"[engine] News pre-matched {len(news_map)}/{len(all_candidates)} markets")
-    except Exception as e:
-        log.warning(f"[engine] News matching failed: {e}")
-
-    # Batch whale signals for all candidates
+    # Batch whale + copy-trade signals
     all_ids = [m.condition_id for m in all_candidates[:100]]
     try:
         whale_map = bulk_whale_signals(all_ids[:30], token_map=token_map)
     except Exception:
         whale_map = {}
     try:
-        copy_map = build_copy_signals(set(all_ids), top_n=20)
+        copy_map = build_copy_signals(set(all_ids), top_n=30, min_usd=50.0)
     except Exception:
         copy_map = {}
 
-    console.print(f"\n[bold cyan]🔮 UNIFIED ENGINE: scoring {len(all_candidates)} markets across all signals[/bold cyan]")
+    console.print(f"\n[bold cyan]🔮 ENGINE: {len(all_candidates)} markets | whale:{len(whale_map)} copy:{len(copy_map)}[/bold cyan]")
 
-    MAX_MARKETS = int(os.getenv("MAX_MARKETS_PER_SCAN", "120"))
+    signals_found: list[Signal] = []
+    demos_logged = 0
+    analyzed = 0
+    MAX_MARKETS = int(os.getenv("MAX_MARKETS_PER_SCAN", "150"))
 
     for market in all_candidates[:MAX_MARKETS]:
         analyzed += 1
         q_lower = market.question.lower()
 
-        # Hard blocklist — always skip
-        HARD_SKIP = [
-            "win on 2026", "win on april", "win on 2025",
-            "will sc ", "will cf ", "will fc ", "will cd ", "will ca ",
-            "will ac ", "will as ", "(bo1)", "(bo3)",
-            "map 1 winner", "map 2 winner", "map 3 winner",
-            "both teams to score", "leading at halftime", "half time",
-            "o/u 2.5", "o/u 3.5", "o/u 4.5", "o/u 1.5",
-            "spread:", "correct score", "exact score",
-            "total kills", "first blood", "first tower",
-            "end in a draw", "posts from",
-            "world series", "super bowl", "stanley cup",
-            "art ross", "clutch player", "coach of the year",
-            "top goal scorer", "most assists",
-            "nfl afc", "nfl nfc", "nba finals", "nhl playoffs",
-            "french open", "wimbledon", "lpl 2026",
-            "justin bieber", "taylor swift", "box office",
-            # Unpredictable direction questions — skip always
-            "up or down", "opens up or down", "up or down on",
-            "up or down -", "up or down –",
-            # Esports / gaming — unpredictable, no news coverage
-            "game 1 winner", "game 2 winner", "game 3 winner",
-            "game 4 winner", "game 5 winner",
-            "quadra kill", "penta kill", "first blood", "first baron",
-            "dota 2", "valorant", "counter-strike", "league of legends",
-            "any player", "dragon soul", "inhibitor",
-        ]
         if any(pat in q_lower for pat in HARD_SKIP):
             continue
 
-        # Soft blocklist — skip markets we absolutely cannot research
-        CANT_RESEARCH = [
-            # Micro esports in-game events (no news exists)
-            "quadra kill", "penta kill", "first blood", "first baron", "first tower",
-            "inhibitor", "dragon soul", "any player",
-            # Very specific sports props impossible to predict
-            "points o/u", "assists o/u", "rebounds o/u", "total corners",
-            "o/u 4.5", "o/u 5.5", "o/u 6.5", "o/u 7.5", "o/u 224", "o/u 225",
-            "o/u 226", "o/u 227", "o/u 228", "o/u 229", "o/u 230",
-            "exact score:", "correct score",
-            # Weather / temperature
-            "temperature", "rainfall", "snow",
-            # Spreads (need specific point analysis)
-            "spread:", "handicap:",
-        ]
-        if any(pat in q_lower for pat in CANT_RESEARCH):
-            continue
-
         hours_left = _hours_left(market)
-        price = market.yes_price  # crowd's current probability
+        price = market.yes_price
         tok = token_map.get(market.condition_id)
 
-        # ── S1: CLOB crowd price → base direction + confidence ───────────
-        # The market price IS the crowd's probability estimate.
-        # THREE tiers by price — priority order:
-        # TIER 1 (BEST): 0.45-0.55 → near 1:1 payout, win $1 per $1 bet
-        # TIER 2 (GOOD): 0.35-0.45 or 0.55-0.65 → 1.2x-1.9x payout
-        # TIER 3 (OK):   0.72-0.92 or 0.08-0.28 → crowd confident, small payout
-        clob_dir = "neutral"
-        clob_conf = 0.0
-        is_tier1  = 0.45 <= price <= 0.55   # near 1:1 payout — BEST
-        is_tier2  = (0.35 <= price < 0.45) or (0.55 < price <= 0.65)
-        is_sweet  = is_tier1 or is_tier2
+        # Skip dead zone prices (too extreme or middle dead zone)
+        if price < 0.08 or price > 0.92:
+            continue
+        # Tradeable zones: 0.08-0.92
 
-        if 0.72 <= price <= 0.92:
-            clob_dir  = "bullish"
-            clob_conf = price
-        elif 0.08 <= price <= 0.28:
-            clob_dir  = "bearish"
-            clob_conf = 1.0 - price
-        elif is_sweet:
-            clob_conf = 0.10  # uncertain — other signals provide direction
-        else:
-            continue  # dead zone — skip
-
-        # ── S2: Live price feed (CoinGecko) — pure math, highest weight ──
-        price_feed_dir  = "neutral"
-        price_feed_conf = 0.0
+        # ── Signal 1: Price feed (crypto only — mathematical) ─────────
+        pf_dir, pf_conf = "neutral", 0.0
         try:
             pf = verify_crypto_market(market.question)
-            if pf:
-                if pf["confidence"] >= 0.55:
-                    price_feed_dir  = pf["direction"]
-                    price_feed_conf = pf["confidence"]
-                    log.info(f"[pricefeed] {market.question[:50]} → {pf['direction']} {pf['confidence']:.0%} (${pf.get('current_price',0):,.0f} vs ${pf.get('threshold',0):,.0f})")
-                else:
-                    log.debug(f"[pricefeed] Low conf {pf['confidence']:.0%} for {market.question[:40]}")
-            else:
-                log.debug(f"[pricefeed] No signal for {market.question[:40]}")
-        except Exception as e:
-            log.debug(f"[pricefeed] Error: {e}")
+            if pf and pf["confidence"] >= 0.55:
+                pf_dir  = pf["direction"]
+                pf_conf = pf["confidence"]
+        except Exception:
+            pass
 
-        # ── S3: Research signal — Gemini search → Apify+Groq fallback
-        gemini_dir  = "neutral"
-        gemini_conf = 0.0
-        if hours_left <= 72:
-            try:
-                matched_headlines = news_map.get(market.condition_id, [])
-                cl = research_market(market, news_context=matched_headlines)
-                if cl.direction != "neutral" and cl.materiality >= 0.28:
-                    gemini_dir  = cl.direction
-                    gemini_conf = cl.materiality
-            except Exception as e:
-                log.debug(f"[engine] research_market error: {e}")
-
-        # ── S4: Whale / leaderboard signal ───────────────────────────────
-        whale_dir  = "neutral"
-        whale_conf = 0.0
-        whale_sig  = whale_map.get(market.condition_id)
-        if whale_sig and whale_sig.direction != "neutral":
-            whale_dir  = whale_sig.direction
-            whale_conf = min(0.65, abs(whale_sig.yes_bias - 0.5) * 2)
+        # ── Signal 2: Copy-trade (top wallet positions) ───────────────
+        cp_dir, cp_conf, cp_wallets = "neutral", 0.0, 0
         lb_sig = copy_map.get(market.condition_id)
-        if lb_sig and lb_sig.get("direction","neutral") != "neutral":
-            whale_dir  = lb_sig["direction"]
-            whale_conf = max(whale_conf, min(0.65, lb_sig.get("confidence", 0.5)))
+        if lb_sig and lb_sig.direction != "neutral":
+            cp_dir = lb_sig.direction
+            cp_wallets = lb_sig.wallet_count
+            cp_conf = min(0.90, 0.50 + cp_wallets * 0.10 + min(lb_sig.total_usd, 5000) / 25000)
 
-        # ── Weighted score combination ────────────────────────────────────
-        # For high-confidence CLOB markets: crowd IS the best signal
-        # For sweet spot: Gemini + price feed must provide direction
-        if clob_dir != "neutral":
-            # High-confidence zone — CLOB gets biggest weight
-            W_PRICE, W_GEMINI, W_CLOB, W_WHALE = 0.35, 0.30, 0.25, 0.10
-        else:
-            # Sweet spot — Gemini + price feed must decide direction
-            W_PRICE, W_GEMINI, W_CLOB, W_WHALE = 0.45, 0.40, 0.05, 0.10
+        # ── Signal 3: Whale holders ───────────────────────────────────
+        wh_dir, wh_conf = "neutral", 0.0
+        whale_sig = whale_map.get(market.condition_id)
+        if whale_sig and whale_sig.direction != "neutral":
+            wh_dir  = whale_sig.direction
+            wh_conf = min(0.80, abs(whale_sig.yes_bias - 0.5) * 2.0)
 
-        score_bull = 0.0
-        score_bear = 0.0
-        if price_feed_dir == "bullish":  score_bull += W_PRICE * price_feed_conf
-        elif price_feed_dir == "bearish": score_bear += W_PRICE * price_feed_conf
-        if gemini_dir == "bullish":      score_bull += W_GEMINI * gemini_conf
-        elif gemini_dir == "bearish":    score_bear += W_GEMINI * gemini_conf
-        if clob_dir == "bullish":        score_bull += W_CLOB * clob_conf
-        elif clob_dir == "bearish":      score_bear += W_CLOB * clob_conf
-        if whale_dir == "bullish":       score_bull += W_WHALE * whale_conf
-        elif whale_dir == "bearish":     score_bear += W_WHALE * whale_conf
+        # ── Signal 4: CLOB crowd (only for strong crowd, >72% or <28%) ─
+        clob_dir, clob_conf = "neutral", 0.0
+        if price >= 0.72:
+            clob_dir, clob_conf = "bullish", price
+        elif price <= 0.28:
+            clob_dir, clob_conf = "bearish", 1.0 - price
 
-        # ══════════════════════════════════════════════════════════════════
-        # KILL GATES — applied BEFORE final score
-        # Sweet/1:1 markets need STRICTER gates because crowd is uncertain
-        # (no free CLOB confidence to lean on — must earn the edge ourselves)
-        # ══════════════════════════════════════════════════════════════════
+        # ── Combine: MAX-based scoring ────────────────────────────────
+        bull_sigs = []
+        bear_sigs = []
+        for name, d, c in [("pf", pf_dir, pf_conf), ("copy", cp_dir, cp_conf),
+                           ("whale", wh_dir, wh_conf), ("crowd", clob_dir, clob_conf)]:
+            if d == "bullish" and c > 0:
+                bull_sigs.append((name, c))
+            elif d == "bearish" and c > 0:
+                bear_sigs.append((name, c))
 
-        # Gate A: Hard conflict — price feed vs Gemini disagree → always skip
-        if (price_feed_dir != "neutral" and gemini_dir != "neutral"
-                and price_feed_dir != gemini_dir):
-            console.print(f"  [dim]⚡ CONFLICT skip: {market.question[:45]}[/dim]")
+        max_bull = max((c for _, c in bull_sigs), default=0.0)
+        max_bear = max((c for _, c in bear_sigs), default=0.0)
+        # Agreement boost: +0.05 per extra agreeing signal
+        boost_bull = min(0.15, max(0, len(bull_sigs) - 1) * 0.05)
+        boost_bear = min(0.15, max(0, len(bear_sigs) - 1) * 0.05)
+        score_bull = min(0.95, max_bull + boost_bull)
+        score_bear = min(0.95, max_bear + boost_bear)
+
+        # ── Conflict gate: if price feed and copy-trade disagree, skip ─
+        if (pf_dir != "neutral" and cp_dir != "neutral"
+                and pf_dir != cp_dir and pf_conf >= 0.60 and cp_conf >= 0.55):
             continue
 
-        # Gate B: Contra-crowd — only skip if price feed is NOT backing our signal
-        # Exception: if price feed is very confident (>= 0.75), allow contra-crowd bet
-        # (mathematical evidence > crowd consensus)
-        if clob_dir == "bearish" and score_bull > score_bear:
-            if price_feed_conf < 0.75 or price_feed_dir != "bullish":
-                console.print(f"  [dim]⚡ CONTRA-CROWD skip: {market.question[:40]}[/dim]")
+        # ── Minimum signal requirement ─────────────────────────────────
+        # Sweet zone (0.35-0.65): need at least one real signal
+        is_sweet = 0.35 <= price <= 0.65
+        if is_sweet:
+            has_signal = pf_conf >= 0.55 or cp_conf >= 0.50 or wh_conf >= 0.50
+            if not has_signal:
                 continue
-        if clob_dir == "bullish" and score_bear > score_bull:
-            if price_feed_conf < 0.75 or price_feed_dir != "bearish":
-                console.print(f"  [dim]⚡ CONTRA-CROWD skip: {market.question[:40]}[/dim]")
-                continue
-
-        # Gate C: Tier 1 (1:1) — need price feed OR Gemini strong
-        # Price feed alone at ≥0.65 is sufficient (e.g. ETH $1,580 vs $2,355 threshold = 87% NO)
-        if is_tier1:
-            strong_price  = price_feed_conf >= 0.65 and price_feed_dir != "neutral"
-            strong_gemini = gemini_conf >= 0.60 and gemini_dir != "neutral"
-            both_agree    = (price_feed_dir == gemini_dir and
-                             price_feed_dir != "neutral" and
-                             price_feed_conf >= 0.50 and gemini_conf >= 0.50)
-            if not (strong_price or strong_gemini or both_agree):
-                console.print(f"  [dim]💎 1:1 needs signal (pf:{price_feed_conf:.0%} gem:{gemini_conf:.0%}) skip: {market.question[:35]}[/dim]")
-                continue
-
-        # Gate D: Tier 2 (sweet) — need at least one signal ≥ 0.55
-        elif is_sweet:
-            strong_price  = price_feed_conf >= 0.55 and price_feed_dir != "neutral"
-            strong_gemini = gemini_conf >= 0.50 and gemini_dir != "neutral"
-            if not (strong_price or strong_gemini):
-                console.print(f"  [dim]💎 Sweet needs signal (pf:{price_feed_conf:.0%} gem:{gemini_conf:.0%}) skip: {market.question[:35]}[/dim]")
-                continue
-
-        # Gate E: Tier 3 (crowd-confident) — Gemini or price feed must agree with crowd
+        # Crowd zone (0.08-0.28 or 0.72-0.92): crowd IS the signal, BUT
+        # if copy-trade contradicts crowd, skip
         else:
-            if price_feed_conf < 0.45 and gemini_conf < 0.40:
-                console.print(f"  [dim]⚡ Crowd confident but no research confirmation skip[/dim]")
+            if cp_dir != "neutral" and cp_dir != clob_dir and cp_conf >= 0.55:
                 continue
 
-        # ── Final direction ───────────────────────────────────────────────
-        MIN_SCORE = 0.20 if is_tier1 else (0.18 if is_sweet else 0.15)
+        # ── Pick direction ─────────────────────────────────────────────
+        MIN_SCORE = 0.40 if is_sweet else 0.30
         if score_bull >= score_bear and score_bull >= MIN_SCORE:
-            final_dir, final_side, raw_score = "bullish", "YES", score_bull
+            final_dir, final_side, final_score = "bullish", "YES", score_bull
         elif score_bear > score_bull and score_bear >= MIN_SCORE:
-            final_dir, final_side, raw_score = "bearish", "NO",  score_bear
+            final_dir, final_side, final_score = "bearish", "NO", score_bear
         else:
-            console.print(f"  [dim]Score too low ({max(score_bull,score_bear):.2f} < {MIN_SCORE}) skip[/dim]")
             continue
 
-        # ── Normalize raw_score → probability estimate ────────────────────
-        # raw_score is a weighted sum of (confidence × weight) for active signals.
-        # Dividing by sum of active weights gives actual probability estimate.
-        active_w = 0.0
-        if price_feed_dir != "neutral": active_w += W_PRICE
-        if gemini_dir    != "neutral": active_w += W_GEMINI
-        if clob_dir      != "neutral": active_w += W_CLOB
-        if whale_dir     != "neutral": active_w += W_WHALE
-        if active_w < 0.01: active_w = W_CLOB  # fallback
-        final_score = min(0.97, raw_score / active_w)  # normalized probability
-
-        # ── EV gate ───────────────────────────────────────────────────────
-        bet_price    = price if final_side == "YES" else (1.0 - price)
+        # ── EV gate ────────────────────────────────────────────────────
+        bet_price = price if final_side == "YES" else (1.0 - price)
         payout_ratio = (1.0 - bet_price) / bet_price
         ev_per_dollar = final_score * payout_ratio - (1.0 - final_score)
-
-        # Min EV: sweet=0.04, tier3=0.005 (small positive edge sufficient for crowd-aligned tier3)
-        min_ev = 0.04 if is_sweet else 0.005
-        if ev_per_dollar < min_ev:
-            console.print(f"  [dim]EV={ev_per_dollar:.3f} < {min_ev} skip: {market.question[:40]}[/dim]")
+        if ev_per_dollar < 0.02:
             continue
 
-        # ── Bet sizing ────────────────────────────────────────────────────
+        # ── Bet sizing ─────────────────────────────────────────────────
         from bankroll import kelly_bet_size, get_current_bankroll, can_trade_today
         allowed, reason = can_trade_today()
         if not allowed:
             console.print(f"  [red]⛔ {reason}[/red]")
             break
         bk = get_current_bankroll()
-
         edge = final_score - bet_price
         bet = kelly_bet_size(bk, max(edge, 0.03), bet_price, materiality=final_score)
+        bet = round(min(max(0.50, bet), bk * 0.06), 2)
 
-        # Bet sizing by tier:
-        # Tier 1 (0.45-0.55, near 1:1 payout): biggest bet — best risk/reward
-        # Tier 2 (0.35-0.65): good payout — larger bet
-        # Tier 3 (crowd confident): smaller bet — small payout
-        if is_tier1:
-            bet = min(bet * 2.0, bk * 0.08)  # 8% cap — best payout tier
-            spot_tag = "💎1:1"
-        elif is_sweet:
-            bet = min(bet * 1.8, bk * 0.07)  # 7% cap
-            spot_tag = "💎SWEET"
-        elif final_score >= 0.75:
-            bet = min(bet * 1.5, bk * 0.06)  # sureshot
-            spot_tag = "🎯SURE"
-        else:
-            bet = min(bet, bk * 0.05)
-            spot_tag = "⚡STD"
-
-        bet = round(max(0.50, bet), 2)
-
-        # Signal sources summary
+        # ── Log sources ────────────────────────────────────────────────
         sources = []
-        if price_feed_conf >= 0.65: sources.append(f"💰LivePrice:{price_feed_conf:.0%}")
-        if gemini_conf >= 0.55:     sources.append(f"🤖Gemini:{gemini_conf:.0%}")
-        if clob_conf >= 0.60:       sources.append(f"📊CLOB:{clob_conf:.0%}")
-        if whale_conf >= 0.40:      sources.append(f"🐋Whale:{whale_conf:.0%}")
+        if pf_conf >= 0.50:   sources.append(f"💰PF:{pf_conf:.0%}")
+        if cp_conf >= 0.40:   sources.append(f"👛Copy:{cp_conf:.0%}({cp_wallets}w)")
+        if wh_conf >= 0.40:   sources.append(f"🐋Whale:{wh_conf:.0%}")
+        if clob_conf >= 0.60: sources.append(f"📊Crowd:{clob_conf:.0%}")
 
         win_profit = round(bet * payout_ratio, 2)
-        loss_cost  = round(bet, 2)
         console.print(
-            f"  [bold green]{spot_tag}[/bold green] "
-            f"[bold]{final_side}[/bold] | "
-            f"price:{price:.2f} payout:{payout_ratio:.1f}x | "
-            f"WIN:+${win_profit} LOSE:-${loss_cost} | "
-            f"score:{final_score:.2f} ev:+${ev_per_dollar*bet:.2f} | "
+            f"  [bold green]▸[/bold green] [bold]{final_side}[/bold] "
+            f"price:{price:.2f} payout:{payout_ratio:.1f}x "
+            f"score:{final_score:.2f} ev:{ev_per_dollar:.3f} "
             f"closes:{hours_left:.1f}h\n"
-            f"    {' + '.join(sources) if sources else 'multi-signal'}\n"
-            f"    \"{market.question[:65]}\""
+            f"    {' + '.join(sources) if sources else 'crowd-signal'}\n"
+            f"    \"{market.question[:70]}\""
         )
 
         from edge import Signal as _Signal
@@ -816,10 +609,7 @@ def scan_and_trade() -> dict:
             edge=max(edge, 0.03),
             side=final_side,
             bet_amount=bet,
-            reasoning=(
-                f"[Unified] score={final_score:.2f} ev={ev_per_dollar:.3f}/$ | "
-                + " | ".join(sources)
-            ),
+            reasoning=f"score={final_score:.2f} ev={ev_per_dollar:.3f} | {' + '.join(sources)}",
             headlines="",
             news_source="unified_engine",
             classification=final_dir,
@@ -830,7 +620,7 @@ def scan_and_trade() -> dict:
         already_logged.add(market.condition_id)
         signals_found.append(unified_signal)
         demos_logged += 1
-        console.print(f"    → [green]Trade #{trade_id} logged (${bet:.2f} virtual, EV:+{ev_per_dollar*bet:.3f}$)[/green]")
+        console.print(f"    → [green]Trade #{trade_id} logged (${bet:.2f}, +${ev_per_dollar*bet:.2f} EV)[/green]")
 
     if not signals_found:
         console.print(

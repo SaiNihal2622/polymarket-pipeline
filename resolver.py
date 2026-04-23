@@ -187,10 +187,12 @@ def _normalize_q(s: str, length: int = 80) -> str:
 
 
 def _parse_outcome(m: dict) -> float | None:
-    """Extract result from Gamma market dict. Returns 1.0/0.0/0.5/None."""
-    closed = m.get("closed", False)
-    active = m.get("active", True)
-
+    """Extract result from Gamma market dict. Returns 1.0 (YES) / 0.0 (NO) / None.
+    
+    CRITICAL: Never return 0.5 (push). A market either resolved YES, NO, or is
+    still pending. The old code returned 0.5 for any closed+inactive market,
+    which caused ALL trades to resolve as 'push' with $0 PnL.
+    """
     outcome_prices_raw = m.get("outcomePrices", "")
     if outcome_prices_raw:
         try:
@@ -198,10 +200,8 @@ def _parse_outcome(m: dict) -> float | None:
             if len(prices) >= 2:
                 yes_price = float(prices[0])
                 no_price  = float(prices[1])
-                if yes_price >= 0.90:   return 1.0   # lowered 0.95→0.90 for early resolution
-                if no_price  >= 0.90:   return 0.0
-                if closed and 0.40 <= yes_price <= 0.60:
-                    return 0.5
+                if yes_price >= 0.85:   return 1.0   # YES resolved
+                if no_price  >= 0.85:   return 0.0   # NO resolved
         except (json.JSONDecodeError, ValueError):
             pass
 
@@ -209,15 +209,14 @@ def _parse_outcome(m: dict) -> float | None:
     if res_price is not None:
         try:
             rp = float(res_price)
-            if rp >= 0.95: return 1.0
-            if rp <= 0.05: return 0.0
-            return 0.5
+            if rp >= 0.90: return 1.0
+            if rp <= 0.10: return 0.0
         except (ValueError, TypeError):
             pass
 
-    # Any closed market with no active trading counts as resolvable
-    if closed and not active:
-        return 0.5
+    # If market is resolved (closed=true) but we can't determine the outcome,
+    # return None — do NOT mark as push. Let it stay pending until we get
+    # clear resolution data.
     return None
 
 
@@ -347,11 +346,8 @@ def check_market_resolution(trade: dict) -> float | None:
 
 
 def resolve_trade(trade_id: int, market_result: float, side: str, amount_usd: float):
-    won  = (side == "YES" and market_result == 1.0) or (side == "NO" and market_result == 0.0)
-    push = market_result == 0.5
-    if push:
-        pnl = 0.0; result_str = "push"
-    elif won:
+    won = (side == "YES" and market_result == 1.0) or (side == "NO" and market_result == 0.0)
+    if won:
         pnl = round(amount_usd * 0.9, 4); result_str = "win"
     else:
         pnl = round(-amount_usd, 4); result_str = "loss"
@@ -370,7 +366,7 @@ def resolve_trade(trade_id: int, market_result: float, side: str, amount_usd: fl
                CASE WHEN ? = 1.0 THEN 'YES' ELSE 'NO' END,
                CASE WHEN ? THEN 1 ELSE 0 END, ?
         FROM trades WHERE id = ?
-    """, (market_result, market_result, 1 if (won and not push) else 0, now, trade_id))
+    """, (market_result, market_result, 1 if won else 0, now, trade_id))
     conn.commit()
     conn.close()
     return result_str, pnl
