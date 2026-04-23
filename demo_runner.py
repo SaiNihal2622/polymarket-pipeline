@@ -484,10 +484,13 @@ def scan_and_trade() -> dict:
         price = market.yes_price
         tok = token_map.get(market.condition_id)
 
+        # STRICT: Only trade markets closing within 24 hours
+        if hours_left > 24:
+            continue
+
         # Skip dead zone prices (too extreme or middle dead zone)
         if price < 0.08 or price > 0.92:
             continue
-        # Tradeable zones: 0.08-0.92
 
         # ── Signal 1: Price feed (crypto only — mathematical) ─────────
         pf_dir, pf_conf = "neutral", 0.0
@@ -514,11 +517,11 @@ def scan_and_trade() -> dict:
             wh_dir  = whale_sig.direction
             wh_conf = min(0.80, abs(whale_sig.yes_bias - 0.5) * 2.0)
 
-        # ── Signal 4: CLOB crowd (only for strong crowd, >72% or <28%) ─
+        # ── Signal 4: CLOB crowd (strong crowd ≥65% or ≤35%) ──────────
         clob_dir, clob_conf = "neutral", 0.0
-        if price >= 0.72:
+        if price >= 0.65:
             clob_dir, clob_conf = "bullish", price
-        elif price <= 0.28:
+        elif price <= 0.35:
             clob_dir, clob_conf = "bearish", 1.0 - price
 
         # ── Combine: MAX-based scoring ────────────────────────────────
@@ -566,11 +569,11 @@ def scan_and_trade() -> dict:
         else:
             continue
 
-        # ── EV gate ────────────────────────────────────────────────────
+        # ── EV gate (strict — only high-EV trades) ────────────────────
         bet_price = price if final_side == "YES" else (1.0 - price)
         payout_ratio = (1.0 - bet_price) / bet_price
         ev_per_dollar = final_score * payout_ratio - (1.0 - final_score)
-        if ev_per_dollar < 0.02:
+        if ev_per_dollar < 0.05:
             continue
 
         # ── Bet sizing ─────────────────────────────────────────────────

@@ -121,8 +121,8 @@ EDGE_THRESHOLD = float(os.getenv("EDGE_THRESHOLD", "0.15"))  # Higher threshold 
 NEWS_LOOKBACK_HOURS = 12
 
 # --- Demo Runner Settings ---
-DEMO_HOURS_WINDOW = float(os.getenv("DEMO_HOURS_WINDOW", "48"))       # 48h window
-SCAN_INTERVAL_MIN = int(os.getenv("SCAN_INTERVAL_MIN", "15"))          # Re-scan every 15min for more trades
+DEMO_HOURS_WINDOW = float(os.getenv("DEMO_HOURS_WINDOW", "24"))       # 24h window — fast resolution
+SCAN_INTERVAL_MIN = int(os.getenv("SCAN_INTERVAL_MIN", "10"))          # Re-scan every 10min for 15-20 trades/day
 RESOLVE_INTERVAL_MIN = int(os.getenv("RESOLVE_INTERVAL_MIN", "6"))     # Check resolutions every 6min
 ACCURACY_THRESHOLD = float(os.getenv("ACCURACY_THRESHOLD", "80.0"))   # Target: 80% accuracy
 MIN_RESOLVED_TRADES = int(os.getenv("MIN_RESOLVED_TRADES", "30"))      # Need 30 resolved before going live
