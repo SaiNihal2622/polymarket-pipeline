@@ -121,10 +121,10 @@ def _wipe_all_trades():
 
 def _startup_cleanup():
     """
-    Void trades that were logged before DEMO_HOURS_WINDOW was set to 24h.
-    Only voids trades older than 2 hours that have no market_id or whose
-    market_question contains known season-long keywords.
-    Does NOT touch recently logged trades.
+    Two-phase cleanup on startup:
+    1. Void non-profitable category trades (sports, esports, NFL draft, UFC, O/U)
+       These were logged by the old engine and are money drains (20% accuracy).
+    2. Void long-dated futures that can't resolve in 24h.
     """
     import sqlite3
     from pathlib import Path as _Path
@@ -134,64 +134,66 @@ def _startup_cleanup():
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
 
-    # Only consider trades logged more than 2 hours ago (not fresh ones)
+    # ── Phase 1: Void non-profitable categories ──────────────────────────
+    PROFITABLE_KW = [
+        "bitcoin", "btc", "ethereum", "eth", "solana", "sol", "crypto",
+        "dogecoin", "xrp", "bnb", "hyperliquid",  # crypto
+        "s&p", "spy", "nasdaq", "nvda", "nvidia", "tsla", "tesla",
+        "apple", "aapl", "stock", "close above", "close below", "coinbase", "coin",  # finance
+        "trump", "biden", "tariff", "fed ", "congress", "senate", "sanctions",  # politics
+    ]
+
+    non_voided = conn.execute(
+        "SELECT id, market_question, result FROM trades WHERE id >= 192 AND result != 'voided'"
+    ).fetchall()
+
+    void_ids = []
+    for t in non_voided:
+        q = (t["market_question"] or "").lower()
+        is_profitable = any(k in q for k in PROFITABLE_KW)
+        if not is_profitable:
+            void_ids.append(t["id"])
+
+    if void_ids:
+        placeholders = ','.join('?' * len(void_ids))
+        conn.execute(f"UPDATE trades SET result = 'voided', status = 'voided' WHERE id IN ({placeholders})", void_ids)
+        conn.execute(f"DELETE FROM outcomes WHERE trade_id IN ({placeholders})", void_ids)
+        conn.commit()
+        console.print(f"  [yellow]🗑 Voided {len(void_ids)} non-profitable trades (sports/esports/UFC/NFL draft)[/yellow]")
+
+    # ── Phase 2: Void old junk trades ────────────────────────────────────
     old_cutoff = (datetime.now(timezone.utc) - timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S")
     rows = conn.execute(
-        "SELECT id, market_id, market_question, created_at FROM trades "
-        "WHERE status IN ('demo','dry_run') AND created_at < ?",
+        "SELECT id, market_question FROM trades "
+        "WHERE status IN ('demo','dry_run') AND created_at < ? AND result != 'voided'",
         (old_cutoff,)
     ).fetchall()
 
-    if not rows:
-        console.print(f"  [dim]Startup cleanup: no old trades to check.[/dim]")
-        conn.close()
-        return
-
-    console.print(f"\n[bold]Startup cleanup:[/bold] checking {len(rows)} old trades (>2h)...")
-
     JUNK_KW = [
-        # Season-long futures
         "2027", "world series", "french open", "wimbledon", "us open",
         "nba champion", "nba finals", "super bowl", "afc champion", "nfc champion",
-        "eurovision", "lpl 2026 season", "ipl champion", "grammy", "oscar",
-        "nobel", "governor 2026", "senator 2026", "president", "fed chair",
-        "confirmed as", "rbc heritage", "masters 2026", "tour de france",
-        # Sports win/loss coin flips
-        "nfl", "nhl playoff", "art ross", "clutch player of the year",
-        "coach of the year", "top goal scorer", "most assists",
-        "will the new york yankees", "will los angeles chargers",
-        "will macklin celebrini", "will omar marmoush", "will morgan rogers",
-        "will yoane wissa", "will joe mazzulla", "will anthony edwards",
-        "will the columbus blue jackets",
-        "will sunderland finish", "will wolverhampton",
-        "will qingdao", "will fc nordsjælland", "will viborg",
-        # Esports maps
-        "map 1 winner", "map 2 winner", "map 3 winner", "(bo1)", "(bo3)",
-        "kills over", "kills under", "nodwin", "counter-strike",
-        # Sports match results (short-dated but still coin flips)
-        "o/u 2.5", "o/u 3.5", "o/u 4.5", "o/u 1.5",
-        "both teams to score", "halftime result", "leading at halftime",
-        # Celebrity/entertainment
-        "justin bieber", "taylor swift", "feature ", "album drop",
-        "box office", "weekend gross",
+        "eurovision", "lpl 2026", "ipl champion", "grammy", "oscar", "nobel",
+        "governor", "senator", "president", "fed chair", "confirmed as",
+        "(bo1)", "(bo3)", "map 1 winner", "map 2 winner", "map 3 winner",
+        "game 1 winner", "game 2 winner", "o/u ", "both teams to score",
+        "halftime", "exact score", "spread:", "1h spread",
     ]
 
-    void_ids = []
+    junk_ids = []
     for r in rows:
-        q = r["market_question"].lower()
+        q = (r["market_question"] or "").lower()
         if any(k in q for k in JUNK_KW):
-            void_ids.append(r["id"])
-            console.print(f"  VOID #{r['id']}: {r['market_question'][:65]}")
+            junk_ids.append(r["id"])
 
-    if void_ids:
-        conn.execute(
-            f"UPDATE trades SET status='voided' WHERE id IN ({','.join('?'*len(void_ids))})",
-            void_ids,
-        )
+    if junk_ids:
+        placeholders = ','.join('?' * len(junk_ids))
+        conn.execute(f"UPDATE trades SET result = 'voided', status = 'voided' WHERE id IN ({placeholders})", junk_ids)
         conn.commit()
-        console.print(f"  [green]Voided {len(void_ids)} long-dated trades.[/green]")
-    else:
-        console.print(f"  [dim]All old trades look fine — nothing voided.[/dim]")
+        console.print(f"  [yellow]🗑 Voided {len(junk_ids)} long-dated/junk trades[/yellow]")
+
+    if not void_ids and not junk_ids:
+        console.print(f"  [dim]All trades look clean — nothing voided.[/dim]")
+
     conn.close()
 
 
