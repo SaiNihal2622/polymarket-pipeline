@@ -144,7 +144,7 @@ def _startup_cleanup():
     ]
 
     non_voided = conn.execute(
-        "SELECT id, market_question, result FROM trades WHERE id >= 192 AND result != 'voided'"
+        "SELECT id, market_question, status FROM trades WHERE id >= 192 AND status != 'voided'"
     ).fetchall()
 
     void_ids = []
@@ -156,8 +156,9 @@ def _startup_cleanup():
 
     if void_ids:
         placeholders = ','.join('?' * len(void_ids))
-        conn.execute(f"UPDATE trades SET result = 'voided', status = 'voided' WHERE id IN ({placeholders})", void_ids)
+        conn.execute(f"UPDATE trades SET status = 'voided' WHERE id IN ({placeholders})", void_ids)
         conn.execute(f"DELETE FROM outcomes WHERE trade_id IN ({placeholders})", void_ids)
+        conn.execute(f"DELETE FROM calibration WHERE trade_id IN ({placeholders})", void_ids)
         conn.commit()
         console.print(f"  [yellow]🗑 Voided {len(void_ids)} non-profitable trades (sports/esports/UFC/NFL draft)[/yellow]")
 
@@ -165,7 +166,7 @@ def _startup_cleanup():
     old_cutoff = (datetime.now(timezone.utc) - timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S")
     rows = conn.execute(
         "SELECT id, market_question FROM trades "
-        "WHERE status IN ('demo','dry_run') AND created_at < ? AND result != 'voided'",
+        "WHERE status IN ('demo','dry_run') AND created_at < ?",
         (old_cutoff,)
     ).fetchall()
 
@@ -187,7 +188,8 @@ def _startup_cleanup():
 
     if junk_ids:
         placeholders = ','.join('?' * len(junk_ids))
-        conn.execute(f"UPDATE trades SET result = 'voided', status = 'voided' WHERE id IN ({placeholders})", junk_ids)
+        conn.execute(f"UPDATE trades SET status = 'voided' WHERE id IN ({placeholders})", junk_ids)
+        conn.execute(f"DELETE FROM outcomes WHERE trade_id IN ({placeholders})", junk_ids)
         conn.commit()
         console.print(f"  [yellow]🗑 Voided {len(junk_ids)} long-dated/junk trades[/yellow]")
 
