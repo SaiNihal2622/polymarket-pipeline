@@ -517,11 +517,13 @@ def scan_and_trade() -> dict:
             wh_dir  = whale_sig.direction
             wh_conf = min(0.80, abs(whale_sig.yes_bias - 0.5) * 2.0)
 
-        # ── Signal 4: CLOB crowd (strong crowd ≥65% or ≤35%) ──────────
+        # ── Signal 4: CLOB crowd — always available ───────────────────
+        # Price IS the crowd's probability. 0.60 = 60% crowd says YES.
+        # This ensures sweet-zone markets always have at least one signal.
         clob_dir, clob_conf = "neutral", 0.0
-        if price >= 0.65:
+        if price >= 0.55:
             clob_dir, clob_conf = "bullish", price
-        elif price <= 0.35:
+        elif price <= 0.45:
             clob_dir, clob_conf = "bearish", 1.0 - price
 
         # ── Combine: MAX-based scoring ────────────────────────────────
@@ -548,20 +550,22 @@ def scan_and_trade() -> dict:
             continue
 
         # ── Minimum signal requirement ─────────────────────────────────
-        # Sweet zone (0.35-0.65): need at least one real signal
+        # Sweet zone (0.35-0.65): need crowd ≥55% OR any real signal
         is_sweet = 0.35 <= price <= 0.65
         if is_sweet:
-            has_signal = pf_conf >= 0.55 or cp_conf >= 0.50 or wh_conf >= 0.50
+            has_signal = pf_conf >= 0.55 or cp_conf >= 0.50 or wh_conf >= 0.50 or clob_conf >= 0.55
             if not has_signal:
                 continue
-        # Crowd zone (0.08-0.28 or 0.72-0.92): crowd IS the signal, BUT
-        # if copy-trade contradicts crowd, skip
+        # Crowd zone (outside 0.35-0.65): crowd IS the signal
+        # Only skip if copy-trade directly contradicts crowd
         else:
             if cp_dir != "neutral" and cp_dir != clob_dir and cp_conf >= 0.55:
                 continue
 
         # ── Pick direction ─────────────────────────────────────────────
-        MIN_SCORE = 0.40 if is_sweet else 0.30
+        # Sweet zone: 0.35 min (1:1 payout needs less accuracy to profit)
+        # Crowd zone: 0.30 min (high accuracy from crowd consensus)
+        MIN_SCORE = 0.35 if is_sweet else 0.30
         if score_bull >= score_bear and score_bull >= MIN_SCORE:
             final_dir, final_side, final_score = "bullish", "YES", score_bull
         elif score_bear > score_bull and score_bear >= MIN_SCORE:
