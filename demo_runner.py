@@ -138,9 +138,9 @@ def _startup_cleanup():
     CRYPTO_KW = [
         "bitcoin", "btc", "ethereum", "eth", "solana", "sol", "crypto",
         "dogecoin", "doge", "xrp", "bnb", "hyperliquid",
-        "cardano", "ada", "avalanche", "avax", "polkadot", "dot",
-        "chainlink", "link", "litecoin", "ltc", "polygon", "matic",
-        "uniswap", "uni", "pepe", "shib", "meme coin",
+        "cardano", "ada", "avax", "polkadot", "dot",
+        "chainlink", "litecoin", "ltc", "polygon", "matic",
+        "uniswap", "pepe", "shib", "meme coin",
     ]
 
     non_voided = conn.execute(
@@ -497,9 +497,9 @@ def scan_and_trade() -> dict:
         CRYPTO_KW = [
             "bitcoin", "btc", "ethereum", "eth", "solana", "sol",
             "crypto", "dogecoin", "doge", "xrp", "bnb", "hyperliquid",
-            "cardano", "ada", "avalanche", "avax", "polkadot", "dot",
-            "chainlink", "link", "litecoin", "ltc", "polygon", "matic",
-            "uniswap", "uni", "pepe", "shib", "meme coin",
+            "cardano", "ada", "avax", "polkadot", "dot",
+            "chainlink", "litecoin", "ltc", "polygon", "matic",
+            "uniswap", "pepe", "shib", "meme coin",
         ]
         if not any(k in q_lower for k in CRYPTO_KW):
             continue
