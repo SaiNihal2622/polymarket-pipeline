@@ -504,8 +504,10 @@ def scan_and_trade() -> dict:
         if not any(k in q_lower for k in CRYPTO_KW):
             continue
 
-        # Skip dead zone prices (too extreme)
-        if price < 0.08 or price > 0.92:
+        # SWEET ZONE ONLY — 1:1 payout trades (0.30-0.70)
+        # At 0.50 → $1 bet wins $1. At 0.35 → $1 bet wins $1.86.
+        # Skip crowd-zone (0.70+) where $1 bet only wins $0.43
+        if price < 0.30 or price > 0.70:
             continue
 
         # ── Signal 1: Price feed (crypto only — mathematical) ─────────
