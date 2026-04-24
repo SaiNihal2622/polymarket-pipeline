@@ -122,7 +122,7 @@ NEWS_LOOKBACK_HOURS = 12
 
 # --- Demo Runner Settings ---
 DEMO_HOURS_WINDOW = float(os.getenv("DEMO_HOURS_WINDOW", "24"))       # 24h window — fast resolution
-SCAN_INTERVAL_MIN = int(os.getenv("SCAN_INTERVAL_MIN", "10"))          # Re-scan every 10min for 15-20 trades/day
+SCAN_INTERVAL_MIN = int(os.getenv("SCAN_INTERVAL_MIN", "5"))          # 5min scan = catch 5/15min crypto windows
 RESOLVE_INTERVAL_MIN = int(os.getenv("RESOLVE_INTERVAL_MIN", "6"))     # Check resolutions every 6min
 ACCURACY_THRESHOLD = float(os.getenv("ACCURACY_THRESHOLD", "80.0"))   # Target: 80% accuracy
 MIN_RESOLVED_TRADES = int(os.getenv("MIN_RESOLVED_TRADES", "30"))      # Need 30 resolved before going live
@@ -130,7 +130,7 @@ MIN_RESOLVED_TRADES = int(os.getenv("MIN_RESOLVED_TRADES", "30"))      # Need 30
 # --- V2 Settings ---
 MAX_RESOLVE_HOURS = float(os.getenv("MAX_RESOLVE_HOURS", "72"))  # 3 days max
 MAX_VOLUME_USD = float(os.getenv("MAX_VOLUME_USD", "500000"))
-MIN_VOLUME_USD = float(os.getenv("MIN_VOLUME_USD", "5000"))    # Skip micro-markets (5-min windows ~$100 vol)
+MIN_VOLUME_USD = float(os.getenv("MIN_VOLUME_USD", "50"))    # Low: catch 5/15-min crypto windows ($100-$1000 vol)
 MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.20"))
 
 # --- Market Quality Filters (maximise signal accuracy) ---

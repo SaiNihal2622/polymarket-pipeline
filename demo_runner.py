@@ -504,10 +504,10 @@ def scan_and_trade() -> dict:
         if not any(k in q_lower for k in CRYPTO_KW):
             continue
 
-        # SWEET ZONE ONLY — 1:1 payout trades (0.30-0.70)
-        # At 0.50 → $1 bet wins $1. At 0.35 → $1 bet wins $1.86.
-        # Skip crowd-zone (0.70+) where $1 bet only wins $0.43
-        if price < 0.30 or price > 0.70:
+        # OPTIMAL RANGE (0.20-0.80) — EV gate math protects from bad payouts
+        # At 0.50 → $1 wins $1 (1:1). At 0.30 → $1 wins $2.33.
+        # At 0.75 → only passes if score is high enough for +EV
+        if price < 0.20 or price > 0.80:
             continue
 
         # ── Signal 1: Price feed (crypto only — mathematical) ─────────
@@ -607,11 +607,13 @@ def scan_and_trade() -> dict:
         else:
             continue
 
-        # ── EV gate — crypto-proven, moderate threshold ──────────────────
+        # ── EV gate — strict positive expected value ──────────────────
+        # At 72% accuracy, price 0.75 → EV = -0.04 → SKIP (protects us)
+        # At 72% accuracy, price 0.65 → EV = +0.11 → PASS (profitable)
         bet_price = price if final_side == "YES" else (1.0 - price)
         payout_ratio = (1.0 - bet_price) / bet_price
         ev_per_dollar = final_score * payout_ratio - (1.0 - final_score)
-        if ev_per_dollar < 0.03:
+        if ev_per_dollar < 0.05:
             continue
 
         # ── Bet sizing ─────────────────────────────────────────────────
