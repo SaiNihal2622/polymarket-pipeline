@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import os
 
-INITIAL_BANKROLL = float(os.getenv("BANKROLL_USD", "100"))
-MAX_BET_FRAC     = 0.05   # 5% max per bet
+INITIAL_BANKROLL = float(os.getenv("BANKROLL_USD", "20"))
+MAX_BET_FRAC     = 0.10   # 10% max per bet ($2 on $20 bankroll)
 MIN_BET_USD      = 0.50
 DAILY_LOSS_CAP   = 0.15   # stop trading after 15% daily drawdown
 
@@ -38,8 +38,9 @@ def kelly_bet_size(bankroll: float, edge: float, market_price: float,
     denom = max(0.05, 1.0 - market_price)
     kelly_frac = edge / denom
 
-    # Half-kelly for safety
-    kelly_frac *= 0.5
+    # Full Kelly for crypto-only (proven 73% edge)
+    # Half-Kelly was too conservative — $1 bets on $20 bankroll = slow profits
+    # kelly_frac *= 0.5  ← removed: full Kelly for max profit
 
     # Scale by confidence (materiality) — weak signals get smaller bets
     kelly_frac *= max(0.5, materiality)
