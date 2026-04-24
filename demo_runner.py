@@ -134,13 +134,13 @@ def _startup_cleanup():
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
 
-    # ── Phase 1: Void non-profitable categories ──────────────────────────
-    PROFITABLE_KW = [
+    # ── Phase 1: Void non-crypto trades ────────────────────────────────
+    CRYPTO_KW = [
         "bitcoin", "btc", "ethereum", "eth", "solana", "sol", "crypto",
-        "dogecoin", "xrp", "bnb", "hyperliquid",  # crypto
-        "s&p", "spy", "nasdaq", "nvda", "nvidia", "tsla", "tesla",
-        "apple", "aapl", "stock", "close above", "close below", "coinbase", "coin",  # finance
-        "trump", "biden", "tariff", "fed ", "congress", "senate", "sanctions",  # politics
+        "dogecoin", "doge", "xrp", "bnb", "hyperliquid",
+        "cardano", "ada", "avalanche", "avax", "polkadot", "dot",
+        "chainlink", "link", "litecoin", "ltc", "polygon", "matic",
+        "uniswap", "uni", "pepe", "shib", "meme coin",
     ]
 
     non_voided = conn.execute(
@@ -150,7 +150,7 @@ def _startup_cleanup():
     void_ids = []
     for t in non_voided:
         q = (t["market_question"] or "").lower()
-        is_profitable = any(k in q for k in PROFITABLE_KW)
+        is_profitable = any(k in q for k in CRYPTO_KW)
         if not is_profitable:
             void_ids.append(t["id"])
 
@@ -492,13 +492,16 @@ def scan_and_trade() -> dict:
         if hours_left > 24:
             continue
 
-        # PROFIT FILTER: Only trade categories with proven accuracy
-        # Crypto: 79% | Finance/stocks: decent with price feed
-        # Sports exact scores, O/U, spreads: 25% → money drain
-        is_crypto = any(k in q_lower for k in ["bitcoin", "btc", "ethereum", "eth", "solana", "sol", "crypto", "dogecoin", "xrp", "bnb"])
-        is_finance = any(k in q_lower for k in ["s&p", "spy", "nasdaq", "nvda", "nvidia", "tsla", "tesla", "apple", "aapl", "stock", "close above", "close below"])
-        is_politics = any(k in q_lower for k in ["trump", "biden", "tariff", "fed ", "congress", "senate", "sanctions"])
-        if not (is_crypto or is_finance or is_politics):
+        # CRYPTO ONLY — proven 72% accuracy (18W/7L)
+        # Finance (0W/1L) and politics (unproven) removed
+        CRYPTO_KW = [
+            "bitcoin", "btc", "ethereum", "eth", "solana", "sol",
+            "crypto", "dogecoin", "doge", "xrp", "bnb", "hyperliquid",
+            "cardano", "ada", "avalanche", "avax", "polkadot", "dot",
+            "chainlink", "link", "litecoin", "ltc", "polygon", "matic",
+            "uniswap", "uni", "pepe", "shib", "meme coin",
+        ]
+        if not any(k in q_lower for k in CRYPTO_KW):
             continue
 
         # Skip dead zone prices (too extreme)
@@ -602,11 +605,11 @@ def scan_and_trade() -> dict:
         else:
             continue
 
-        # ── EV gate (strict — only high-EV trades) ────────────────────
+        # ── EV gate — crypto-proven, moderate threshold ──────────────────
         bet_price = price if final_side == "YES" else (1.0 - price)
         payout_ratio = (1.0 - bet_price) / bet_price
         ev_per_dollar = final_score * payout_ratio - (1.0 - final_score)
-        if ev_per_dollar < 0.05:
+        if ev_per_dollar < 0.03:
             continue
 
         # ── Bet sizing ─────────────────────────────────────────────────
