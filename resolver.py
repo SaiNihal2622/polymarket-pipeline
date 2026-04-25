@@ -590,9 +590,139 @@ def get_resolved_trade_list() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+# ── Per-signal accuracy tracking ─────────────────────────────────────────────
+
+def get_signal_accuracies() -> dict[str, dict]:
+    """
+    Return accuracy stats for each individual signal type.
+    Parses the JSON 'signals' column stored per trade.
+
+    Returns dict: {signal_name: {trades, wins, losses, accuracy_pct, avg_conf}}
+
+    Signal names: "pf" (price feed), "ai" (research), "copy" (copy-trade),
+                  "whale" (whale holders), "crowd" (CLOB crowd)
+    """
+    import json as _json
+
+    conn = _conn()
+    rows = conn.execute("""
+        SELECT t.signals, t.side, o.result
+        FROM trades t
+        JOIN outcomes o ON t.id = o.trade_id
+        WHERE t.status IN ('demo','dry_run')
+          AND t.signals IS NOT NULL
+          AND o.result IN ('win','loss')
+    """).fetchall()
+    conn.close()
+
+    # {signal: {wins, losses, total_conf, count}}
+    stats: dict[str, dict] = {}
+
+    for row in rows:
+        try:
+            sigs = _json.loads(row["signals"])
+        except Exception:
+            continue
+
+        trade_side = row["side"]   # "YES" or "NO"
+        outcome    = row["result"] # "win" or "loss"
+
+        for sig_name, val in sigs.items():
+            if not val or val == "neutral":
+                continue
+            # val format: "direction:confidence" e.g. "bearish:0.82"
+            parts = val.split(":")
+            if len(parts) != 2:
+                continue
+            sig_dir, sig_conf_str = parts[0], parts[1]
+            try:
+                sig_conf = float(sig_conf_str)
+            except ValueError:
+                continue
+
+            # Did this signal agree with the trade direction?
+            trade_dir = "bullish" if trade_side == "YES" else "bearish"
+            if sig_dir != trade_dir:
+                continue  # signal wasn't the reason for this trade direction
+
+            s = stats.setdefault(sig_name, {"wins": 0, "losses": 0, "total_conf": 0.0, "count": 0})
+            s["count"]      += 1
+            s["total_conf"] += sig_conf
+            if outcome == "win":
+                s["wins"]   += 1
+            else:
+                s["losses"] += 1
+
+    result = {}
+    SIG_LABELS = {"pf": "Price Feed", "ai": "AI Research", "copy": "Copy-Trade",
+                  "whale": "Whale", "crowd": "Crowd CLOB"}
+    for sig, s in stats.items():
+        decisive = s["wins"] + s["losses"]
+        acc = (s["wins"] / decisive * 100) if decisive > 0 else 0.0
+        result[sig] = {
+            "label":        SIG_LABELS.get(sig, sig),
+            "trades":       decisive,
+            "wins":         s["wins"],
+            "losses":       s["losses"],
+            "accuracy_pct": round(acc, 1),
+            "avg_conf":     round(s["total_conf"] / s["count"], 2) if s["count"] else 0.0,
+        }
+
+    # Sort by accuracy desc
+    return dict(sorted(result.items(), key=lambda x: -x[1]["accuracy_pct"]))
+
+
+# Min resolved trades per signal before we trust the empirical accuracy
+_MIN_SIGNAL_TRADES = 8
+
+# Default weights when we don't have enough data yet
+_DEFAULT_WEIGHTS = {"pf": 0.40, "ai": 0.30, "copy": 0.20, "whale": 0.07, "crowd": 0.03}
+
+
+def get_dynamic_weights() -> dict[str, float]:
+    """
+    Compute signal weights from empirical per-signal accuracy.
+    Formula: weight ∝ (accuracy - 0.50) × trades  (only counts edge above 50%)
+    Falls back to default weights if insufficient data per signal.
+
+    Returns dict: {signal_name: weight}  (sums to 1.0)
+    """
+    accs = get_signal_accuracies()
+
+    raw: dict[str, float] = {}
+    for sig, s in accs.items():
+        if s["trades"] >= _MIN_SIGNAL_TRADES:
+            # Edge above 50% × number of trades = confidence-weighted edge
+            edge = max(0.0, (s["accuracy_pct"] / 100.0) - 0.50)
+            raw[sig] = edge * s["trades"]
+
+    if not raw or sum(raw.values()) < 0.001:
+        return _DEFAULT_WEIGHTS.copy()
+
+    total = sum(raw.values())
+    weights = {sig: round(v / total, 3) for sig, v in raw.items()}
+
+    # Ensure all 5 signals have a weight (minimum 0.02 floor for less-proven signals)
+    for sig in _DEFAULT_WEIGHTS:
+        if sig not in weights:
+            weights[sig] = 0.02
+
+    # Re-normalise after adding floors
+    total2 = sum(weights.values())
+    return {sig: round(w / total2, 3) for sig, w in weights.items()}
+
+
 if __name__ == "__main__":
     import sys
     logging.basicConfig(level=logging.INFO)
     run_resolution_check(verbose=True)
     stats = get_accuracy_stats()
     print(f"\nAccuracy: {stats['accuracy_pct']}% | {stats['wins']}W/{stats['losses']}L | PnL: ${stats['total_pnl']:+.2f}")
+
+    print("\n── Per-signal accuracy ──")
+    for sig, s in get_signal_accuracies().items():
+        print(f"  {s['label']:15s}: {s['accuracy_pct']:5.1f}% ({s['wins']}W/{s['losses']}L, avg_conf={s['avg_conf']:.2f})")
+
+    print("\n── Dynamic weights ──")
+    for sig, w in get_dynamic_weights().items():
+        print(f"  {sig:8s}: {w:.3f}")

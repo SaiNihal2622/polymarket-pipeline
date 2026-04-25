@@ -56,6 +56,7 @@ log = logging.getLogger(__name__)
 
 def _print_accuracy_oneliner():
     """Always print a one-line accuracy summary — shown every scan and every resolution check."""
+    from resolver import get_signal_accuracies
     stats = get_accuracy_stats()
     total_logged   = stats.get("total_logged", 0)
     total_resolved = stats["total_resolved"]
@@ -75,6 +76,28 @@ def _print_accuracy_oneliner():
         f"| logged={total_logged}  resolved={total_resolved}  "
         f"| need {need} more to go-live"
     )
+
+    # Per-signal accuracy breakdown (shown once we have data)
+    try:
+        sig_accs = get_signal_accuracies()
+        if sig_accs:
+            SIG_COLOR = {"pf": "cyan", "ai": "magenta", "copy": "yellow",
+                         "whale": "blue", "crowd": "green"}
+            parts = []
+            for sig, s in sig_accs.items():
+                if s["trades"] == 0:
+                    continue
+                col  = SIG_COLOR.get(sig, "white")
+                bar  = "▓" * int(s["accuracy_pct"] / 10)  # rough bar
+                parts.append(
+                    f"[{col}]{s['label']}[/{col}]: "
+                    f"[bold]{s['accuracy_pct']:.0f}%[/bold] "
+                    f"({s['wins']}W/{s['losses']}L)"
+                )
+            if parts:
+                console.print(f"  [dim]Signals → {' | '.join(parts)}[/dim]")
+    except Exception:
+        pass
 
     # Side-by-side pipeline comparison
     try:
@@ -321,7 +344,8 @@ def filter_quality_markets(markets, now: datetime) -> tuple[list, dict]:
     return result, skipped
 
 
-def _log_demo_trade(signal: Signal, token_id: str | None = None) -> int:
+def _log_demo_trade(signal: Signal, token_id: str | None = None,
+                    signals: dict | None = None) -> int:
     """Log a demo trade to the DB with status='demo'. Always virtual — no real money."""
     trade_id = logger.log_trade(
         market_id=signal.market.condition_id,
@@ -342,6 +366,7 @@ def _log_demo_trade(signal: Signal, token_id: str | None = None) -> int:
         classification_latency_ms=signal.classification_latency_ms,
         total_latency_ms=signal.total_latency_ms,
         token_id=token_id,
+        signals=signals,
     )
     return trade_id
 
@@ -454,12 +479,23 @@ def scan_and_trade() -> dict:
     from whale import bulk_whale_signals
     from leaderboard import build_copy_signals
     from classifier import research_market
+    from resolver import get_dynamic_weights, get_signal_accuracies
 
     # Pre-fetch crypto prices
     try:
         get_all_crypto_prices()
     except Exception:
         pass
+
+    # Load empirical signal weights (auto-updates as accuracy data accumulates)
+    dyn_weights = get_dynamic_weights()
+    sig_accs    = get_signal_accuracies()
+    if sig_accs:
+        acc_parts = [f"{s['label']}:{s['accuracy_pct']:.0f}%({s['trades']})" for s in sig_accs.values()]
+        console.print(f"  [dim]Signal accuracy: {' | '.join(acc_parts)}[/dim]")
+    else:
+        console.print(f"  [dim]Signal accuracy: building... (need {8} resolved trades per signal)[/dim]")
+    console.print(f"  [dim]Dynamic weights: pf={dyn_weights.get('pf',0):.2f} ai={dyn_weights.get('ai',0):.2f} copy={dyn_weights.get('copy',0):.2f} whale={dyn_weights.get('whale',0):.2f} crowd={dyn_weights.get('crowd',0):.2f}[/dim]")
 
     # Build token map
     token_map = {}
@@ -586,21 +622,36 @@ def scan_and_trade() -> dict:
 
         # ──────────────────────────────────────────────────────────────────
         # MAX-BASED SCORING — one strong signal is enough to trade
-        # Multiple agreeing signals boost confidence (+0.06 each)
+        # Agreement boost uses empirical weights: better signals boost more
         # ──────────────────────────────────────────────────────────────────
+        all_sigs = [("pf", pf_dir, pf_conf), ("copy", cp_dir, cp_conf),
+                    ("whale", wh_dir, wh_conf), ("ai", gem_dir, gem_conf),
+                    ("crowd", clob_dir, clob_conf)]
+
         bull_sigs, bear_sigs = [], []
-        for lbl, d, c in [("pf", pf_dir, pf_conf), ("copy", cp_dir, cp_conf),
-                           ("whale", wh_dir, wh_conf), ("ai", gem_dir, gem_conf),
-                           ("crowd", clob_dir, clob_conf)]:
+        for lbl, d, c in all_sigs:
             if d == "bullish" and c > 0:   bull_sigs.append((lbl, c))
             elif d == "bearish" and c > 0: bear_sigs.append((lbl, c))
 
         max_bull = max((c for _, c in bull_sigs), default=0.0)
         max_bear = max((c for _, c in bear_sigs), default=0.0)
-        boost_bull = min(0.18, max(0, len(bull_sigs) - 1) * 0.06)
-        boost_bear = min(0.18, max(0, len(bear_sigs) - 1) * 0.06)
+
+        # Agreement boost: each extra signal contributes its empirical weight × 0.5
+        # High-accuracy signals (e.g. pf=0.40) boost more than low-accuracy (crowd=0.03)
+        boost_bull = min(0.20, sum(dyn_weights.get(lbl, 0.05) * 0.5
+                                   for lbl, _ in bull_sigs[1:]))  # skip best (already max)
+        boost_bear = min(0.20, sum(dyn_weights.get(lbl, 0.05) * 0.5
+                                   for lbl, _ in bear_sigs[1:]))
         score_bull = min(0.95, max_bull + boost_bull)
         score_bear = min(0.95, max_bear + boost_bear)
+
+        # Build signals dict for DB logging (enables per-signal accuracy tracking)
+        signals_record: dict[str, str] = {}
+        for lbl, d, c in all_sigs:
+            if d != "neutral" and c > 0:
+                signals_record[lbl] = f"{d}:{c:.3f}"
+            else:
+                signals_record[lbl] = "neutral"
 
         # ──────────────────────────────────────────────────────────────────
         # KILL GATES — only block the truly bad cases
@@ -704,7 +755,7 @@ def scan_and_trade() -> dict:
             materiality=final_score,
             composite_score=final_score,
         )
-        trade_id = _log_demo_trade(unified_signal, token_id=tok)
+        trade_id = _log_demo_trade(unified_signal, token_id=tok, signals=signals_record)
         already_logged.add(market.condition_id)
         signals_found.append(unified_signal)
         demos_logged += 1
