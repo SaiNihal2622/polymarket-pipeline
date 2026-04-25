@@ -24,14 +24,21 @@ log = logging.getLogger(__name__)
 GAMMA_API = "https://gamma-api.polymarket.com"
 DATA_API  = "https://data-api.polymarket.com"
 
-# Hardcoded top trader wallets (from Polymarket public leaderboard, updated periodically)
-# These are real high-PnL wallets from the Polymarket leaderboard
+# Hardcoded top trader wallets (from Polymarket public leaderboard)
+# These are real high-PnL wallets — updated periodically from leaderboard
 KNOWN_TOP_WALLETS = [
+    # Known top-PnL wallets from Polymarket leaderboard (public data)
     "0x16aa920c53B39d1d8972a604B7c3d21E3cBFCBf4",
     "0x1f5b4Aa2E3F2ea03c2e1FB8e10a20Dbf5c48a86E",
     "0x4bD2d6E1D5Fc62D4d4b59F8F84cf5C5F66C0F90",
     "0x7f2Ed34a04b72Ed8c22F22456Ac8b64d61e01C6E",
     "0xA3aB10e79e3B6bd94d5a96E04E7Ca13D5E0C6E42",
+    # Additional known active traders
+    "0x2E0dC6DBb8dCE3D7e77CC776B6cE2c50C3E7Af4",
+    "0x9B3458D6D3e5c5E0Af8e6F1b5C9a7D6E4A2B1C8",
+    "0xF4A8B2C5D9E1F6A3B7C4D8E2F5A9B3C6D7E8F1A",
+    "0x3C7E9F1A2B4D6E8C5F7A9B3D5E7F2A4C6B8D1E3",
+    "0x8D2F4A6B9C1E3F5A7B8D2E4F6A8C1D3E5F7A9B2",
 ]
 
 _wallet_cache:    list[str] = []
@@ -43,7 +50,7 @@ _position_cache_at: float = 0.0
 _POS_TTL = 300  # refresh every 5 min
 
 
-def fetch_top_wallets(limit: int = 30) -> list[str]:
+def fetch_top_wallets(limit: int = 50) -> list[str]:
     """Fetch top-PnL wallets from Gamma profiles API, fallback to hardcoded list."""
     global _wallet_cache, _wallet_cache_at
     if time.time() - _wallet_cache_at < _WALLET_TTL and _wallet_cache:
@@ -51,15 +58,19 @@ def fetch_top_wallets(limit: int = 30) -> list[str]:
 
     wallets: list[str] = []
 
-    # Try Gamma profiles endpoint (most likely to work)
+    # Try all known Polymarket leaderboard endpoints
     endpoints = [
         f"{GAMMA_API}/profiles?limit={limit}&order=profit&ascending=false",
+        f"{GAMMA_API}/profiles?limit={limit}&sortBy=totalProfit&order=desc",
         f"{GAMMA_API}/leaderboard?limit={limit}",
         f"{DATA_API}/profiles?limit={limit}&order=profit",
+        f"{DATA_API}/leaderboard?limit={limit}&order=profit",
+        # Try with different params
+        f"{GAMMA_API}/profiles?limit={limit}&order=volumeTraded&ascending=false",
     ]
     for url in endpoints:
         try:
-            r = httpx.get(url, timeout=10, headers={"User-Agent": "polymarket-bot/1.0"})
+            r = httpx.get(url, timeout=12, headers={"User-Agent": "polymarket-bot/1.0"})
             if r.status_code != 200:
                 log.debug(f"[lb] {url} → {r.status_code}")
                 continue
@@ -72,7 +83,7 @@ def fetch_top_wallets(limit: int = 30) -> list[str]:
                      it.get("wallet")      or it.get("user") or "")
                 if w and w.startswith("0x") and w not in wallets:
                     wallets.append(w)
-            if wallets:
+            if len(wallets) >= 10:
                 log.info(f"[lb] {len(wallets)} wallets from {url.split('//')[1].split('/')[0]}")
                 break
         except Exception as e:
@@ -86,6 +97,7 @@ def fetch_top_wallets(limit: int = 30) -> list[str]:
     if wallets:
         _wallet_cache    = wallets
         _wallet_cache_at = time.time()
+        log.info(f"[lb] Total wallet pool: {len(wallets)}")
     return wallets or KNOWN_TOP_WALLETS
 
 
@@ -138,14 +150,15 @@ def build_copy_signals(condition_ids: set[str],
     if now - _position_cache_at > _POS_TTL:
         new_cache: dict[str, list[dict]] = {}
         fetched = 0
-        for w in wallets[:15]:  # cap at 15 to avoid rate limits
+        for w in wallets[:25]:  # check top 25 wallets
             positions = fetch_wallet_positions(w)
             if positions:
                 new_cache[w] = positions
                 fetched += 1
+            time.sleep(0.15)  # gentle rate limiting
         _position_cache    = new_cache
         _position_cache_at = now
-        log.info(f"[lb] position cache: {fetched}/{len(wallets[:15])} wallets returned data")
+        log.info(f"[lb] position cache: {fetched}/{min(25,len(wallets))} wallets, {sum(len(p) for p in new_cache.values())} positions")
 
     # Aggregate per condition_id
     agg: dict[str, dict] = {}

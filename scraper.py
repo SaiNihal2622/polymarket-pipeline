@@ -388,9 +388,61 @@ def scrape_all(lookback_hours: int | None = None) -> list[NewsItem]:
         except Exception as e:
             log.debug(f"[newsapi] failed: {e}")
 
+    # 8. Apify Google News (broad fresh headlines via DDG/Apify search)
+    try:
+        apify_items = _scrape_apify_news(hours)
+        all_items.extend(apify_items)
+        if apify_items:
+            log.info(f"[apify-news] +{len(apify_items)} headlines")
+    except Exception as e:
+        log.debug(f"[apify-news] failed: {e}")
+
     unique = deduplicate(all_items)
     unique.sort(key=lambda x: x.published_at, reverse=True)
     return unique
+
+
+def _scrape_apify_news(lookback_hours: int) -> list[NewsItem]:
+    """
+    Pull fresh news via DuckDuckGo (primary) or Apify (fallback).
+    Covers the market categories Polymarket typically focuses on.
+    Returns NewsItems for keyword matching.
+    """
+    try:
+        from apify_search import search_web
+    except ImportError:
+        return []
+
+    QUERIES = [
+        "crypto bitcoin ethereum price today",
+        "polymarket election 2026 prediction",
+        "sports results today winner",
+        "US politics news today 2026",
+        "AI artificial intelligence news today",
+        "Fed interest rates 2026",
+        "NBA playoffs results today",
+        "IPL cricket results today",
+    ]
+
+    now = datetime.now(timezone.utc)
+    items = []
+    for q in QUERIES:
+        try:
+            results = search_web(q, num_results=5)
+            for r in results:
+                # Each result is "Title: snippet" — use as headline
+                headline = r[:200].strip()
+                if headline:
+                    items.append(NewsItem(
+                        headline=headline,
+                        source="Apify/DDG",
+                        url="",
+                        published_at=now,
+                        summary="",
+                    ))
+        except Exception:
+            pass
+    return items
 
 
 if __name__ == "__main__":
