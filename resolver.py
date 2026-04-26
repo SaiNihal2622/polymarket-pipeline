@@ -128,8 +128,8 @@ def _resolve_via_clob(token_id: str, timeout: int = 8) -> float | None:
             return None
 
         avg_price = sum(prices) / len(prices)
-        if avg_price >= 0.93:  return 1.0   # lowered from 0.97 — resolved YES
-        if avg_price <= 0.07:  return 0.0   # raised from 0.03 — resolved NO
+        if avg_price >= 0.95:  return 1.0   # resolved YES
+        if avg_price <= 0.05:  return 0.0   # resolved NO
         return None  # still trading
     except Exception as e:
         log.debug(f"[resolver:clob] {token_id[:12]}: {e}")
@@ -345,10 +345,18 @@ def check_market_resolution(trade: dict) -> float | None:
     return cached
 
 
-def resolve_trade(trade_id: int, market_result: float, side: str, amount_usd: float):
+def resolve_trade(trade_id: int, market_result: float, side: str, amount_usd: float,
+                  market_price: float = 0.5):
     won = (side == "YES" and market_result == 1.0) or (side == "NO" and market_result == 0.0)
     if won:
-        pnl = round(amount_usd * 0.9, 4); result_str = "win"
+        # Actual payout depends on the price we bought at
+        # YES at price p → win pays (1-p)/p per dollar
+        # NO at price p  → win pays p/(1-p) per dollar
+        bet_price = market_price if side == "YES" else (1.0 - market_price)
+        bet_price = max(0.01, min(0.99, bet_price))  # clamp to avoid div-by-zero
+        payout_ratio = (1.0 - bet_price) / bet_price
+        pnl = round(amount_usd * payout_ratio, 4)
+        result_str = "win"
     else:
         pnl = round(-amount_usd, 4); result_str = "loss"
 
@@ -429,6 +437,7 @@ def run_resolution_check(verbose: bool = True) -> dict:
         result_str, pnl = resolve_trade(
             trade_id=trade["id"], market_result=market_result,
             side=trade["side"], amount_usd=trade["amount_usd"],
+            market_price=float(trade.get("market_price") or 0.5),
         )
         resolved += 1
         if result_str == "win":    wins   += 1; sym = "✅"

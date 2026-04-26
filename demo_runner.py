@@ -604,8 +604,8 @@ def scan_and_trade() -> dict:
             clob_dir, clob_conf = "bearish", 1.0 - price
 
         # ── Fast-path: price feed alone is enough at high confidence ───
-        # No AI needed — pure math wins 85%+ of time
-        if pf_conf >= 0.70:
+        # No AI needed — pure math wins 85%+ of time (raised to 0.72 for fewer, better trades)
+        if pf_conf >= 0.72:
             final_dir  = pf_dir
             final_side = "YES" if pf_dir == "bullish" else "NO"
             final_score = pf_conf
@@ -654,8 +654,9 @@ def scan_and_trade() -> dict:
 
             max_bull = max((c for _,c in bull_sigs), default=0.0)
             max_bear = max((c for _,c in bear_sigs), default=0.0)
-            boost_bull = min(0.18, sum(dyn_weights.get(l,0.05)*0.5 for l,_ in bull_sigs[1:]))
-            boost_bear = min(0.18, sum(dyn_weights.get(l,0.05)*0.5 for l,_ in bear_sigs[1:]))
+            # Boost from additional agreeing signals (all signals count, not [1:])
+            boost_bull = min(0.18, sum(dyn_weights.get(l,0.05)*0.5 for l,_ in bull_sigs))
+            boost_bear = min(0.18, sum(dyn_weights.get(l,0.05)*0.5 for l,_ in bear_sigs))
             score_bull = min(0.95, max_bull + boost_bull)
             score_bear = min(0.95, max_bear + boost_bear)
 
@@ -673,8 +674,9 @@ def scan_and_trade() -> dict:
 
             # Must have at least one REAL signal (≥0.50 pf/copy, ≥0.40 AI,
             # ≥0.40 whale, ≥0.72 crowd already baked into clob_conf)
-            has_real = (pf_conf >= 0.50 or cp_conf >= 0.50 or
-                        wh_conf >= 0.45 or gem_conf >= 0.40 or clob_conf >= 0.72)
+            # Require at least one strong signal — no weak single-signal trades
+            has_real = (pf_conf >= 0.55 or cp_conf >= 0.55 or
+                        wh_conf >= 0.50 or gem_conf >= 0.45 or clob_conf >= 0.72)
             if not has_real:
                 continue
 
@@ -702,7 +704,8 @@ def scan_and_trade() -> dict:
                 top_score = score_bear
                 top_dir, top_side = "bearish", "NO"
 
-            min_score = 0.55 if n_signals == 1 else 0.45 if n_signals == 2 else 0.38
+            # Tighter thresholds — prefer fewer but higher-accuracy trades
+            min_score = 0.62 if n_signals == 1 else 0.52 if n_signals == 2 else 0.44
             if top_score < min_score:
                 log.debug(f"[score] {top_score:.2f}<{min_score} ({n_signals} sigs): {market.question[:45]}")
                 continue
@@ -724,10 +727,10 @@ def scan_and_trade() -> dict:
             console.print(f"  [red]⛔ {reason}[/red]")
             break
         bk   = get_current_bankroll()
-        edge = max(final_score - bet_price, 0.03)
+        edge = final_score - bet_price   # real edge — no artificial floor (EV gate already passed)
         bet  = kelly_bet_size(bk, edge, bet_price, materiality=final_score)
         # Tier sizing: confidence-scaled, hard-capped for bankroll safety
-        if pf_conf >= 0.70:
+        if pf_conf >= 0.72:
             bet = min(bet * 1.3, bk * 0.07)   # math trades — highest confidence, 7% cap
         elif final_score >= 0.70:
             bet = min(bet * 1.1, bk * 0.06)   # high-confidence, 6% cap
@@ -744,7 +747,7 @@ def scan_and_trade() -> dict:
         if gem_conf  >= 0.30: sources.append(f"🔬AI:{gem_conf:.0%}")
 
         win_amt  = round(bet * payout_ratio, 2)
-        tier_tag = "💰MATH" if pf_conf >= 0.70 else ("🎯HIGH" if final_score >= 0.70 else "⚡STD")
+        tier_tag = "💰MATH" if pf_conf >= 0.72 else ("🎯HIGH" if final_score >= 0.70 else "⚡STD")
         console.print(
             f"  {tier_tag} [bold]{final_side}[/bold] "
             f"price:{price:.2f} pay:{payout_ratio:.1f}x "
