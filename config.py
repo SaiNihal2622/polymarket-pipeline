@@ -121,7 +121,7 @@ EDGE_THRESHOLD = float(os.getenv("EDGE_THRESHOLD", "0.15"))  # Higher threshold 
 NEWS_LOOKBACK_HOURS = 12
 
 # --- Demo Runner Settings ---
-DEMO_HOURS_WINDOW = float(os.getenv("DEMO_HOURS_WINDOW", "24"))       # 24h window — fast resolution
+DEMO_HOURS_WINDOW = float(os.getenv("DEMO_HOURS_WINDOW", "48"))       # 48h window — more candidates, still fast resolution
 SCAN_INTERVAL_MIN = int(os.getenv("SCAN_INTERVAL_MIN", "5"))          # 5min scan = catch 5/15min crypto windows
 RESOLVE_INTERVAL_MIN = int(os.getenv("RESOLVE_INTERVAL_MIN", "6"))     # Check resolutions every 6min
 ACCURACY_THRESHOLD = float(os.getenv("ACCURACY_THRESHOLD", "80.0"))   # Target: 80% accuracy

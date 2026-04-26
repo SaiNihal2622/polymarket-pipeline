@@ -442,13 +442,15 @@ def _build_analyst_prompt(market: Market, search_results: list[str]) -> str:
     )
 
 
-def research_market(market: Market) -> Classification:
+def research_market(market: Market, news_context: list[str] | None = None) -> Classification:
     """
     MiroFish research: Gemini search → Apify+Groq fallback.
     Strategy:
       1. Try Gemini with live web search (fast, accurate)
       2. If Gemini 429/fails → Apify Google Search + Groq llama-3.3-70b
       3. Return best signal found
+
+    news_context: optional pre-matched headlines from scraper (used as extra context)
     """
     start = time.time()
 
@@ -458,10 +460,15 @@ def research_market(market: Market) -> Classification:
     # ── Step 1: Live web search (DDG → Apify) ─────────────────────────────
     web_results: list[str] = []
     try:
-        from apify_search import search_market
-        web_results = search_market(market.question, market.yes_price)
+        from apify_search import search_market as _search_market
+        web_results = _search_market(market.question, market.yes_price)
     except Exception as e:
         log.debug(f"[research] web search failed: {e}")
+
+    # Prepend any pre-matched news headlines as extra context
+    if news_context:
+        extra = [f"[news] {h}" for h in news_context[:3]]
+        web_results = extra + web_results
 
     # ── Step 2: Try Gemini with built-in search grounding ─────────────────
     # Gemini is best when not rate-limited because it searches with context

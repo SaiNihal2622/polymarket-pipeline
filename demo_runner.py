@@ -726,13 +726,13 @@ def scan_and_trade() -> dict:
         bk   = get_current_bankroll()
         edge = max(final_score - bet_price, 0.03)
         bet  = kelly_bet_size(bk, edge, bet_price, materiality=final_score)
-        # Tier sizing: high-confidence = bigger bet
+        # Tier sizing: confidence-scaled, hard-capped for bankroll safety
         if pf_conf >= 0.70:
-            bet = min(bet * 1.5, bk * 0.08)   # price feed trades — highest confidence
+            bet = min(bet * 1.3, bk * 0.07)   # math trades — highest confidence, 7% cap
         elif final_score >= 0.70:
-            bet = min(bet * 1.2, bk * 0.07)
+            bet = min(bet * 1.1, bk * 0.06)   # high-confidence, 6% cap
         else:
-            bet = min(bet, bk * 0.05)
+            bet = min(bet, bk * 0.04)          # standard, 4% cap
         bet = round(max(0.50, bet), 2)
 
         # ── Print + log ───────────────────────────────────────────────

@@ -15,9 +15,9 @@ from __future__ import annotations
 import os
 
 INITIAL_BANKROLL = float(os.getenv("BANKROLL_USD", "20"))
-MAX_BET_FRAC     = 0.10   # 10% max per bet ($2 on $20 bankroll)
+MAX_BET_FRAC     = 0.07   # 7% max per bet ($2.10 on $30 bankroll) — safer for real money
 MIN_BET_USD      = 0.50
-DAILY_LOSS_CAP   = 0.15   # stop trading after 15% daily drawdown
+DAILY_LOSS_CAP   = 0.12   # stop trading after 12% daily drawdown (~$3.60 on $30)
 
 
 def kelly_bet_size(bankroll: float, edge: float, market_price: float,
