@@ -32,11 +32,14 @@ def match_news_to_markets(
     headline: str,
     markets: list[Market],
     max_matches: int = 5,
+    top_k: int | None = None,   # alias for max_matches (backwards compat)
 ) -> list[Market]:
     """
     Find markets that a news headline is relevant to.
     Uses keyword overlap scoring — fast, no API call.
     """
+    if top_k is not None:
+        max_matches = top_k
     headline_lower = headline.lower()
     scored = []
 

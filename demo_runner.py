@@ -459,11 +459,12 @@ def scan_and_trade() -> dict:
         "first blood", "first tower", "first baron", "quadra kill", "penta kill",
         "dragon soul", "inhibitor", "total kills",
         "dota 2", "valorant", "counter-strike", "league of legends",
-        # Sports O/U / props (unresearchable)
-        "o/u 1.5", "o/u 2.5", "o/u 3.5", "o/u 4.5", "o/u 5.5",
+        # Sports O/U / props (unresearchable — block ALL o/u patterns)
+        " o/u ", "o/u ", ": o/u", "over/under",
         "both teams to score", "leading at halftime", "half time",
         "spread:", "correct score", "exact score", "handicap:",
         "points o/u", "assists o/u", "rebounds o/u", "total corners",
+        "total kills", "games total", "map total",
         "any player", "up or down", "opens up or down",
         # Misc
         "temperature", "rainfall", "snow",
@@ -569,6 +570,12 @@ def scan_and_trade() -> dict:
 
         is_crypto = any(k in q_lower for k in CRYPTO_KW)
         is_sweet  = 0.30 <= price <= 0.70   # 1:1 to 2.3:1 payout range
+
+        # Skip crypto — empirical accuracy is 22% (2W/7L), far below breakeven
+        # Price feed alone isn't reliable for short crypto windows
+        if is_crypto:
+            log.debug(f"[skip:crypto] 22% historical accuracy: {q_lower[:50]}")
+            continue
 
         # ── S1: Price feed (crypto math — deterministic) ───────────────
         pf_dir, pf_conf = "neutral", 0.0
