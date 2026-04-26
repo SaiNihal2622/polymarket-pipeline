@@ -535,44 +535,42 @@ def scan_and_trade() -> dict:
     except Exception:
         copy_map = {}
 
-    console.print(f"\n[bold cyan]🔮 ENGINE: {len(all_candidates)} markets | whale:{len(whale_map)} copy:{len(copy_map)}[/bold cyan]")
+    console.print(f"\n[bold cyan]🔮 ENGINE: {len(all_candidates)} candidates | whale:{len(whale_map)} copy:{len(copy_map)}[/bold cyan]")
 
     signals_found: list[Signal] = []
-    demos_logged = 0
-    analyzed = 0
-    MAX_MARKETS = int(os.getenv("MAX_MARKETS_PER_SCAN", "150"))
+    demos_logged  = 0
+    analyzed      = 0
+    ai_calls_left = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "35"))  # rate-limit budget
+
+    from bankroll import kelly_bet_size, get_current_bankroll, can_trade_today
+    from edge import Signal as _Signal
+
+    CRYPTO_KW = [
+        "bitcoin","btc","ethereum","eth","solana","sol","dogecoin","doge",
+        "xrp","bnb","hyperliquid","cardano","ada","avax","polkadot","dot",
+        "chainlink","litecoin","ltc","polygon","matic","uniswap","pepe","shib","crypto",
+    ]
+
+    MAX_MARKETS = int(os.getenv("MAX_MARKETS_PER_SCAN", "200"))
 
     for market in all_candidates[:MAX_MARKETS]:
         analyzed += 1
-        q_lower = market.question.lower()
+        q_lower   = market.question.lower()
 
         if any(pat in q_lower for pat in HARD_SKIP):
             continue
 
         hours_left = _hours_left(market)
-        price = market.yes_price
-        tok = token_map.get(market.condition_id)
+        price      = market.yes_price
+        tok        = token_map.get(market.condition_id)
 
-        # Only trade markets closing within 48 hours
-        if hours_left > 48:
+        if hours_left > 48 or price < 0.07 or price > 0.93:
             continue
 
-        # Price filter: skip near-certain (already decided) or extreme long shots
-        if price < 0.08 or price > 0.92:
-            continue
+        is_crypto = any(k in q_lower for k in CRYPTO_KW)
+        is_sweet  = 0.30 <= price <= 0.70   # 1:1 to 2.3:1 payout range
 
-        # ──────────────────────────────────────────────────────────────────
-        # SIGNAL COLLECTION — 5 independent signals, each with direction+conf
-        # ──────────────────────────────────────────────────────────────────
-
-        is_crypto = any(k in q_lower for k in [
-            "bitcoin", "btc", "ethereum", "eth", "solana", "sol",
-            "crypto", "dogecoin", "doge", "xrp", "bnb", "hyperliquid",
-            "cardano", "ada", "avax", "polkadot", "dot", "chainlink",
-            "litecoin", "ltc", "polygon", "matic", "uniswap", "pepe", "shib",
-        ])
-
-        # S1: Price feed — pure math, crypto only, most reliable
+        # ── S1: Price feed (crypto math — deterministic) ───────────────
         pf_dir, pf_conf = "neutral", 0.0
         if is_crypto:
             try:
@@ -582,170 +580,185 @@ def scan_and_trade() -> dict:
             except Exception:
                 pass
 
-        # S2: Copy-trade — top wallets' open positions (best for non-crypto)
+        # ── S2: Copy-trade (top wallet open positions) ─────────────────
         cp_dir, cp_conf, cp_wallets = "neutral", 0.0, 0
         lb_sig = copy_map.get(market.condition_id)
         if lb_sig and lb_sig.direction != "neutral":
             cp_dir     = lb_sig.direction
             cp_wallets = lb_sig.wallet_count
-            # Confidence: 1 wallet = 0.55, 2 = 0.65, 3+ = 0.75+
-            cp_conf = min(0.88, 0.50 + cp_wallets * 0.10 + min(lb_sig.total_usd, 5000) / 25000)
+            cp_conf    = min(0.88, 0.50 + cp_wallets * 0.10
+                             + min(lb_sig.total_usd, 5000) / 25000)
 
-        # S3: Whale holders bias — large position holders
+        # ── S3: Whale holder bias ──────────────────────────────────────
         wh_dir, wh_conf = "neutral", 0.0
-        whale_sig = whale_map.get(market.condition_id)
-        if whale_sig and whale_sig.direction != "neutral":
-            wh_dir  = whale_sig.direction
-            wh_conf = min(0.80, abs(whale_sig.yes_bias - 0.5) * 2.2)
+        ws = whale_map.get(market.condition_id)
+        if ws and ws.direction != "neutral":
+            wh_dir  = ws.direction
+            wh_conf = min(0.80, abs(ws.yes_bias - 0.5) * 2.2)
 
-        # S4: AI Research — Groq/Gemini + DDG/Apify web search
-        # Runs for ALL markets. Skipped only if price feed already very confident.
-        gem_dir, gem_conf = "neutral", 0.0
-        if pf_conf < 0.80:  # research always useful unless price feed is definitive
-            try:
-                matched_headlines = news_map.get(market.condition_id, [])
-                res = research_market(market, news_context=matched_headlines)
-                if res.direction in ("bullish", "bearish") and res.materiality >= 0.28:
-                    gem_dir  = res.direction
-                    gem_conf = min(0.85, res.materiality)
-            except Exception:
-                pass
-
-        # S5: CLOB crowd — only counts as a STRONG signal at price extremes
-        # At 0.80 YES: crowd is 80% confident → real signal. At 0.52: noise.
+        # ── S4: CLOB crowd (only counts at true extremes) ──────────────
         clob_dir, clob_conf = "neutral", 0.0
-        if price >= 0.68:
-            clob_dir, clob_conf = "bullish", price         # crowd very confident YES
-        elif price <= 0.32:
-            clob_dir, clob_conf = "bearish", 1.0 - price   # crowd very confident NO
-        # Sweet zone (0.32-0.68): crowd is uncertain, don't use CLOB as signal
+        if price >= 0.72:
+            clob_dir, clob_conf = "bullish", price
+        elif price <= 0.28:
+            clob_dir, clob_conf = "bearish", 1.0 - price
 
-        # ──────────────────────────────────────────────────────────────────
-        # MAX-BASED SCORING — one strong signal is enough to trade
-        # Agreement boost uses empirical weights: better signals boost more
-        # ──────────────────────────────────────────────────────────────────
-        all_sigs = [("pf", pf_dir, pf_conf), ("copy", cp_dir, cp_conf),
-                    ("whale", wh_dir, wh_conf), ("ai", gem_dir, gem_conf),
-                    ("crowd", clob_dir, clob_conf)]
-
-        bull_sigs, bear_sigs = [], []
-        for lbl, d, c in all_sigs:
-            if d == "bullish" and c > 0:   bull_sigs.append((lbl, c))
-            elif d == "bearish" and c > 0: bear_sigs.append((lbl, c))
-
-        max_bull = max((c for _, c in bull_sigs), default=0.0)
-        max_bear = max((c for _, c in bear_sigs), default=0.0)
-
-        # Agreement boost: each extra signal contributes its empirical weight × 0.5
-        # High-accuracy signals (e.g. pf=0.40) boost more than low-accuracy (crowd=0.03)
-        boost_bull = min(0.20, sum(dyn_weights.get(lbl, 0.05) * 0.5
-                                   for lbl, _ in bull_sigs[1:]))  # skip best (already max)
-        boost_bear = min(0.20, sum(dyn_weights.get(lbl, 0.05) * 0.5
-                                   for lbl, _ in bear_sigs[1:]))
-        score_bull = min(0.95, max_bull + boost_bull)
-        score_bear = min(0.95, max_bear + boost_bear)
-
-        # Build signals dict for DB logging (enables per-signal accuracy tracking)
-        signals_record: dict[str, str] = {}
-        for lbl, d, c in all_sigs:
-            if d != "neutral" and c > 0:
-                signals_record[lbl] = f"{d}:{c:.3f}"
-            else:
-                signals_record[lbl] = "neutral"
-
-        # ──────────────────────────────────────────────────────────────────
-        # KILL GATES — only block the truly bad cases
-        # ──────────────────────────────────────────────────────────────────
-
-        # Gate A: Hard conflict — price feed vs AI disagree strongly → skip
-        if (pf_dir != "neutral" and gem_dir != "neutral"
-                and pf_dir != gem_dir and pf_conf >= 0.65 and gem_conf >= 0.45):
-            log.debug(f"[gate-A] PF/AI conflict: {market.question[:50]}")
-            continue
-
-        # Gate B: Hard conflict — price feed vs copy-trade disagree → skip
-        if (pf_dir != "neutral" and cp_dir != "neutral"
-                and pf_dir != cp_dir and pf_conf >= 0.60 and cp_conf >= 0.55):
-            log.debug(f"[gate-B] PF/Copy conflict: {market.question[:50]}")
-            continue
-
-        # Gate C: Must have at least ONE real signal (not just crowd price)
-        # Crowd-following at 0.70 YES without any other signal = 0 EV by definition
-        has_real_signal = pf_conf >= 0.50 or cp_conf >= 0.45 or wh_conf >= 0.45 or gem_conf >= 0.28
-        if not has_real_signal:
-            log.debug(f"[gate-C] No real signal: {market.question[:50]}")
-            continue
-
-        # Gate D: If contra-crowd, must have strong backing (pf or copy confirm direction)
-        is_sweet = 0.32 <= price <= 0.68
-        crowd_dir = "bullish" if price >= 0.55 else ("bearish" if price <= 0.45 else "neutral")
-        if crowd_dir == "bullish" and score_bear > score_bull:
-            has_backing = (pf_dir == "bearish" and pf_conf >= 0.70) or (cp_dir == "bearish" and cp_conf >= 0.65)
-            if not has_backing:
-                log.debug(f"[gate-D] Weak contra-crowd (crowd YES): {market.question[:50]}")
+        # ── Fast-path: price feed alone is enough at high confidence ───
+        # No AI needed — pure math wins 85%+ of time
+        if pf_conf >= 0.70:
+            final_dir  = pf_dir
+            final_side = "YES" if pf_dir == "bullish" else "NO"
+            final_score = pf_conf
+            signals_record = {"pf": f"{pf_dir}:{pf_conf:.3f}", "ai": "neutral",
+                               "copy": f"{cp_dir}:{cp_conf:.3f}" if cp_dir != "neutral" else "neutral",
+                               "whale": f"{wh_dir}:{wh_conf:.3f}" if wh_dir != "neutral" else "neutral",
+                               "crowd": f"{clob_dir}:{clob_conf:.3f}" if clob_dir != "neutral" else "neutral"}
+            # Skip if copy-trade strongly disagrees
+            if cp_dir != "neutral" and cp_dir != pf_dir and cp_conf >= 0.65:
+                log.debug(f"[fast-path] PF/Copy conflict skip: {market.question[:45]}")
                 continue
-        if crowd_dir == "bearish" and score_bull > score_bear:
-            has_backing = (pf_dir == "bullish" and pf_conf >= 0.70) or (cp_dir == "bullish" and cp_conf >= 0.65)
-            if not has_backing:
-                log.debug(f"[gate-D] Weak contra-crowd (crowd NO): {market.question[:50]}")
-                continue
-
-        # ── Pick direction ─────────────────────────────────────────────────
-        # Min score: 0.40 (need a meaningful edge, not just noise)
-        MIN_SCORE = 0.40
-        if score_bull >= score_bear and score_bull >= MIN_SCORE:
-            final_dir, final_side, final_score = "bullish", "YES", score_bull
-        elif score_bear > score_bull and score_bear >= MIN_SCORE:
-            final_dir, final_side, final_score = "bearish", "NO", score_bear
+            gem_dir, gem_conf = "neutral", 0.0  # not needed
         else:
-            continue
+            # ── S5: AI Research (rate-limit budget) ───────────────────
+            gem_dir, gem_conf = "neutral", 0.0
+            # Only call AI if we have budget AND it's worth researching
+            should_research = (
+                ai_calls_left > 0
+                and hours_left <= 36          # resolves soon enough to matter
+                and (
+                    is_crypto                   # crypto: AI confirms price feed
+                    or len(news_map.get(market.condition_id, [])) >= 1  # news match
+                    or cp_conf >= 0.40          # copy-trade partial signal → confirm
+                    or clob_conf >= 0.72        # crowd very confident → confirm
+                    or market.volume >= 5000    # high-volume market → worth researching
+                )
+            )
+            if should_research:
+                try:
+                    matched_headlines = news_map.get(market.condition_id, [])
+                    res = research_market(market, news_context=matched_headlines)
+                    if res.direction in ("bullish", "bearish") and res.materiality >= 0.30:
+                        gem_dir  = res.direction
+                        gem_conf = min(0.88, res.materiality)
+                    ai_calls_left -= 1
+                except Exception as e:
+                    log.debug(f"[research] {e}")
 
-        # ── EV gate — positive expected value required ────────────────────
-        bet_price    = price if final_side == "YES" else (1.0 - price)
-        payout_ratio = (1.0 - bet_price) / bet_price
+            # ── Combine all signals (MAX + agreement boost) ────────────
+            all_sigs = [("pf", pf_dir, pf_conf), ("copy", cp_dir, cp_conf),
+                        ("whale", wh_dir, wh_conf), ("ai", gem_dir, gem_conf),
+                        ("crowd", clob_dir, clob_conf)]
+
+            bull_sigs = [(l,c) for l,d,c in all_sigs if d == "bullish" and c > 0]
+            bear_sigs = [(l,c) for l,d,c in all_sigs if d == "bearish"  and c > 0]
+
+            max_bull = max((c for _,c in bull_sigs), default=0.0)
+            max_bear = max((c for _,c in bear_sigs), default=0.0)
+            boost_bull = min(0.18, sum(dyn_weights.get(l,0.05)*0.5 for l,_ in bull_sigs[1:]))
+            boost_bear = min(0.18, sum(dyn_weights.get(l,0.05)*0.5 for l,_ in bear_sigs[1:]))
+            score_bull = min(0.95, max_bull + boost_bull)
+            score_bear = min(0.95, max_bear + boost_bear)
+
+            signals_record = {}
+            for lbl, d, c in all_sigs:
+                signals_record[lbl] = f"{d}:{c:.3f}" if d != "neutral" and c > 0 else "neutral"
+
+            # ── GATES ──────────────────────────────────────────────────
+
+            # Hard conflict: PF vs AI
+            if (pf_dir != "neutral" and gem_dir != "neutral"
+                    and pf_dir != gem_dir and pf_conf >= 0.60 and gem_conf >= 0.45):
+                log.debug(f"[gate] PF/AI conflict: {market.question[:45]}")
+                continue
+
+            # Must have at least one REAL signal (≥0.50 pf/copy, ≥0.40 AI,
+            # ≥0.40 whale, ≥0.72 crowd already baked into clob_conf)
+            has_real = (pf_conf >= 0.50 or cp_conf >= 0.50 or
+                        wh_conf >= 0.45 or gem_conf >= 0.40 or clob_conf >= 0.72)
+            if not has_real:
+                continue
+
+            # Contra-crowd: must have PF or AI backing at high confidence
+            crowd_dir = "bullish" if price >= 0.58 else ("bearish" if price <= 0.42 else "neutral")
+            if crowd_dir == "bullish" and score_bear > score_bull:
+                if not ((pf_dir == "bearish" and pf_conf >= 0.70)
+                        or (gem_dir == "bearish" and gem_conf >= 0.65)):
+                    log.debug(f"[gate] Contra-crowd (bear vs YES crowd): {market.question[:45]}")
+                    continue
+            if crowd_dir == "bearish" and score_bull > score_bear:
+                if not ((pf_dir == "bullish" and pf_conf >= 0.70)
+                        or (gem_dir == "bullish" and gem_conf >= 0.65)):
+                    log.debug(f"[gate] Contra-crowd (bull vs NO crowd): {market.question[:45]}")
+                    continue
+
+            # Minimum score thresholds by situation
+            # Single AI signal at low conf → higher bar
+            # Multiple agreeing signals → lower bar
+            n_signals = len(bull_sigs) + len(bear_sigs)
+            if score_bull >= score_bear:
+                top_score = score_bull
+                top_dir, top_side = "bullish", "YES"
+            else:
+                top_score = score_bear
+                top_dir, top_side = "bearish", "NO"
+
+            min_score = 0.55 if n_signals == 1 else 0.45 if n_signals == 2 else 0.38
+            if top_score < min_score:
+                log.debug(f"[score] {top_score:.2f}<{min_score} ({n_signals} sigs): {market.question[:45]}")
+                continue
+
+            final_dir, final_side, final_score = top_dir, top_side, top_score
+
+        # ── EV gate ───────────────────────────────────────────────────
+        bet_price     = price if final_side == "YES" else (1.0 - price)
+        payout_ratio  = (1.0 - bet_price) / bet_price
         ev_per_dollar = final_score * payout_ratio - (1.0 - final_score)
-        # EV threshold: sweet zone needs only 0.02 (1:1 payout amplifies small edges)
-        # High-confidence crowd markets need 0.03
-        min_ev = 0.02 if is_sweet else 0.03
+        min_ev = 0.015 if is_sweet else 0.025
         if ev_per_dollar < min_ev:
-            log.debug(f"[EV] {ev_per_dollar:.3f} < {min_ev}: {market.question[:50]}")
+            log.debug(f"[EV] {ev_per_dollar:.3f}<{min_ev}: {market.question[:45]}")
             continue
 
-        # ── Bet sizing ─────────────────────────────────────────────────
-        from bankroll import kelly_bet_size, get_current_bankroll, can_trade_today
+        # ── Bet sizing ────────────────────────────────────────────────
         allowed, reason = can_trade_today()
         if not allowed:
             console.print(f"  [red]⛔ {reason}[/red]")
             break
-        bk = get_current_bankroll()
-        edge = final_score - bet_price
-        bet = kelly_bet_size(bk, max(edge, 0.03), bet_price, materiality=final_score)
-        bet = round(min(max(0.50, bet), bk * 0.06), 2)
+        bk   = get_current_bankroll()
+        edge = max(final_score - bet_price, 0.03)
+        bet  = kelly_bet_size(bk, edge, bet_price, materiality=final_score)
+        # Tier sizing: high-confidence = bigger bet
+        if pf_conf >= 0.70:
+            bet = min(bet * 1.5, bk * 0.08)   # price feed trades — highest confidence
+        elif final_score >= 0.70:
+            bet = min(bet * 1.2, bk * 0.07)
+        else:
+            bet = min(bet, bk * 0.05)
+        bet = round(max(0.50, bet), 2)
 
-        # ── Log sources ────────────────────────────────────────────────
+        # ── Print + log ───────────────────────────────────────────────
         sources = []
-        if pf_conf >= 0.50:   sources.append(f"💰PF:{pf_conf:.0%}")
-        if cp_conf >= 0.40:   sources.append(f"👛Copy:{cp_conf:.0%}({cp_wallets}w)")
-        if wh_conf >= 0.40:   sources.append(f"🐋Whale:{wh_conf:.0%}")
-        if clob_conf >= 0.50: sources.append(f"📊Crowd:{clob_conf:.0%}")
-        if gem_conf >= 0.30:  sources.append(f"🔬Gemini:{gem_conf:.0%}")
+        if pf_conf   >= 0.50: sources.append(f"💰PF:{pf_conf:.0%}")
+        if cp_conf   >= 0.40: sources.append(f"👛Copy:{cp_conf:.0%}({cp_wallets}w)")
+        if wh_conf   >= 0.40: sources.append(f"🐋Whale:{wh_conf:.0%}")
+        if clob_conf >= 0.60: sources.append(f"📊Crowd:{clob_conf:.0%}")
+        if gem_conf  >= 0.30: sources.append(f"🔬AI:{gem_conf:.0%}")
 
-        win_profit = round(bet * payout_ratio, 2)
+        win_amt  = round(bet * payout_ratio, 2)
+        tier_tag = "💰MATH" if pf_conf >= 0.70 else ("🎯HIGH" if final_score >= 0.70 else "⚡STD")
         console.print(
-            f"  [bold green]▸[/bold green] [bold]{final_side}[/bold] "
-            f"price:{price:.2f} payout:{payout_ratio:.1f}x "
-            f"score:{final_score:.2f} ev:{ev_per_dollar:.3f} "
+            f"  {tier_tag} [bold]{final_side}[/bold] "
+            f"price:{price:.2f} pay:{payout_ratio:.1f}x "
+            f"score:{final_score:.2f} ev:+${ev_per_dollar*bet:.2f} "
             f"closes:{hours_left:.1f}h\n"
-            f"    {' + '.join(sources) if sources else 'crowd-signal'}\n"
-            f"    \"{market.question[:70]}\""
+            f"    {' + '.join(sources) or 'multi-signal'}\n"
+            f"    \"{market.question[:72]}\""
         )
 
-        from edge import Signal as _Signal
         unified_signal = _Signal(
             market=market,
             claude_score=final_score,
             market_price=price,
-            edge=max(edge, 0.03),
+            edge=edge,
             side=final_side,
             bet_amount=bet,
             reasoning=f"score={final_score:.2f} ev={ev_per_dollar:.3f} | {' + '.join(sources)}",
@@ -759,15 +772,13 @@ def scan_and_trade() -> dict:
         already_logged.add(market.condition_id)
         signals_found.append(unified_signal)
         demos_logged += 1
-        console.print(f"    → [green]Trade #{trade_id} logged (${bet:.2f}, +${ev_per_dollar*bet:.2f} EV)[/green]")
+        console.print(f"    → [green]✅ Trade #{trade_id} logged (${bet:.2f} → win:+${win_amt} / lose:-${bet})[/green]")
 
+    ai_used = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "35")) - ai_calls_left
     if not signals_found:
-        console.print(
-            f"  [dim]No signals this scan — {analyzed} markets analyzed. "
-            f"Thresholds or materiality not met.[/dim]"
-        )
-
-    console.print(f"\n  Scan complete: {analyzed} markets analyzed → {demos_logged} demo trades")
+        console.print(f"  [yellow]No trades this scan — {analyzed} markets analyzed, {ai_used} AI calls used.[/yellow]")
+    else:
+        console.print(f"\n  ✅ {demos_logged} trades | {analyzed} analyzed | {ai_used} AI calls used")
     _print_accuracy_oneliner()
 
     return {

@@ -134,10 +134,10 @@ MIN_VOLUME_USD = float(os.getenv("MIN_VOLUME_USD", "50"))    # Low: catch 5/15-m
 MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.20"))
 
 # --- Market Quality Filters (maximise signal accuracy) ---
-MIN_CLOSE_HOURS = float(os.getenv("MIN_CLOSE_HOURS", "0.5"))   # Skip markets closing in < 30min (priced in)
-MIN_YES_PRICE   = float(os.getenv("MIN_YES_PRICE",   "0.20"))   # Skip if YES < 20% (nearly impossible)
-MAX_YES_PRICE   = float(os.getenv("MAX_YES_PRICE",   "0.80"))   # Skip if YES > 80% (nearly certain)
-MIN_WINDOW_HOURS = float(os.getenv("MIN_WINDOW_HOURS", "0.5"))  # Skip < 30-min duration markets
+MIN_CLOSE_HOURS  = float(os.getenv("MIN_CLOSE_HOURS",  "0.25"))  # Skip markets closing in < 15min (priced in)
+MIN_YES_PRICE    = float(os.getenv("MIN_YES_PRICE",   "0.05"))   # Only filter near-impossible markets
+MAX_YES_PRICE    = float(os.getenv("MAX_YES_PRICE",   "0.95"))   # Only filter near-certain markets
+MIN_WINDOW_HOURS = float(os.getenv("MIN_WINDOW_HOURS", "0.25"))  # Skip < 15-min duration markets
 SPEED_TARGET_SECONDS = float(os.getenv("SPEED_TARGET_SECONDS", "5"))
 CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "gemma3:4b")
 SCORING_MODEL = os.getenv("SCORING_MODEL", "gemma3:4b")
