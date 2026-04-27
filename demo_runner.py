@@ -466,6 +466,12 @@ def scan_and_trade() -> dict:
         "points o/u", "assists o/u", "rebounds o/u", "total corners",
         "total kills", "games total", "map total",
         "any player", "up or down", "opens up or down",
+        # Random sports game results — AI has NO edge, pure coin flip
+        # "Will [team] win?" = crowd already priced in all info, 0% edge
+        "will cf ", "will ca ", "will sc ", "will ec ", "will se ", "will cd ",
+        "will fc ", "will ac ", "will rc ", "will dc ", "will fk ", "will nk ",
+        "will sk ", "will hk ", "will bk ", "will ok ", "will as ",
+        "win on 2026-04", "win on 2026-05", "win on 2026-06",
         # Misc
         "temperature", "rainfall", "snow",
         "justin bieber", "taylor swift", "box office", "posts from",
@@ -679,12 +685,21 @@ def scan_and_trade() -> dict:
                 log.debug(f"[gate] PF/AI conflict: {market.question[:45]}")
                 continue
 
-            # Must have at least one REAL signal (≥0.50 pf/copy, ≥0.40 AI,
-            # ≥0.40 whale, ≥0.72 crowd already baked into clob_conf)
-            # Require at least one strong signal — no weak single-signal trades
+            # Must have at least one REAL signal — no weak single-signal trades
             has_real = (pf_conf >= 0.55 or cp_conf >= 0.55 or
                         wh_conf >= 0.50 or gem_conf >= 0.45 or clob_conf >= 0.72)
             if not has_real:
+                continue
+
+            # ── NEWS GATE: require actual news OR very strong crowd ─────
+            # Without news context, AI just guesses on random sports results
+            # = effectively a coin flip (proven: 11% accuracy on no-news trades)
+            has_news = len(news_map.get(market.condition_id, [])) >= 1
+            has_strong_crowd = clob_conf >= 0.78  # >78% or <22% crowd
+            has_copy = cp_conf >= 0.55            # real money following this market
+            if not (has_news or has_strong_crowd or has_copy):
+                log.debug(f"[gate:no-news] skip — no news/crowd/copy: {market.question[:45]}")
+                continue
                 continue
 
             # Contra-crowd: must have PF or AI backing at high confidence
