@@ -48,7 +48,7 @@ def get_pending_market_ids() -> set:
         return set()
 from markets import fetch_active_markets, filter_by_categories
 from edge import detect_edge_v2, Signal
-from resolver import run_resolution_check, get_accuracy_stats, get_resolved_trade_list, get_pipeline_comparison
+from resolver import run_resolution_check, get_accuracy_stats, get_resolved_trade_list, get_pipeline_comparison, get_strategy_accuracies
 
 console = Console()
 log = logging.getLogger(__name__)
@@ -96,6 +96,22 @@ def _print_accuracy_oneliner():
                 )
             if parts:
                 console.print(f"  [dim]Signals → {' | '.join(parts)}[/dim]")
+    except Exception:
+        pass
+
+    # 2-day strategy trial leaderboard
+    try:
+        strat_accs = get_strategy_accuracies()
+        if strat_accs:
+            console.print("  [bold cyan]── Strategy Trial Leaderboard ──[/bold cyan]")
+            for s in strat_accs:
+                bar   = "█" * int(s["accuracy_pct"] / 10)
+                color = "bright_green" if s["accuracy_pct"] >= 70 else "yellow" if s["accuracy_pct"] >= 50 else "red"
+                console.print(
+                    f"  [{color}]{s['strategy']:18s}[/{color}] "
+                    f"[bold]{s['accuracy_pct']:5.1f}%[/bold] {bar} "
+                    f"({s['wins']}W/{s['losses']}L, {s['trades']} trades, pnl:${s['pnl']:+.2f})"
+                )
     except Exception:
         pass
 
@@ -345,7 +361,7 @@ def filter_quality_markets(markets, now: datetime) -> tuple[list, dict]:
 
 
 def _log_demo_trade(signal: Signal, token_id: str | None = None,
-                    signals: dict | None = None) -> int:
+                    signals: dict | None = None, strategy: str | None = None) -> int:
     """Log a demo trade to the DB with status='demo'. Always virtual — no real money."""
     trade_id = logger.log_trade(
         market_id=signal.market.condition_id,
@@ -367,6 +383,7 @@ def _log_demo_trade(signal: Signal, token_id: str | None = None,
         total_latency_ms=signal.total_latency_ms,
         token_id=token_id,
         signals=signals,
+        strategy=strategy,
     )
     return trade_id
 
@@ -616,188 +633,176 @@ def scan_and_trade() -> dict:
         elif price <= 0.28:
             clob_dir, clob_conf = "bearish", 1.0 - price
 
-        # ── Fast-path: price feed alone is enough at high confidence ───
-        # No AI needed — pure math wins 85%+ of time (raised to 0.72 for fewer, better trades)
-        if pf_conf >= 0.72:
-            final_dir  = pf_dir
-            final_side = "YES" if pf_dir == "bullish" else "NO"
-            final_score = pf_conf
-            signals_record = {"pf": f"{pf_dir}:{pf_conf:.3f}", "ai": "neutral",
-                               "copy": f"{cp_dir}:{cp_conf:.3f}" if cp_dir != "neutral" else "neutral",
-                               "whale": f"{wh_dir}:{wh_conf:.3f}" if wh_dir != "neutral" else "neutral",
-                               "crowd": f"{clob_dir}:{clob_conf:.3f}" if clob_dir != "neutral" else "neutral"}
-            # Skip if copy-trade strongly disagrees
-            if cp_dir != "neutral" and cp_dir != pf_dir and cp_conf >= 0.65:
-                log.debug(f"[fast-path] PF/Copy conflict skip: {market.question[:45]}")
-                continue
-            gem_dir, gem_conf = "neutral", 0.0  # not needed
-        else:
-            # ── S5: AI Research (rate-limit budget) ───────────────────
-            gem_dir, gem_conf = "neutral", 0.0
-            # Only call AI if we have budget AND it's worth researching
-            should_research = (
-                ai_calls_left > 0
-                and hours_left <= 36          # resolves soon enough to matter
-                and (
-                    is_crypto                   # crypto: AI confirms price feed
-                    or len(news_map.get(market.condition_id, [])) >= 1  # news match
-                    or cp_conf >= 0.40          # copy-trade partial signal → confirm
-                    or clob_conf >= 0.72        # crowd very confident → confirm
-                    or market.volume >= 5000    # high-volume market → worth researching
-                )
+        # ── S5: AI Research (always try if budget allows) ─────────────
+        gem_dir, gem_conf = "neutral", 0.0
+        should_research = (
+            ai_calls_left > 0
+            and hours_left <= 36
+            and (
+                len(news_map.get(market.condition_id, [])) >= 1
+                or cp_conf >= 0.40
+                or clob_conf >= 0.65
+                or market.volume >= 3000
             )
-            if should_research:
-                try:
-                    matched_headlines = news_map.get(market.condition_id, [])
-                    res = research_market(market, news_context=matched_headlines)
-                    if res.direction in ("bullish", "bearish") and res.materiality >= 0.30:
-                        gem_dir  = res.direction
-                        gem_conf = min(0.88, res.materiality)
-                    ai_calls_left -= 1
-                except Exception as e:
-                    log.debug(f"[research] {e}")
+        )
+        if should_research:
+            try:
+                matched_headlines = news_map.get(market.condition_id, [])
+                res = research_market(market, news_context=matched_headlines)
+                if res.direction in ("bullish", "bearish") and res.materiality >= 0.28:
+                    gem_dir  = res.direction
+                    gem_conf = min(0.88, res.materiality)
+                ai_calls_left -= 1
+            except Exception as e:
+                log.debug(f"[research] {e}")
 
-            # ── Combine all signals (MAX + agreement boost) ────────────
-            all_sigs = [("pf", pf_dir, pf_conf), ("copy", cp_dir, cp_conf),
-                        ("whale", wh_dir, wh_conf), ("ai", gem_dir, gem_conf),
-                        ("crowd", clob_dir, clob_conf)]
+        # ── Build signal summary ───────────────────────────────────────
+        all_sigs = [("pf", pf_dir, pf_conf), ("copy", cp_dir, cp_conf),
+                    ("whale", wh_dir, wh_conf), ("ai", gem_dir, gem_conf),
+                    ("crowd", clob_dir, clob_conf)]
+        signals_record = {lbl: (f"{d}:{c:.3f}" if d != "neutral" and c > 0 else "neutral")
+                          for lbl, d, c in all_sigs}
 
-            bull_sigs = [(l,c) for l,d,c in all_sigs if d == "bullish" and c > 0]
-            bear_sigs = [(l,c) for l,d,c in all_sigs if d == "bearish"  and c > 0]
+        has_news   = len(news_map.get(market.condition_id, [])) >= 1
+        has_news2  = len(news_map.get(market.condition_id, [])) >= 2
 
-            max_bull = max((c for _,c in bull_sigs), default=0.0)
-            max_bear = max((c for _,c in bear_sigs), default=0.0)
-            # Boost from additional agreeing signals (all signals count, not [1:])
-            boost_bull = min(0.18, sum(dyn_weights.get(l,0.05)*0.5 for l,_ in bull_sigs))
-            boost_bear = min(0.18, sum(dyn_weights.get(l,0.05)*0.5 for l,_ in bear_sigs))
-            score_bull = min(0.95, max_bull + boost_bull)
-            score_bear = min(0.95, max_bear + boost_bear)
+        # Agreeing signals per direction
+        bull_sigs = [(l,c) for l,d,c in all_sigs if d == "bullish" and c > 0]
+        bear_sigs = [(l,c) for l,d,c in all_sigs if d == "bearish"  and c > 0]
+        max_bull  = max((c for _,c in bull_sigs), default=0.0)
+        max_bear  = max((c for _,c in bear_sigs), default=0.0)
+        boost_b   = min(0.18, sum(dyn_weights.get(l,0.05)*0.5 for l,_ in bull_sigs))
+        boost_r   = min(0.18, sum(dyn_weights.get(l,0.05)*0.5 for l,_ in bear_sigs))
+        score_bull = min(0.95, max_bull + boost_b)
+        score_bear = min(0.95, max_bear + boost_r)
 
-            signals_record = {}
-            for lbl, d, c in all_sigs:
-                signals_record[lbl] = f"{d}:{c:.3f}" if d != "neutral" and c > 0 else "neutral"
+        # Best direction from MAX-score approach
+        if score_bull >= score_bear and score_bull > 0:
+            best_dir, best_side, best_score = "bullish", "YES", score_bull
+        elif score_bear > score_bull:
+            best_dir, best_side, best_score = "bearish", "NO", score_bear
+        else:
+            continue  # no signal at all
 
-            # ── GATES ──────────────────────────────────────────────────
+        n_agree = max(len(bull_sigs), len(bear_sigs))
 
-            # Hard conflict: PF vs AI
-            if (pf_dir != "neutral" and gem_dir != "neutral"
-                    and pf_dir != gem_dir and pf_conf >= 0.60 and gem_conf >= 0.45):
-                log.debug(f"[gate] PF/AI conflict: {market.question[:45]}")
-                continue
+        # ── 2-DAY STRATEGY TRIAL ───────────────────────────────────────
+        # Evaluate ALL 8 strategies independently per market.
+        # Log one virtual trade per strategy that fires.
+        # After 2 days compare which combo has best accuracy.
+        #
+        # Strategies:
+        #   S1  ai_only        — AI ≥0.50, has news
+        #   S2  crowd_only     — crowd ≥0.78 (extreme price)
+        #   S3  copy_only      — copy-trade ≥0.55
+        #   S4  whale_only     — whale ≥0.50
+        #   S5  ai_plus_news   — AI ≥0.40 + 2+ headlines
+        #   S6  ai_plus_crowd  — AI ≥0.38 + crowd ≥0.65, same direction
+        #   S7  ai_plus_copy   — AI ≥0.38 + copy ≥0.40, same direction
+        #   S8  multi3         — 3+ signals agree
+        #   S9  max_score      — current MAX approach, score ≥0.55
+        #   S10 copy_whale     — copy ≥0.45 + whale ≥0.40, same direction
 
-            # Must have at least one REAL signal — no weak single-signal trades
-            has_real = (pf_conf >= 0.55 or cp_conf >= 0.55 or
-                        wh_conf >= 0.50 or gem_conf >= 0.45 or clob_conf >= 0.72)
-            if not has_real:
-                continue
+        def _dir(d): return "YES" if d == "bullish" else "NO"
 
-            # ── NEWS GATE: require actual news OR very strong crowd ─────
-            # Without news context, AI just guesses on random sports results
-            # = effectively a coin flip (proven: 11% accuracy on no-news trades)
-            has_news = len(news_map.get(market.condition_id, [])) >= 1
-            has_strong_crowd = clob_conf >= 0.78  # >78% or <22% crowd
-            has_copy = cp_conf >= 0.55            # real money following this market
-            if not (has_news or has_strong_crowd or has_copy):
-                log.debug(f"[gate:no-news] skip — no news/crowd/copy: {market.question[:45]}")
-                continue
-                continue
+        strategies_to_try: list[tuple[str, str, float]] = []  # (name, side, score)
 
-            # Contra-crowd: must have PF or AI backing at high confidence
-            crowd_dir = "bullish" if price >= 0.58 else ("bearish" if price <= 0.42 else "neutral")
-            if crowd_dir == "bullish" and score_bear > score_bull:
-                if not ((pf_dir == "bearish" and pf_conf >= 0.70)
-                        or (gem_dir == "bearish" and gem_conf >= 0.65)):
-                    log.debug(f"[gate] Contra-crowd (bear vs YES crowd): {market.question[:45]}")
-                    continue
-            if crowd_dir == "bearish" and score_bull > score_bear:
-                if not ((pf_dir == "bullish" and pf_conf >= 0.70)
-                        or (gem_dir == "bullish" and gem_conf >= 0.65)):
-                    log.debug(f"[gate] Contra-crowd (bull vs NO crowd): {market.question[:45]}")
-                    continue
+        # S1: AI only
+        if gem_dir != "neutral" and gem_conf >= 0.50 and has_news:
+            strategies_to_try.append(("S1_ai_only", _dir(gem_dir), gem_conf))
 
-            # Minimum score thresholds by situation
-            # Single AI signal at low conf → higher bar
-            # Multiple agreeing signals → lower bar
-            n_signals = len(bull_sigs) + len(bear_sigs)
-            if score_bull >= score_bear:
-                top_score = score_bull
-                top_dir, top_side = "bullish", "YES"
-            else:
-                top_score = score_bear
-                top_dir, top_side = "bearish", "NO"
+        # S2: Crowd extreme
+        if clob_dir != "neutral" and clob_conf >= 0.78:
+            strategies_to_try.append(("S2_crowd_only", _dir(clob_dir), clob_conf))
 
-            # Tighter thresholds — prefer fewer but higher-accuracy trades
-            min_score = 0.62 if n_signals == 1 else 0.52 if n_signals == 2 else 0.44
-            if top_score < min_score:
-                log.debug(f"[score] {top_score:.2f}<{min_score} ({n_signals} sigs): {market.question[:45]}")
-                continue
+        # S3: Copy-trade
+        if cp_dir != "neutral" and cp_conf >= 0.55:
+            strategies_to_try.append(("S3_copy_only", _dir(cp_dir), cp_conf))
 
-            final_dir, final_side, final_score = top_dir, top_side, top_score
+        # S4: Whale only
+        if wh_dir != "neutral" and wh_conf >= 0.50:
+            strategies_to_try.append(("S4_whale_only", _dir(wh_dir), wh_conf))
 
-        # ── EV gate ───────────────────────────────────────────────────
-        bet_price     = price if final_side == "YES" else (1.0 - price)
-        payout_ratio  = (1.0 - bet_price) / bet_price
-        ev_per_dollar = final_score * payout_ratio - (1.0 - final_score)
-        min_ev = 0.015 if is_sweet else 0.025
-        if ev_per_dollar < min_ev:
-            log.debug(f"[EV] {ev_per_dollar:.3f}<{min_ev}: {market.question[:45]}")
+        # S5: AI + strong news (2+ headlines)
+        if gem_dir != "neutral" and gem_conf >= 0.40 and has_news2:
+            strategies_to_try.append(("S5_ai_news2", _dir(gem_dir), gem_conf + 0.05))
+
+        # S6: AI + crowd, same direction
+        if (gem_dir != "neutral" and gem_conf >= 0.38
+                and clob_dir == gem_dir and clob_conf >= 0.65):
+            strategies_to_try.append(("S6_ai_crowd", _dir(gem_dir), max(gem_conf, clob_conf)))
+
+        # S7: AI + copy, same direction
+        if (gem_dir != "neutral" and gem_conf >= 0.38
+                and cp_dir == gem_dir and cp_conf >= 0.40):
+            strategies_to_try.append(("S7_ai_copy", _dir(gem_dir), max(gem_conf, cp_conf)))
+
+        # S8: 3+ signals agree
+        if n_agree >= 3 and best_score > 0:
+            strategies_to_try.append(("S8_multi3", best_side, best_score))
+
+        # S9: MAX-score baseline (current approach)
+        if best_score >= 0.55 and (has_news or clob_conf >= 0.72 or cp_conf >= 0.50):
+            strategies_to_try.append(("S9_max_baseline", best_side, best_score))
+
+        # S10: Copy + Whale combo
+        if (cp_dir != "neutral" and cp_conf >= 0.45
+                and wh_dir == cp_dir and wh_conf >= 0.40):
+            strategies_to_try.append(("S10_copy_whale", _dir(cp_dir),
+                                      max(cp_conf, wh_conf)))
+
+        if not strategies_to_try:
             continue
 
-        # ── Bet sizing ────────────────────────────────────────────────
+        # ── Log one trade per strategy ─────────────────────────────────
         allowed, reason = can_trade_today()
         if not allowed:
             console.print(f"  [red]⛔ {reason}[/red]")
             break
-        bk   = get_current_bankroll()
-        edge = final_score - bet_price   # real edge — no artificial floor (EV gate already passed)
-        bet  = kelly_bet_size(bk, edge, bet_price, materiality=final_score)
-        # Tier sizing: confidence-scaled, hard-capped for bankroll safety
-        if pf_conf >= 0.72:
-            bet = min(bet * 1.3, bk * 0.07)   # math trades — highest confidence, 7% cap
-        elif final_score >= 0.70:
-            bet = min(bet * 1.1, bk * 0.06)   # high-confidence, 6% cap
-        else:
-            bet = min(bet, bk * 0.04)          # standard, 4% cap
-        bet = round(max(0.50, bet), 2)
 
-        # ── Print + log ───────────────────────────────────────────────
-        sources = []
-        if pf_conf   >= 0.50: sources.append(f"💰PF:{pf_conf:.0%}")
-        if cp_conf   >= 0.40: sources.append(f"👛Copy:{cp_conf:.0%}({cp_wallets}w)")
-        if wh_conf   >= 0.40: sources.append(f"🐋Whale:{wh_conf:.0%}")
-        if clob_conf >= 0.60: sources.append(f"📊Crowd:{clob_conf:.0%}")
-        if gem_conf  >= 0.30: sources.append(f"🔬AI:{gem_conf:.0%}")
+        bk = get_current_bankroll()
+        strats_logged = 0
 
-        win_amt  = round(bet * payout_ratio, 2)
-        tier_tag = "💰MATH" if pf_conf >= 0.72 else ("🎯HIGH" if final_score >= 0.70 else "⚡STD")
-        console.print(
-            f"  {tier_tag} [bold]{final_side}[/bold] "
-            f"price:{price:.2f} pay:{payout_ratio:.1f}x "
-            f"score:{final_score:.2f} ev:+${ev_per_dollar*bet:.2f} "
-            f"closes:{hours_left:.1f}h\n"
-            f"    {' + '.join(sources) or 'multi-signal'}\n"
-            f"    \"{market.question[:72]}\""
-        )
+        for strat_name, strat_side, strat_score in strategies_to_try:
+            # Skip if already logged this (market_id, strategy) combo
+            combo_key = f"{market.condition_id}::{strat_name}"
+            if combo_key in already_logged:
+                continue
 
-        unified_signal = _Signal(
-            market=market,
-            claude_score=final_score,
-            market_price=price,
-            edge=edge,
-            side=final_side,
-            bet_amount=bet,
-            reasoning=f"score={final_score:.2f} ev={ev_per_dollar:.3f} | {' + '.join(sources)}",
-            headlines="",
-            news_source="unified_engine",
-            classification=final_dir,
-            materiality=final_score,
-            composite_score=final_score,
-        )
-        trade_id = _log_demo_trade(unified_signal, token_id=tok, signals=signals_record)
-        already_logged.add(market.condition_id)
-        signals_found.append(unified_signal)
-        demos_logged += 1
-        console.print(f"    → [green]✅ Trade #{trade_id} logged (${bet:.2f} → win:+${win_amt} / lose:-${bet})[/green]")
+            bet_price    = price if strat_side == "YES" else (1.0 - price)
+            payout_ratio = (1.0 - bet_price) / bet_price
+            ev           = strat_score * payout_ratio - (1.0 - strat_score)
+            if ev < 0.01:
+                continue  # skip negative-EV strategies
+
+            edge  = strat_score - bet_price
+            bet   = kelly_bet_size(bk, edge, bet_price, materiality=strat_score)
+            bet   = min(bet, bk * 0.05)   # hard 5% cap during trial (conservative)
+            bet   = round(max(0.50, bet), 2)
+            win_a = round(bet * payout_ratio, 2)
+
+            sig = _Signal(
+                market=market, claude_score=strat_score, market_price=price,
+                edge=edge, side=strat_side, bet_amount=bet,
+                reasoning=f"strategy={strat_name} score={strat_score:.2f} ev={ev:.3f}",
+                headlines="", news_source="strategy_trial",
+                classification=("bullish" if strat_side=="YES" else "bearish"),
+                materiality=strat_score, composite_score=strat_score,
+            )
+            trade_id = _log_demo_trade(sig, token_id=tok,
+                                       signals=signals_record, strategy=strat_name)
+            already_logged.add(combo_key)
+            signals_found.append(sig)
+            demos_logged += 1
+            strats_logged += 1
+
+        if strats_logged > 0:
+            strat_names = [s[0] for s in strategies_to_try]
+            console.print(
+                f"  📊 [bold]{strats_logged} strategies[/bold] fired on "
+                f"[yellow]\"{market.question[:60]}\"[/yellow]\n"
+                f"     [{', '.join(strat_names)}]"
+            )
 
     ai_used = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "35")) - ai_calls_left
     if not signals_found:

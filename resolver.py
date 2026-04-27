@@ -721,6 +721,45 @@ def get_dynamic_weights() -> dict[str, float]:
     return {sig: round(w / total2, 3) for sig, w in weights.items()}
 
 
+def get_strategy_accuracies() -> list[dict]:
+    """
+    Return accuracy per strategy for the 2-day trial.
+    Sorted by accuracy desc. Only includes strategies with ≥3 resolved trades.
+    """
+    conn = _conn()
+    rows = conn.execute("""
+        SELECT
+            COALESCE(t.strategy, 'baseline') as strategy,
+            COUNT(*) as total,
+            SUM(CASE WHEN o.result='win'  THEN 1 ELSE 0 END) as wins,
+            SUM(CASE WHEN o.result='loss' THEN 1 ELSE 0 END) as losses,
+            ROUND(SUM(o.pnl), 2) as pnl
+        FROM trades t
+        JOIN outcomes o ON t.id = o.trade_id
+        WHERE t.status IN ('demo','dry_run')
+          AND o.result IN ('win','loss')
+        GROUP BY COALESCE(t.strategy, 'baseline')
+        ORDER BY wins*1.0/MAX(1, wins+losses) DESC, total DESC
+    """).fetchall()
+    conn.close()
+
+    result = []
+    for r in rows:
+        w = r["wins"] or 0
+        l = r["losses"] or 0
+        decisive = w + l
+        acc = (w / decisive * 100) if decisive > 0 else 0.0
+        result.append({
+            "strategy":     r["strategy"],
+            "trades":       decisive,
+            "wins":         w,
+            "losses":       l,
+            "accuracy_pct": round(acc, 1),
+            "pnl":          float(r["pnl"] or 0),
+        })
+    return result
+
+
 if __name__ == "__main__":
     import sys
     logging.basicConfig(level=logging.INFO)

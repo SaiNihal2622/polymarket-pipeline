@@ -104,6 +104,7 @@ def _migrate_v2_columns(conn):
         ("total_latency_ms", "INTEGER"),
         ("token_id", "TEXT"),   # YES-token id for CLOB-based resolution
         ("signals", "TEXT"),    # JSON: {pf:"bullish:0.82", ai:"bearish:0.45", ...}
+        ("strategy", "TEXT"),   # which signal combo fired this trade (2-day trial)
     ]
     for col_name, col_type in new_cols:
         if col_name not in columns:
@@ -131,6 +132,7 @@ def log_trade(
     total_latency_ms: int | None = None,
     token_id: str | None = None,
     signals: dict | None = None,
+    strategy: str | None = None,
 ) -> int:
     """
     signals: dict mapping signal name → "direction:confidence" string
@@ -147,13 +149,13 @@ def log_trade(
             side, amount_usd, order_id, status, reasoning, headlines,
             news_source, classification, materiality,
             news_latency_ms, classification_latency_ms, total_latency_ms,
-            token_id, signals)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            token_id, signals, strategy)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (market_id, market_question, claude_score, market_price, edge,
          side, amount_usd, order_id, status, reasoning, headlines,
          news_source, classification, materiality,
          news_latency_ms, classification_latency_ms, total_latency_ms,
-         token_id, signals_json),
+         token_id, signals_json, strategy),
     )
     trade_id = cur.lastrowid
     conn.commit()
