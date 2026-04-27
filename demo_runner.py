@@ -633,28 +633,66 @@ def scan_and_trade() -> dict:
         elif price <= 0.28:
             clob_dir, clob_conf = "bearish", 1.0 - price
 
-        # ── S5: AI Research (always try if budget allows) ─────────────
-        gem_dir, gem_conf = "neutral", 0.0
+        # ── S5: AI Research pass 1 (analyst) ──────────────────────────
+        gem_dir, gem_conf, gem_mat, gem_res_obj = "neutral", 0.0, 0.0, None
+        matched_headlines = news_map.get(market.condition_id, [])
+        has_news  = len(matched_headlines) >= 1
+        has_news2 = len(matched_headlines) >= 2
+
         should_research = (
-            ai_calls_left > 0
-            and hours_left <= 36
-            and (
-                len(news_map.get(market.condition_id, [])) >= 1
-                or cp_conf >= 0.40
-                or clob_conf >= 0.65
-                or market.volume >= 3000
-            )
+            ai_calls_left > 0 and hours_left <= 36
+            and (has_news or cp_conf >= 0.40 or clob_conf >= 0.65 or market.volume >= 3000)
         )
         if should_research:
             try:
-                matched_headlines = news_map.get(market.condition_id, [])
-                res = research_market(market, news_context=matched_headlines)
-                if res.direction in ("bullish", "bearish") and res.materiality >= 0.28:
-                    gem_dir  = res.direction
-                    gem_conf = min(0.88, res.materiality)
+                gem_res_obj = research_market(market, news_context=matched_headlines)
+                if gem_res_obj.direction in ("bullish","bearish") and gem_res_obj.materiality >= 0.25:
+                    gem_dir  = gem_res_obj.direction
+                    gem_mat  = gem_res_obj.materiality
+                    gem_conf = min(0.88, gem_mat)
                 ai_calls_left -= 1
             except Exception as e:
                 log.debug(f"[research] {e}")
+
+        # ── S5b: Consensus / Skeptic pass 2 ───────────────────────────
+        # Run devil's-advocate prompt against the analyst result.
+        # consensus_agreed = True only if both passes agree on direction.
+        consensus_agreed = False
+        consensus_score  = 0.0
+        if gem_dir != "neutral" and ai_calls_left > 0 and has_news:
+            try:
+                from classifier import classify as _classify, SKEPTIC_PROMPT
+                top_headline = matched_headlines[0] if matched_headlines else market.question
+                skep = _classify(top_headline, market, source="skeptic",
+                                 use_search=False)
+                if skep.direction == gem_dir:
+                    consensus_agreed = True
+                    consensus_score  = (gem_conf + min(0.88, skep.materiality)) / 2
+                ai_calls_left -= 1
+            except Exception as e:
+                log.debug(f"[consensus] {e}")
+
+        # ── RRF composite score (price_room + recency + niche + materiality) ──
+        from edge import compute_composite_score as _rrf
+        from news_stream import NewsEvent as _NE
+        rrf_score = 0.0
+        if gem_res_obj is not None:
+            try:
+                price_room = (1.0 - price) if gem_dir == "bullish" else price
+                # News age: use first matched headline age proxy (assume ~2h avg)
+                news_age_h = 2.0 if not has_news else (0.5 if has_news2 else 1.5)
+                mock_event = _NE(
+                    headline=matched_headlines[0] if matched_headlines else market.question,
+                    source="rss", url="", received_at=datetime.now(timezone.utc),
+                    published_at=datetime.now(timezone.utc) - timedelta(hours=news_age_h),
+                    latency_ms=int(news_age_h * 3600 * 1000),
+                )
+                rrf_score = _rrf(
+                    classification=gem_res_obj, market=market,
+                    news_event=mock_event, price_room=price_room,
+                )
+            except Exception as e:
+                log.debug(f"[rrf] {e}")
 
         # ── Build signal summary ───────────────────────────────────────
         all_sigs = [("pf", pf_dir, pf_conf), ("copy", cp_dir, cp_conf),
@@ -662,21 +700,19 @@ def scan_and_trade() -> dict:
                     ("crowd", clob_dir, clob_conf)]
         signals_record = {lbl: (f"{d}:{c:.3f}" if d != "neutral" and c > 0 else "neutral")
                           for lbl, d, c in all_sigs}
-
-        has_news   = len(news_map.get(market.condition_id, [])) >= 1
-        has_news2  = len(news_map.get(market.condition_id, [])) >= 2
+        signals_record["consensus"] = f"{gem_dir}:{consensus_score:.3f}" if consensus_agreed else "neutral"
+        signals_record["rrf"]       = f"{gem_dir}:{rrf_score:.3f}" if rrf_score >= 0.35 else "neutral"
 
         # Agreeing signals per direction
-        bull_sigs = [(l,c) for l,d,c in all_sigs if d == "bullish" and c > 0]
-        bear_sigs = [(l,c) for l,d,c in all_sigs if d == "bearish"  and c > 0]
-        max_bull  = max((c for _,c in bull_sigs), default=0.0)
-        max_bear  = max((c for _,c in bear_sigs), default=0.0)
-        boost_b   = min(0.18, sum(dyn_weights.get(l,0.05)*0.5 for l,_ in bull_sigs))
-        boost_r   = min(0.18, sum(dyn_weights.get(l,0.05)*0.5 for l,_ in bear_sigs))
+        bull_sigs  = [(l,c) for l,d,c in all_sigs if d == "bullish" and c > 0]
+        bear_sigs  = [(l,c) for l,d,c in all_sigs if d == "bearish"  and c > 0]
+        max_bull   = max((c for _,c in bull_sigs), default=0.0)
+        max_bear   = max((c for _,c in bear_sigs), default=0.0)
+        boost_b    = min(0.18, sum(dyn_weights.get(l,0.05)*0.5 for l,_ in bull_sigs))
+        boost_r    = min(0.18, sum(dyn_weights.get(l,0.05)*0.5 for l,_ in bear_sigs))
         score_bull = min(0.95, max_bull + boost_b)
         score_bear = min(0.95, max_bear + boost_r)
 
-        # Best direction from MAX-score approach
         if score_bull >= score_bear and score_bull > 0:
             best_dir, best_side, best_score = "bullish", "YES", score_bull
         elif score_bear > score_bull:
@@ -686,70 +722,76 @@ def scan_and_trade() -> dict:
 
         n_agree = max(len(bull_sigs), len(bear_sigs))
 
-        # ── 2-DAY STRATEGY TRIAL ───────────────────────────────────────
-        # Evaluate ALL 8 strategies independently per market.
-        # Log one virtual trade per strategy that fires.
-        # After 2 days compare which combo has best accuracy.
-        #
-        # Strategies:
-        #   S1  ai_only        — AI ≥0.50, has news
-        #   S2  crowd_only     — crowd ≥0.78 (extreme price)
-        #   S3  copy_only      — copy-trade ≥0.55
-        #   S4  whale_only     — whale ≥0.50
-        #   S5  ai_plus_news   — AI ≥0.40 + 2+ headlines
-        #   S6  ai_plus_crowd  — AI ≥0.38 + crowd ≥0.65, same direction
-        #   S7  ai_plus_copy   — AI ≥0.38 + copy ≥0.40, same direction
-        #   S8  multi3         — 3+ signals agree
-        #   S9  max_score      — current MAX approach, score ≥0.55
-        #   S10 copy_whale     — copy ≥0.45 + whale ≥0.40, same direction
+        # ── 2-DAY STRATEGY TRIAL — ALL 14 COMBOS ──────────────────────
+        # Every market tested against every strategy simultaneously.
+        # Strategies include signal combos + consensus + RRF composite
+        # + materiality + recency + price room.
 
         def _dir(d): return "YES" if d == "bullish" else "NO"
+        strategies_to_try: list[tuple[str, str, float]] = []
 
-        strategies_to_try: list[tuple[str, str, float]] = []  # (name, side, score)
-
-        # S1: AI only
-        if gem_dir != "neutral" and gem_conf >= 0.50 and has_news:
+        # ── Single-signal strategies ───────────────────────────────────
+        # S1: Pure AI (analyst pass only, needs news)
+        if gem_dir != "neutral" and gem_conf >= 0.45 and has_news:
             strategies_to_try.append(("S1_ai_only", _dir(gem_dir), gem_conf))
 
-        # S2: Crowd extreme
+        # S2: Crowd extreme (price already reflects strong consensus)
         if clob_dir != "neutral" and clob_conf >= 0.78:
             strategies_to_try.append(("S2_crowd_only", _dir(clob_dir), clob_conf))
 
-        # S3: Copy-trade
+        # S3: Copy-trade only (wallets putting real money)
         if cp_dir != "neutral" and cp_conf >= 0.55:
             strategies_to_try.append(("S3_copy_only", _dir(cp_dir), cp_conf))
 
-        # S4: Whale only
+        # S4: Whale only (large holder bias)
         if wh_dir != "neutral" and wh_conf >= 0.50:
             strategies_to_try.append(("S4_whale_only", _dir(wh_dir), wh_conf))
 
-        # S5: AI + strong news (2+ headlines)
-        if gem_dir != "neutral" and gem_conf >= 0.40 and has_news2:
-            strategies_to_try.append(("S5_ai_news2", _dir(gem_dir), gem_conf + 0.05))
+        # ── Consensus / skeptic strategies ────────────────────────────
+        # S5: Consensus — analyst + skeptic BOTH agree (devil's advocate passed)
+        if consensus_agreed and consensus_score >= 0.40:
+            strategies_to_try.append(("S5_consensus", _dir(gem_dir), consensus_score))
 
-        # S6: AI + crowd, same direction
-        if (gem_dir != "neutral" and gem_conf >= 0.38
+        # S6: High materiality — AI says news is very significant (≥0.55)
+        if gem_dir != "neutral" and gem_mat >= 0.55 and has_news:
+            strategies_to_try.append(("S6_hi_materiality", _dir(gem_dir), gem_mat))
+
+        # ── RRF composite strategies ───────────────────────────────────
+        # S7: RRF composite score ≥0.40 (price_room + recency + niche + materiality)
+        if gem_dir != "neutral" and rrf_score >= 0.40:
+            strategies_to_try.append(("S7_rrf_composite", _dir(gem_dir), rrf_score))
+
+        # S8: RRF high-conviction (≥0.50) — all 5 RRF dimensions strong
+        if gem_dir != "neutral" and rrf_score >= 0.50:
+            strategies_to_try.append(("S8_rrf_highconv", _dir(gem_dir), rrf_score + 0.05))
+
+        # ── Multi-signal combo strategies ─────────────────────────────
+        # S9: AI + 2 news headlines (strong news context)
+        if gem_dir != "neutral" and gem_conf >= 0.38 and has_news2:
+            strategies_to_try.append(("S9_ai_news2", _dir(gem_dir), gem_conf + 0.06))
+
+        # S10: AI + crowd agree same direction
+        if (gem_dir != "neutral" and gem_conf >= 0.35
                 and clob_dir == gem_dir and clob_conf >= 0.65):
-            strategies_to_try.append(("S6_ai_crowd", _dir(gem_dir), max(gem_conf, clob_conf)))
+            strategies_to_try.append(("S10_ai_crowd", _dir(gem_dir), max(gem_conf, clob_conf)))
 
-        # S7: AI + copy, same direction
-        if (gem_dir != "neutral" and gem_conf >= 0.38
+        # S11: AI + copy agree same direction
+        if (gem_dir != "neutral" and gem_conf >= 0.35
                 and cp_dir == gem_dir and cp_conf >= 0.40):
-            strategies_to_try.append(("S7_ai_copy", _dir(gem_dir), max(gem_conf, cp_conf)))
+            strategies_to_try.append(("S11_ai_copy", _dir(gem_dir), max(gem_conf, cp_conf)))
 
-        # S8: 3+ signals agree
-        if n_agree >= 3 and best_score > 0:
-            strategies_to_try.append(("S8_multi3", best_side, best_score))
-
-        # S9: MAX-score baseline (current approach)
-        if best_score >= 0.55 and (has_news or clob_conf >= 0.72 or cp_conf >= 0.50):
-            strategies_to_try.append(("S9_max_baseline", best_side, best_score))
-
-        # S10: Copy + Whale combo
+        # S12: Copy + Whale agree same direction
         if (cp_dir != "neutral" and cp_conf >= 0.45
                 and wh_dir == cp_dir and wh_conf >= 0.40):
-            strategies_to_try.append(("S10_copy_whale", _dir(cp_dir),
-                                      max(cp_conf, wh_conf)))
+            strategies_to_try.append(("S12_copy_whale", _dir(cp_dir), max(cp_conf, wh_conf)))
+
+        # S13: 3+ signals agree (any combo)
+        if n_agree >= 3 and best_score > 0:
+            strategies_to_try.append(("S13_multi3", best_side, best_score))
+
+        # S14: MAX-score baseline (control group — current approach)
+        if best_score >= 0.52 and (has_news or clob_conf >= 0.72 or cp_conf >= 0.50):
+            strategies_to_try.append(("S14_max_baseline", best_side, best_score))
 
         if not strategies_to_try:
             continue
