@@ -119,12 +119,27 @@ def detect_edge_v2(
         price_room=price_room,
     )
 
+    # --- Sureshot 1:1 Logic ---
+    # If price is near 0.50 and materiality is high, it's a "sureshot"
+    # Cricket 1:1 trades often happen when a major injury or toss occurs
+    is_sureshot = (0.35 <= market_price <= 0.65) and classification.materiality >= 0.75
+    if is_sureshot:
+        composite = max(composite, 0.80)  # Force high composite for sureshots
+        raw_edge = max(raw_edge, config.EDGE_THRESHOLD * 1.5) # Ensure it passes edge check
+
     # Only trade on high-composite signals
-    if composite < 0.5:
+    # Sureshots get a lower threshold to ensure execution
+    min_composite = 0.35 if is_sureshot else 0.50
+    if composite < min_composite:
         return None
 
     # Use composite to scale position size — higher composite = more confidence
     bet_amount = size_position(raw_edge, composite_boost=composite)
+    
+    # Sureshot boost: increase bet size for these high-conviction plays
+    if is_sureshot:
+        bet_amount = min(bet_amount * 2.0, config.MAX_BET_USD)
+
     total_latency = news_event.latency_ms + classification.latency_ms
 
     return Signal(
@@ -134,7 +149,7 @@ def detect_edge_v2(
         edge=raw_edge,
         side=side,
         bet_amount=bet_amount,
-        reasoning=classification.reasoning,
+        reasoning=classification.reasoning + (" [SURESHOT]" if is_sureshot else ""),
         headlines=news_event.headline,
         news_source=news_event.source,
         classification=classification.direction,

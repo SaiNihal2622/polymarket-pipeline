@@ -110,6 +110,11 @@ RSS_FEEDS = [
 
     # ── Science / Space ──────────────────────────────────────────────────────
     "https://news.google.com/rss/search?q=SpaceX+OR+NASA+OR+Starship+2026&hl=en-US&gl=US&ceid=US:en",
+    # ── Specialized Sports (Cricket/IPL) ──────────────────────────────────────
+    "https://www.espncricinfo.com/rss/content/story/feeds/0.xml",
+    "https://www.cricbuzz.com/rss/cbz_news.xml",
+    "https://news.google.com/rss/search?q=IPL+2026+OR+Cricket+Match+OR+IPL+Trade&hl=en-IN&gl=IN&ceid=IN:en",
+    "https://timesofindia.indiatimes.com/rssfeeds/54829575.cms",
 ]
 
 # --- Pipeline Settings (tuned for $20 bankroll) ---
@@ -117,7 +122,7 @@ BANKROLL_USD = float(os.getenv("BANKROLL_USD", "20"))
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 MAX_BET_USD = float(os.getenv("MAX_BET_USD", "2"))         # $2 max per trade on $20 bankroll
 DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "5"))  # Stop after $5 loss/day
-EDGE_THRESHOLD = float(os.getenv("EDGE_THRESHOLD", "0.20"))  # Higher threshold = fewer but better trades
+EDGE_THRESHOLD = float(os.getenv("EDGE_THRESHOLD", "0.10"))  # Lowered from 0.20 to increase trade volume
 NEWS_LOOKBACK_HOURS = 12
 
 # --- Demo Runner Settings ---
@@ -131,7 +136,7 @@ MIN_RESOLVED_TRADES = int(os.getenv("MIN_RESOLVED_TRADES", "30"))      # Need 30
 MAX_RESOLVE_HOURS = float(os.getenv("MAX_RESOLVE_HOURS", "72"))  # 3 days max
 MAX_VOLUME_USD = float(os.getenv("MAX_VOLUME_USD", "500000"))
 MIN_VOLUME_USD = float(os.getenv("MIN_VOLUME_USD", "50"))    # Low: catch 5/15-min crypto windows ($100-$1000 vol)
-MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.20"))
+MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.10")) # Lowered from 0.20 to increase trade volume
 
 # --- Market Quality Filters (maximise signal accuracy) ---
 MIN_CLOSE_HOURS  = float(os.getenv("MIN_CLOSE_HOURS",  "0.25"))  # Skip markets closing in < 15min (priced in)
@@ -149,7 +154,8 @@ USE_SEARCH_GROUNDING = os.getenv("USE_SEARCH_GROUNDING", "true").lower() == "tru
 
 # --- Consensus Settings (multi-agent inspired by MiroFish debate pattern) ---
 CONSENSUS_ENABLED = os.getenv("CONSENSUS_ENABLED", "true").lower() == "true"
-CONSENSUS_PASSES = int(os.getenv("CONSENSUS_PASSES", "2"))       # Analyst + Skeptic check enabled by default
+CONSENSUS_PASSES = int(os.getenv("CONSENSUS_PASSES", "3"))       # Analyst + Skeptic + Reflector
+STRICT_CONSENSUS = os.getenv("STRICT_CONSENSUS", "true").lower() == "true"
 CONSENSUS_MIN_AGREEMENT = float(os.getenv("CONSENSUS_MIN_AGREEMENT", "1.0"))  # 1.0 = unanimous
 
 # --- RRF Multi-Signal Settings (inspired by SkillX fusion scoring) ---

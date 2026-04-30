@@ -244,8 +244,34 @@ Respond with ONLY valid JSON:
   "reasoning": "<1 sentence explaining why this might be noise or priced-in>"
 }}"""
 
+# Reflector prompt (unbiased 3rd pass)
+REFLECTOR_PROMPT = """You are a final judge in a prediction market committee.
+Analyze the market and news with extreme precision.
 
-PROMPTS = [CLASSIFICATION_PROMPT, SKEPTIC_PROMPT]
+## Market Question
+{question}
+
+## Current Price
+YES: {yes_price:.2f}
+
+## News Headline
+{headline}
+
+## Your Duty
+1. Does this headline actually answer the question or meaningfully change the odds?
+2. Is the "materiality" truly high, or is this just noise?
+3. Reject any speculative or tangential reasoning.
+
+If you are not 80% certain of the direction, return "neutral".
+
+Respond with ONLY valid JSON:
+{{
+  "direction": "bullish" | "bearish" | "neutral",
+  "materiality": <float 0.0 to 1.0>,
+  "reasoning": "<1 sentence final verdict>"
+}}"""
+
+PROMPTS = [CLASSIFICATION_PROMPT, SKEPTIC_PROMPT, REFLECTOR_PROMPT]
 
 
 # ============================================================
@@ -383,17 +409,23 @@ def classify(headline: str, market: Market, source: str = "unknown", use_search:
             )
 
         agreed = len(set(non_neutral)) == 1
-        dominant_direction = non_neutral[0] if agreed else "neutral"
-        # Use avg materiality of non-neutral passes only — skeptic returning neutral
-        # shouldn't zero out a strong analyst signal, but does reduce confidence.
+        
+        # STRICT_CONSENSUS: Require ALL passes to be non-neutral AND agree
+        if config.STRICT_CONSENSUS and len(non_neutral) < num_passes:
+            agreed = False
+            dominant_direction = "neutral"
+            combined_reasoning = f"STRICT_CONSENSUS FAIL ({len(non_neutral)}/{num_passes} active) — no trade. " + " | ".join([f"[Pass {i+1}] {r['direction']}" for i, r in enumerate(results)])
+        else:
+            dominant_direction = non_neutral[0] if agreed else "neutral"
+
+        # Use avg materiality of non-neutral passes only
         non_neutral_mats = [m for m, d in zip(materialities, directions) if d != "neutral"]
         avg_materiality = (sum(non_neutral_mats) / len(non_neutral_mats)) if (agreed and non_neutral_mats) else 0.0
 
-        reasonings = [f"[Pass {i+1}] {r['reasoning']}" for i, r in enumerate(results)]
-        combined_reasoning = " | ".join(reasonings)
-
-        if not agreed:
-            combined_reasoning = f"DISAGREEMENT ({', '.join(directions)}) — no trade. {combined_reasoning}"
+        if not agreed and not (config.STRICT_CONSENSUS and len(non_neutral) < num_passes):
+            combined_reasoning = f"DISAGREEMENT ({', '.join(directions)}) — no trade. " + " | ".join([f"[Pass {i+1}] {r['reasoning']}" for i, r in enumerate(results)])
+        elif agreed and not (config.STRICT_CONSENSUS and len(non_neutral) < num_passes):
+            combined_reasoning = " | ".join([f"[Pass {i+1}] {r['reasoning']}" for i, r in enumerate(results)])
 
         return Classification(
             direction=dominant_direction,

@@ -30,23 +30,42 @@ def fetch_active_markets(limit: int = 50) -> list[Market]:
     """Fetch active, liquid markets from Polymarket's Gamma API."""
     markets = []
 
-    try:
-        resp = httpx.get(
-            f"{GAMMA_API}/markets",
-            params={
-                "limit": limit,
-                "active": True,
-                "closed": False,
-                "order": "volume",
-                "ascending": False,
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as e:
-        print(f"[markets] Gamma API error: {e}, falling back to CLOB...")
-        return _fetch_from_clob(limit)
+    import time as _time
+    max_retries = 3
+    timeout = 30
+    import random
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+    ]
+    
+    for attempt in range(max_retries):
+        try:
+            headers = {"User-Agent": random.choice(user_agents)}
+            resp = httpx.get(
+                f"{GAMMA_API}/markets",
+                params={
+                    "limit": limit,
+                    "active": True,
+                    "closed": False,
+                    "order": "volume",
+                    "ascending": False,
+                },
+                headers=headers,
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            break # Success
+        except Exception as e:
+            if attempt < max_retries - 1:
+                wait = 2 * (attempt + 1)
+                print(f"[markets] Gamma API timeout/error (attempt {attempt+1}): {e}. Retrying in {wait}s...")
+                _time.sleep(wait)
+            else:
+                print(f"[markets] Gamma API failed after {max_retries} attempts: {e}, falling back to CLOB...")
+                return _fetch_from_clob(limit)
 
     items = data if isinstance(data, list) else data.get("data", [])
 
