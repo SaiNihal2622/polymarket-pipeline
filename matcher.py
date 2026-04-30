@@ -69,9 +69,9 @@ def match_news_to_markets(
         # 2. Score must be > 0.2
         score = hits / len(keywords)
         
-        is_strong_match = (hits >= 2) or (hits == 1 and len(matched_kws[0]) >= 7)
+        is_strong_match = (hits >= 2) or (hits == 1 and len(matched_kws[0]) >= 5)
         
-        if is_strong_match and score >= 0.15:
+        if is_strong_match and score >= 0.10:
             scored.append((score, market))
 
     # Sort by score descending

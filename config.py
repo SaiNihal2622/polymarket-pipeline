@@ -158,8 +158,8 @@ USE_SEARCH_GROUNDING = os.getenv("USE_SEARCH_GROUNDING", "true").lower() == "tru
 # --- Consensus Settings (multi-agent inspired by MiroFish debate pattern) ---
 CONSENSUS_ENABLED = os.getenv("CONSENSUS_ENABLED", "true").lower() == "true"
 CONSENSUS_PASSES = int(os.getenv("CONSENSUS_PASSES", "3"))       # Analyst + Skeptic + Reflector
-STRICT_CONSENSUS = os.getenv("STRICT_CONSENSUS", "true").lower() == "true"
-CONSENSUS_MIN_AGREEMENT = float(os.getenv("CONSENSUS_MIN_AGREEMENT", "1.0"))  # 1.0 = unanimous
+STRICT_CONSENSUS = os.getenv("STRICT_CONSENSUS", "false").lower() == "true"
+CONSENSUS_MIN_AGREEMENT = float(os.getenv("CONSENSUS_MIN_AGREEMENT", "0.66"))  # 1.0 = unanimous, 0.66 = 2/3 agreement
 
 # --- RRF Multi-Signal Settings (inspired by SkillX fusion scoring) ---
 RRF_K = 60  # Reciprocal Rank Fusion constant

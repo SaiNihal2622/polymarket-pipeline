@@ -412,24 +412,34 @@ def classify(headline: str, market: Market, source: str = "unknown", use_search:
                 consensus_agreed=True,
             )
 
-        agreed = len(set(non_neutral)) == 1
+        # Count occurrences of each direction
+        from collections import Counter
+        counts = Counter(directions)
+        non_neutral_counts = {d: c for d, c in counts.items() if d != "neutral"}
         
-        # STRICT_CONSENSUS: Require ALL passes to be non-neutral AND agree
+        if not non_neutral_counts:
+            dominant_direction = "neutral"
+            count = 0
+        else:
+            dominant_direction, count = max(non_neutral_counts.items(), key=lambda x: x[1])
+
+        agreement_ratio = count / num_passes
+        agreed = agreement_ratio >= config.CONSENSUS_MIN_AGREEMENT
+        
+        # STRICT_CONSENSUS: Still override if enabled and not all passes are non-neutral
         if config.STRICT_CONSENSUS and len(non_neutral) < num_passes:
             agreed = False
             dominant_direction = "neutral"
             combined_reasoning = f"STRICT_CONSENSUS FAIL ({len(non_neutral)}/{num_passes} active) — no trade. " + " | ".join([f"[Pass {i+1}] {r['direction']}" for i, r in enumerate(results)])
+        elif not agreed:
+            dominant_direction = "neutral"
+            combined_reasoning = f"AGREEMENT RATIO FAIL ({count}/{num_passes} for {dominant_direction}) — no trade. " + " | ".join([f"[Pass {i+1}] {r['direction']}" for i, r in enumerate(results)])
         else:
-            dominant_direction = non_neutral[0] if agreed else "neutral"
-
-        # Use avg materiality of non-neutral passes only
-        non_neutral_mats = [m for m, d in zip(materialities, directions) if d != "neutral"]
-        avg_materiality = (sum(non_neutral_mats) / len(non_neutral_mats)) if (agreed and non_neutral_mats) else 0.0
-
-        if not agreed and not (config.STRICT_CONSENSUS and len(non_neutral) < num_passes):
-            combined_reasoning = f"DISAGREEMENT ({', '.join(directions)}) — no trade. " + " | ".join([f"[Pass {i+1}] {r['reasoning']}" for i, r in enumerate(results)])
-        elif agreed and not (config.STRICT_CONSENSUS and len(non_neutral) < num_passes):
             combined_reasoning = " | ".join([f"[Pass {i+1}] {r['reasoning']}" for i, r in enumerate(results)])
+
+        # Use avg materiality of the dominant direction passes
+        dominant_mats = [m for m, d in zip(materialities, directions) if d == dominant_direction]
+        avg_materiality = (sum(dominant_mats) / len(dominant_mats)) if (agreed and dominant_mats) else 0.0
 
         return Classification(
             direction=dominant_direction,

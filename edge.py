@@ -120,20 +120,29 @@ def detect_edge_v2(
     )
 
     # --- Sureshot 1:1 Logic ---
-    # If price is near 0.50 and materiality is high, it's a "sureshot"
-    # Cricket 1:1 trades often happen when a major injury or toss occurs
-    cricket_keywords = ["toss", "injury", "playing XI", "out", "replaced", "captain"]
-    is_cricket = any(kw in news_event.headline.lower() for kw in cricket_keywords) or "cricket" in market.category.lower() or "cricket" in market.question.lower()
+    # High-conviction events that break the 50/50 equilibrium
+    sureshot_keywords = [
+        "toss", "injury", "playing XI", "out", "replaced", "captain",  # Cricket
+        "resigned", "fired", "died", "won", "lost", "canceled",        # General
+        "officially confirmed", "breaks records", "acquired",          # Tech/Finance
+        "bankrupt", "halting", "verdict", "guilty"                     # Legal/Markets
+    ]
+    headline_lower = news_event.headline.lower()
+    is_high_conviction = any(kw in headline_lower for kw in sureshot_keywords)
     
-    is_sureshot = (0.35 <= market_price <= 0.65) and (classification.materiality >= 0.75 if is_cricket else classification.materiality >= 0.85)
+    # 1:1 "Sureshot": price is near middle (uncertainty) but news is extremely material
+    # We lower the materiality requirement for high-conviction keyword matches
+    mat_req = 0.70 if is_high_conviction else 0.85
+    is_sureshot = (0.30 <= market_price <= 0.70) and (classification.materiality >= mat_req)
     
     if is_sureshot:
-        composite = max(composite, 0.85 if is_cricket else 0.80)  # Force high composite for sureshots
-        raw_edge = max(raw_edge, config.EDGE_THRESHOLD * 2.0 if is_cricket else config.EDGE_THRESHOLD * 1.5) 
+        # Force high composite and edge to ensure we beat thresholds
+        composite = max(composite, 0.85 if is_high_conviction else 0.80)
+        raw_edge = max(raw_edge, config.EDGE_THRESHOLD * 2.0) 
 
     # Only trade on high-composite signals
-    # Sureshots get a lower threshold to ensure execution
-    min_composite = 0.35 if is_sureshot else 0.50
+    # Sureshots get a lower threshold to ensure execution even if recency/niche scores are low
+    min_composite = 0.30 if is_sureshot else 0.50
     if composite < min_composite:
         return None
 
@@ -142,7 +151,8 @@ def detect_edge_v2(
     
     # Sureshot boost: increase bet size for these high-conviction plays
     if is_sureshot:
-        bet_amount = min(bet_amount * 2.0, config.MAX_BET_USD)
+        # Boost up to 3x but stay within bankroll limits
+        bet_amount = min(bet_amount * 3.0, config.MAX_BET_USD)
 
     total_latency = news_event.latency_ms + classification.latency_ms
 
