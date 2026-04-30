@@ -6,7 +6,10 @@ from pathlib import Path
 
 import os
 _db_env = os.getenv("DB_PATH", "")
-DB_PATH = Path(_db_env) if _db_env else Path(__file__).parent / "trades.db"
+if _db_env:
+    DB_PATH = Path(_db_env).absolute()
+else:
+    DB_PATH = (Path(__file__).parent / "trades.db").absolute()
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 

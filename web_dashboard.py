@@ -24,9 +24,9 @@ from resolver import (
     get_signal_accuracies,
     get_strategy_accuracies,
 )
+from logger import DB_PATH
 from bankroll import get_current_bankroll, todays_pnl, can_trade_today
 
-DB_PATH = Path(os.getenv("DB_PATH", "trades.db"))
 app = Flask(__name__)
 
 

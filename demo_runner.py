@@ -143,12 +143,11 @@ def _print_accuracy_oneliner():
 def _wipe_all_trades():
     """Wipe ALL trades and outcomes for a clean fresh start."""
     import sqlite3
-    from pathlib import Path as _Path
-    db = _Path(os.getenv("DB_PATH", "/data/trades.db"))
-    if not db.exists():
+    from logger import DB_PATH
+    if not DB_PATH.exists():
         console.print("  [dim]No DB to wipe.[/dim]")
         return
-    conn = sqlite3.connect(db)
+    conn = sqlite3.connect(DB_PATH)
     trades_count = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
     outcomes_count = conn.execute("SELECT COUNT(*) FROM outcomes").fetchone()[0]
     conn.execute("DELETE FROM outcomes")
@@ -416,6 +415,7 @@ def scan_and_trade() -> dict:
     MAX-based scoring — one strong signal is enough to trade.
     Target: 5-20 trades/day at 75%+ accuracy.
     """
+    gemini_down = False
     console.print("\n[bold cyan]── Scan ───────────[/bold cyan]")
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     console.print(f"  {now_str}  |  ≤{DEMO_HOURS_WINDOW:.0f}h window")
@@ -660,24 +660,43 @@ def scan_and_trade() -> dict:
             except Exception as e:
                 log.debug(f"[research] {e}")
 
-        # ── S5b: Consensus / Skeptic pass 2 ───────────────────────────
-        # Run devil's-advocate prompt against the analyst result.
-        # consensus_agreed = True only if both passes agree on direction.
-        consensus_agreed = False
-        consensus_score  = 0.0
-        # Always run skeptic pass when AI gave a direction — consensus is our highest-accuracy gate
-        if gem_dir != "neutral" and ai_calls_left > 0:
+        # ── S5b: Multi-pass Consensus Loop ──
+        consensus_agreed = (gem_dir != "neutral")
+        consensus_score  = gem_conf
+        consensus_passes = 1
+        
+        if gem_dir != "neutral" and config.CONSENSUS_ENABLED and config.CONSENSUS_PASSES > 1:
             try:
-                from classifier import classify as _classify, SKEPTIC_PROMPT
-                top_headline = matched_headlines[0] if matched_headlines else market.question
-                skep = _classify(top_headline, market, source="skeptic",
-                                 use_search=False)
-                if skep.direction == gem_dir:
-                    consensus_agreed = True
-                    consensus_score  = (gem_conf + min(0.88, skep.materiality)) / 2
-                ai_calls_left -= 1
+                from classifier import PROMPTS as _PROMPTS, _call_llm
+                from classifier import _build_analyst_prompt, _parse_json_response
+                
+                # Passes start from index 1 (Skeptic, Reflector, etc.)
+                for p_idx in range(1, config.CONSENSUS_PASSES):
+                    if ai_calls_left <= 0: break
+                    
+                    # Use Gemini if available, else Groq
+                    use_gemini = (config.LLM_PROVIDER == "gemini" and not gemini_down)
+                    p_prompt = _build_analyst_prompt(market, matched_headlines) # Simplified for now
+                    
+                    try:
+                        p_text = _call_llm(p_prompt) # respects provider + fallback
+                        p_res  = _parse_json_response(p_text)
+                        p_dir  = p_res.get("direction", "neutral")
+                        p_mat  = max(0.0, min(1.0, float(p_res.get("materiality", 0))))
+                        
+                        if p_dir != gem_dir:
+                            consensus_agreed = False
+                            log.info(f"  [yellow]SKIP[/yellow] consensus disagreed on pass {p_idx+1}: {p_dir} vs {gem_dir}")
+                            break
+                        
+                        consensus_score = (consensus_score + p_mat) / 2
+                        consensus_passes += 1
+                        ai_calls_left -= 1
+                    except Exception as e:
+                        if "429" in str(e): gemini_down = True
+                        log.debug(f"[consensus] pass {p_idx+1} failed: {e}")
             except Exception as e:
-                log.debug(f"[consensus] {e}")
+                log.debug(f"[consensus] loop failed: {e}")
 
         # ── RRF composite score (price_room + recency + niche + materiality) ──
         from edge import compute_composite_score as _rrf
@@ -750,6 +769,10 @@ def scan_and_trade() -> dict:
         if (gem_dir != "neutral" and rrf_score >= 0.70 and consensus_agreed):
             strategies_to_try.append(("S8_rrf_highconv", _dir(gem_dir), rrf_score + 0.05))
 
+        # ★ S9: SURESHOT — 1:1 odds (price ~0.50) + high consensus
+        if consensus_agreed and 0.40 <= price <= 0.60 and consensus_score >= 0.65:
+            strategies_to_try.append(("S9_sureshot", _dir(gem_dir), consensus_score + 0.10))
+
         # ★★ S6: HIGH-MATERIALITY + consensus required
         if (gem_dir != "neutral" and gem_mat >= 0.70
                 and gem_conf >= 0.60 and consensus_agreed):
@@ -763,6 +786,7 @@ def scan_and_trade() -> dict:
         # Now: each market produces exactly ONE trade under its top strategy.
         # Priority order based on empirical accuracy from the trial:
         STRAT_PRIORITY = {
+            "S9_sureshot":       110,  # 1:1 odds + high consensus
             "S5_consensus":      100,  # consensus = highest conviction
             "S8_rrf_highconv":    90,  # RRF ≥0.55
             "S7_rrf_composite":   80,  # RRF ≥0.45 + materiality/consensus/news
@@ -997,7 +1021,7 @@ def main():
     parser.add_argument("--resolve", action="store_true", help="Run resolution check and exit")
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
     if args.report:
         stats = print_accuracy_report()
