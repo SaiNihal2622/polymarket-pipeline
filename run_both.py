@@ -9,23 +9,31 @@ import sys
 import threading
 
 
-def _run_dashboard():
+def _run_pipeline():
     try:
-        from web_dashboard import app
-        port = int(os.getenv("PORT", "8080"))
-        print(f"📊 Dashboard listening on 0.0.0.0:{port}", flush=True)
-        app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+        from demo_runner import run_loop
+        run_loop()
     except Exception as e:
-        print(f"⚠️  Dashboard failed to start: {e}", file=sys.stderr, flush=True)
-
+        print(f"❌ Pipeline crashed: {e}", file=sys.stderr, flush=True)
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s")
 
-    # Dashboard in background daemon thread
-    threading.Thread(target=_run_dashboard, daemon=True).start()
+    # Pipeline in background thread
+    print("🤖 Starting Trading Pipeline in background...", flush=True)
+    threading.Thread(target=_run_pipeline, daemon=True).start()
 
-    # Pipeline loop in main thread (avoid argparse from demo_runner.main)
-    from demo_runner import run_loop
-    run_loop()
+    # Dashboard in main thread to ensure Railway health checks pass
+    try:
+        from web_dashboard import app
+        port = int(os.getenv("PORT", "8080"))
+        print(f"📊 Dashboard listening on 0.0.0.0:{port}", flush=True)
+        # We run the Flask app in the main thread
+        app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+    except Exception as e:
+        print(f"⚠️  Dashboard failed to start: {e}", file=sys.stderr, flush=True)
+        # If dashboard fails, we should still keep the process alive for the pipeline
+        import time
+        while True:
+            time.sleep(60)
