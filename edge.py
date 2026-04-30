@@ -1,16 +1,28 @@
 """
 Edge detection and position sizing.
-V3: Multi-signal RRF scoring (inspired by SkillX reciprocal rank fusion)
-+ conservative sizing for small bankrolls.
+V4: Heterogeneous consensus + optimal filter ordering + Kelly sizing.
+
+Filter ordering (cheapest → most expensive):
+  1. Direction check (free)
+  2. Consensus agreement (free — already computed)
+  3. Price room check (free — math only)
+  4. Materiality threshold (free — already computed)
+  5. Edge threshold (free — math only)
+  6. Composite score (cheap — weighted sum)
+  7. Sureshot keyword scan (cheap — string match)
+  8. Position sizing (cheap — Kelly formula)
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import config
 from markets import Market
 from classifier import Classification
 from news_stream import NewsEvent
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -33,6 +45,8 @@ class Signal:
     # V3 fields
     composite_score: float = 0.0
     consensus_agreed: bool = True
+    # V4 fields
+    signal_grade: str = ""  # "S" / "A" / "B" — for priority ranking
 
 
 def detect_edge(
@@ -75,43 +89,56 @@ def detect_edge_v2(
     news_event: NewsEvent,
 ) -> Signal | None:
     """
-    V2/V3: Use classification direction + materiality + multi-signal composite.
-    Only generates a signal when:
-    - Direction is bullish or bearish (not neutral)
-    - Consensus agreed (if enabled)
-    - Materiality exceeds threshold
-    - Composite score exceeds threshold
-    - Market price has room to move in the predicted direction
+    V4: Optimal filter ordering for maximum profit extraction.
+
+    Filters (cheapest first — fail fast):
+      1. Direction != neutral
+      2. Consensus agreed (all 3 AI models)
+      3. Materiality >= 0.80
+      4. Price room exists (not already priced in)
+      5. Edge >= 0.15
+      6. Composite score >= threshold
+      7. Sureshot keyword boost (if applicable)
+      8. Kelly position sizing
     """
+    # ── GATE 1: Direction (free) ──────────────────────────────────────────
     if classification.direction == "neutral":
         return None
 
-    # V3: Require consensus agreement
+    # ── GATE 2: Consensus (free — already computed by classifier) ─────────
     if config.CONSENSUS_ENABLED and not classification.consensus_agreed:
+        log.debug(f"[edge] REJECTED consensus_fail: '{news_event.headline[:50]}'")
         return None
 
+    # ── GATE 3: Materiality (free — already computed) ─────────────────────
     if classification.materiality < config.MATERIALITY_THRESHOLD:
+        log.debug(f"[edge] REJECTED mat={classification.materiality:.2f} < {config.MATERIALITY_THRESHOLD}")
         return None
 
+    # ── GATE 4: Price room (free — pure math) ─────────────────────────────
     market_price = market.yes_price
 
     if classification.direction == "bullish":
         side = "YES"
-        if market_price > 0.92:
-            return None  # already near-certain YES, nothing to gain
+        if market_price > 0.90:
+            log.debug(f"[edge] REJECTED bullish but price={market_price:.2f} > 0.90 — already priced in")
+            return None  # already near-certain YES
         raw_edge = classification.materiality * (1.0 - market_price)
         price_room = 1.0 - market_price
     else:  # bearish
         side = "NO"
-        if market_price < 0.08:
-            return None  # already near-certain NO, nothing to gain
+        if market_price < 0.10:
+            log.debug(f"[edge] REJECTED bearish but price={market_price:.2f} < 0.10 — already priced in")
+            return None  # already near-certain NO
         raw_edge = classification.materiality * market_price
         price_room = market_price
 
+    # ── GATE 5: Edge threshold (free — pure math) ─────────────────────────
     if raw_edge < config.EDGE_THRESHOLD:
+        log.debug(f"[edge] REJECTED edge={raw_edge:.3f} < {config.EDGE_THRESHOLD}")
         return None
 
-    # V3: Multi-signal composite score (RRF-inspired weighted fusion)
+    # ── GATE 6: Composite score (cheap — weighted sum) ────────────────────
     composite = compute_composite_score(
         classification=classification,
         market=market,
@@ -119,42 +146,56 @@ def detect_edge_v2(
         price_room=price_room,
     )
 
-    # --- Sureshot 1:1 Logic ---
-    # High-conviction events that break the 50/50 equilibrium
+    # ── GATE 7: Sureshot keyword detection (cheap — string match) ─────────
     sureshot_keywords = [
-        "toss", "injury", "playing XI", "out", "replaced", "captain",  # Cricket
-        "resigned", "fired", "died", "won", "lost", "canceled",        # General
-        "officially confirmed", "breaks records", "acquired",          # Tech/Finance
-        "bankrupt", "halting", "verdict", "guilty"                     # Legal/Markets
+        # Cricket/Sports — definitive outcomes
+        "toss", "injury", "playing xi", "out", "replaced", "captain",
+        "won the match", "lost the match", "eliminated",
+        # Legal/Political — binary outcomes
+        "resigned", "fired", "died", "guilty", "not guilty", "verdict",
+        "convicted", "acquitted", "impeached", "arrested",
+        # Business — definitive events
+        "officially confirmed", "breaks records", "acquired", "merged",
+        "bankrupt", "halting", "delisted", "approved", "rejected",
+        "signed", "deal closed", "ipo priced",
+        # Tech/AI — concrete milestones
+        "launched", "released", "shutdown", "open-sourced",
     ]
     headline_lower = news_event.headline.lower()
     is_high_conviction = any(kw in headline_lower for kw in sureshot_keywords)
-    
-    # 1:1 "Sureshot": price is near middle (uncertainty) but news is extremely material
-    # We lower the materiality requirement for high-conviction keyword matches
-    mat_req = 0.70 if is_high_conviction else 0.85
-    is_sureshot = (0.30 <= market_price <= 0.70) and (classification.materiality >= mat_req)
-    
-    if is_sureshot:
-        # Force high composite and edge to ensure we beat thresholds
-        composite = max(composite, 0.85 if is_high_conviction else 0.80)
-        raw_edge = max(raw_edge, config.EDGE_THRESHOLD * 2.0) 
 
-    # Only trade on high-composite signals
-    # Sureshots get a lower threshold to ensure execution even if recency/niche scores are low
+    # Sureshot: price near 50/50 AND extremely material news
+    mat_req = 0.75 if is_high_conviction else 0.85
+    is_sureshot = (0.25 <= market_price <= 0.75) and (classification.materiality >= mat_req)
+
+    if is_sureshot:
+        composite = max(composite, 0.85 if is_high_conviction else 0.80)
+        raw_edge = max(raw_edge, config.EDGE_THRESHOLD * 2.0)
+
+    # Composite threshold — sureshots get a small discount
     min_composite = 0.60 if is_sureshot else 0.70
     if composite < min_composite:
+        log.debug(f"[edge] REJECTED composite={composite:.3f} < {min_composite}")
         return None
 
-    # Use composite to scale position size — higher composite = more confidence
+    # ── STEP 8: Signal grading & position sizing ──────────────────────────
+    # Grade the signal for priority ranking
+    grade = _grade_signal(composite, classification.materiality, raw_edge, is_sureshot)
+
+    # Kelly position sizing with composite boost
     bet_amount = size_position(raw_edge, composite_boost=composite)
-    
-    # Sureshot boost: increase bet size for these high-conviction plays
+
+    # Sureshot boost: up to 2x (conservative) within bankroll limits
     if is_sureshot:
-        # Boost up to 3x but stay within bankroll limits
-        bet_amount = min(bet_amount * 3.0, config.MAX_BET_USD)
+        bet_amount = min(bet_amount * 2.0, config.MAX_BET_USD)
 
     total_latency = news_event.latency_ms + classification.latency_ms
+
+    log.info(
+        f"[edge] ✅ SIGNAL grade={grade} side={side} edge={raw_edge:.3f} "
+        f"composite={composite:.3f} mat={classification.materiality:.2f} "
+        f"bet=${bet_amount:.2f} '{news_event.headline[:60]}'"
+    )
 
     return Signal(
         market=market,
@@ -163,7 +204,7 @@ def detect_edge_v2(
         edge=raw_edge,
         side=side,
         bet_amount=bet_amount,
-        reasoning=classification.reasoning + (" [SURESHOT]" if is_sureshot else ""),
+        reasoning=classification.reasoning + (f" [SURESHOT/{grade}]" if is_sureshot else f" [{grade}]"),
         headlines=news_event.headline,
         news_source=news_event.source,
         classification=classification.direction,
@@ -173,7 +214,27 @@ def detect_edge_v2(
         total_latency_ms=total_latency,
         composite_score=composite,
         consensus_agreed=classification.consensus_agreed,
+        signal_grade=grade,
     )
+
+
+def _grade_signal(composite: float, materiality: float, edge: float, is_sureshot: bool) -> str:
+    """
+    Grade signal quality for priority ranking.
+    S-tier: Only the absolute best — high composite, high materiality, high edge
+    A-tier: Strong signal, worth max bet
+    B-tier: Decent signal, worth min bet
+    """
+    score = (composite * 0.4) + (materiality * 0.35) + (min(edge / 0.3, 1.0) * 0.25)
+    if is_sureshot:
+        score += 0.10  # sureshot bonus
+
+    if score >= 0.85:
+        return "S"
+    elif score >= 0.70:
+        return "A"
+    else:
+        return "B"
 
 
 def compute_composite_score(
@@ -213,7 +274,6 @@ def compute_composite_score(
     score += weights["volume_niche"] * niche_signal
 
     # 5. News recency — fresher = better edge before market absorbs
-    # RSS news is typically 30min-6h old; calibrate thresholds accordingly
     age_seconds = news_event.age_seconds() if hasattr(news_event, 'age_seconds') else 3600
     age_hours = age_seconds / 3600
     if age_hours < 0.5:       # < 30 min: very fresh
