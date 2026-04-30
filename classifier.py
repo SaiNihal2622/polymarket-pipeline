@@ -31,22 +31,29 @@ def _call_llm(prompt: str, temperature: float = 0.1, max_tokens: int = 200) -> s
         return _call_gemini(prompt, temperature, max_tokens)
     elif provider == "groq":
         return _call_groq(prompt, temperature, max_tokens)
+    elif provider == "nvidia":
+        return _call_nvidia(prompt, temperature, max_tokens)
     elif provider == "ollama":
         return _call_ollama(prompt, temperature, max_tokens)
     elif provider == "anthropic":
         return _call_anthropic(prompt, temperature, max_tokens)
+    elif provider == "mixed":
+        # Mixed mode: default to Gemini for single calls
+        return _call_gemini(prompt, temperature, max_tokens)
     else:
-        # Auto-detect: try gemini first (fast+cheap), then groq, ollama, anthropic
+        # Auto-detect
         if config.GEMINI_API_KEY:
             return _call_gemini(prompt, temperature, max_tokens)
         elif config.GROQ_API_KEY:
             return _call_groq(prompt, temperature, max_tokens)
+        elif config.NVIDIA_API_KEY:
+            return _call_nvidia(prompt, temperature, max_tokens)
         elif config.OLLAMA_BASE_URL:
             return _call_ollama(prompt, temperature, max_tokens)
         elif config.ANTHROPIC_API_KEY:
             return _call_anthropic(prompt, temperature, max_tokens)
         else:
-            raise RuntimeError("No LLM configured — set GEMINI_API_KEY, GROQ_API_KEY, ANTHROPIC_API_KEY, or OLLAMA_BASE_URL")
+            raise RuntimeError("No LLM configured — set GEMINI_API_KEY, GROQ_API_KEY, NVIDIA_API_KEY, ANTHROPIC_API_KEY, or OLLAMA_BASE_URL")
 
 
 _gemini_last_call    = 0.0
@@ -149,6 +156,54 @@ def _call_groq(prompt: str, temperature: float, max_tokens: int) -> str:
                 raise
 
     raise RuntimeError(f"Groq API failed after {max_retries} retries")
+
+
+def _call_nvidia(prompt: str, temperature: float, max_tokens: int) -> str:
+    """Call NVIDIA NIM API (Nemotron-70B). OpenAI-compatible endpoint."""
+    import time as _time
+    import httpx
+
+    api_key = config.NVIDIA_API_KEY
+    if not api_key:
+        log.warning("[nvidia] No NVIDIA_API_KEY — falling back to Groq")
+        return _call_groq(prompt, temperature, max_tokens)
+
+    model = config.NVIDIA_MODEL
+    url = "https://integrate.api.nvidia.com/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            with httpx.Client(timeout=30) as client:
+                resp = client.post(url, headers=headers, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+                return data["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            err = str(e)
+            if "429" in err or "rate" in err.lower():
+                wait = 5 * (attempt + 1)
+                log.warning(f"[nvidia] 429 — waiting {wait}s (attempt {attempt+1}/{max_retries})")
+                _time.sleep(wait)
+            elif attempt < max_retries - 1:
+                log.warning(f"[nvidia] Error: {e} — retrying")
+                _time.sleep(2)
+            else:
+                log.warning(f"[nvidia] All retries failed — falling back to Groq")
+                return _call_groq(prompt, temperature, max_tokens)
+
+    log.warning("[nvidia] Exhausted retries — Groq fallback")
+    return _call_groq(prompt, temperature, max_tokens)
 
 
 def _call_ollama(prompt: str, temperature: float, max_tokens: int) -> str:
@@ -337,8 +392,10 @@ def _parse_json_response(text: str) -> dict:
         raise  # re-raise if we can't extract anything useful
 
 
-def _single_classify(prompt_template: str, headline: str, market: Market, source: str, temperature: float = 0.1, use_search: bool = False) -> dict:
-    """Run a single classification pass. Returns raw result dict."""
+def _single_classify_with_provider(prompt_template: str, headline: str, market: Market, source: str,
+                                     temperature: float = 0.1, use_search: bool = False,
+                                     force_provider: str | None = None) -> dict:
+    """Run a single classification pass with a specific provider. Returns raw result dict."""
     prompt = prompt_template.format(
         question=market.question,
         yes_price=market.yes_price,
@@ -346,11 +403,18 @@ def _single_classify(prompt_template: str, headline: str, market: Market, source
         source=source,
     )
 
-    # For Gemini provider, pass use_search flag; other providers ignore it
-    if config.LLM_PROVIDER == "gemini" or (not config.LLM_PROVIDER and config.GEMINI_API_KEY):
+    # Route to the specified provider
+    if force_provider == "gemini":
+        text = _call_gemini(prompt, temperature=temperature, max_tokens=200, use_search=use_search)
+    elif force_provider == "groq":
+        text = _call_groq(prompt, temperature=temperature, max_tokens=200)
+    elif force_provider == "nvidia":
+        text = _call_nvidia(prompt, temperature=temperature, max_tokens=200)
+    elif config.LLM_PROVIDER in ("gemini", "mixed") or (not config.LLM_PROVIDER and config.GEMINI_API_KEY):
         text = _call_gemini(prompt, temperature=temperature, max_tokens=200, use_search=use_search)
     else:
         text = _call_llm(prompt, temperature=temperature, max_tokens=200)
+
     result = _parse_json_response(text)
 
     direction = result.get("direction", "neutral")
@@ -367,35 +431,89 @@ def _single_classify(prompt_template: str, headline: str, market: Market, source
         "direction": direction,
         "materiality": materiality,
         "reasoning": result.get("reasoning", ""),
+        "provider": force_provider or config.LLM_PROVIDER,
     }
+
+
+# Legacy wrapper for backward compatibility
+def _single_classify(prompt_template: str, headline: str, market: Market, source: str,
+                     temperature: float = 0.1, use_search: bool = False) -> dict:
+    return _single_classify_with_provider(prompt_template, headline, market, source, temperature, use_search)
 
 
 def classify(headline: str, market: Market, source: str = "unknown", use_search: bool = False) -> Classification:
     """
     Classify a news headline against a market question.
-    If CONSENSUS_ENABLED, runs multiple passes and requires agreement.
+
+    MODE: "mixed" (default) — Heterogeneous AI Consensus
+      Pass 1: Gemini 2.0 Flash (Analyst) — fast, web-grounded
+      Pass 2: Groq Llama-3.3-70B (Skeptic) — independent model family
+      Pass 3: NVIDIA Nemotron-70B (Reflector) — third independent model
+
+    ALL THREE must agree on direction AND each must score materiality >= 0.70
+    for a trade to execute. This eliminates model-specific hallucinations.
     """
     start = time.time()
     num_passes = config.CONSENSUS_PASSES if config.CONSENSUS_ENABLED else 1
-
-    # Determine which model name to log
     provider = config.LLM_PROVIDER
-    if provider == "gemini":
-        model_name = "gemini/" + config.GEMINI_MODEL
-    elif provider == "groq":
-        model_name = "groq/" + config.CLASSIFICATION_MODEL
-    elif provider == "ollama":
-        model_name = "ollama/" + config.CLASSIFICATION_MODEL
+
+    # In mixed mode: use 3 different AI providers
+    is_mixed = provider == "mixed"
+
+    if is_mixed:
+        model_name = "mixed/gemini+groq+nvidia"
+        # Each pass uses a DIFFERENT provider + DIFFERENT prompt
+        pass_configs = [
+            {"provider": "gemini",  "prompt": PROMPTS[0], "temp": 0.1, "label": "Gemini-Analyst"},
+            {"provider": "groq",    "prompt": PROMPTS[1], "temp": 0.15, "label": "Groq-Skeptic"},
+            {"provider": "nvidia",  "prompt": PROMPTS[2], "temp": 0.1, "label": "Nvidia-Reflector"},
+        ]
     else:
-        model_name = config.CLASSIFICATION_MODEL
+        if provider == "gemini":
+            model_name = "gemini/" + config.GEMINI_MODEL
+        elif provider == "groq":
+            model_name = "groq/" + config.CLASSIFICATION_MODEL
+        elif provider == "nvidia":
+            model_name = "nvidia/" + config.NVIDIA_MODEL
+        elif provider == "ollama":
+            model_name = "ollama/" + config.CLASSIFICATION_MODEL
+        else:
+            model_name = config.CLASSIFICATION_MODEL
+        pass_configs = None
 
     try:
         results = []
-        for i in range(num_passes):
-            prompt = PROMPTS[i % len(PROMPTS)]
-            temp = 0.1 if i == 0 else 0.2
-            result = _single_classify(prompt, headline, market, source, temperature=temp, use_search=use_search)
-            results.append(result)
+
+        if is_mixed and pass_configs:
+            # === HETEROGENEOUS CONSENSUS: 3 different AI models ===
+            for cfg in pass_configs:
+                try:
+                    result = _single_classify_with_provider(
+                        cfg["prompt"], headline, market, source,
+                        temperature=cfg["temp"],
+                        use_search=(cfg["provider"] == "gemini"),
+                        force_provider=cfg["provider"],
+                    )
+                    result["label"] = cfg["label"]
+                    results.append(result)
+                    log.info(f"[consensus] {cfg['label']}: {result['direction']} mat={result['materiality']:.2f}")
+                except Exception as e:
+                    log.warning(f"[consensus] {cfg['label']} failed: {e} — marking neutral")
+                    results.append({
+                        "direction": "neutral",
+                        "materiality": 0.0,
+                        "reasoning": f"{cfg['label']} error: {e}",
+                        "provider": cfg["provider"],
+                        "label": cfg["label"],
+                    })
+        else:
+            # === SINGLE-PROVIDER MODE (legacy) ===
+            for i in range(num_passes):
+                prompt = PROMPTS[i % len(PROMPTS)]
+                temp = 0.1 if i == 0 else 0.2
+                result = _single_classify_with_provider(prompt, headline, market, source, temperature=temp, use_search=use_search)
+                result["label"] = f"Pass-{i+1}"
+                results.append(result)
 
         latency = int((time.time() - start) * 1000)
 
@@ -412,7 +530,7 @@ def classify(headline: str, market: Market, source: str = "unknown", use_search:
                 reasoning="All classification passes returned neutral",
                 latency_ms=latency,
                 model=model_name,
-                consensus_passes=num_passes,
+                consensus_passes=len(results),
                 consensus_agreed=True,
             )
 
@@ -420,26 +538,45 @@ def classify(headline: str, market: Market, source: str = "unknown", use_search:
         from collections import Counter
         counts = Counter(directions)
         non_neutral_counts = {d: c for d, c in counts.items() if d != "neutral"}
-        
+
         if not non_neutral_counts:
             dominant_direction = "neutral"
             count = 0
         else:
             dominant_direction, count = max(non_neutral_counts.items(), key=lambda x: x[1])
 
-        agreement_ratio = count / num_passes
+        total_passes = len(results)
+        agreement_ratio = count / total_passes
         agreed = agreement_ratio >= config.CONSENSUS_MIN_AGREEMENT
-        
-        # STRICT_CONSENSUS: Still override if enabled and not all passes are non-neutral
-        if config.STRICT_CONSENSUS and len(non_neutral) < num_passes:
+
+        # === MIXED MODE EXTRA GUARD: minimum materiality per-model ===
+        if is_mixed and agreed and dominant_direction != "neutral":
+            min_mat = min(r["materiality"] for r in results if r["direction"] == dominant_direction)
+            if min_mat < 0.70:
+                agreed = False
+                dominant_direction = "neutral"
+                labels = " | ".join([f"[{r.get('label','?')}] {r['direction']} mat={r['materiality']:.2f}" for r in results])
+                combined_reasoning = f"MIXED_MATERIALITY_FAIL (weakest={min_mat:.2f} < 0.70) — {labels}"
+                return Classification(
+                    direction="neutral",
+                    materiality=0.0,
+                    reasoning=combined_reasoning,
+                    latency_ms=latency,
+                    model=model_name,
+                    consensus_passes=total_passes,
+                    consensus_agreed=False,
+                )
+
+        # STRICT_CONSENSUS: override if not all passes are non-neutral
+        if config.STRICT_CONSENSUS and len(non_neutral) < total_passes:
             agreed = False
             dominant_direction = "neutral"
-            combined_reasoning = f"STRICT_CONSENSUS FAIL ({len(non_neutral)}/{num_passes} active) — no trade. " + " | ".join([f"[Pass {i+1}] {r['direction']}" for i, r in enumerate(results)])
+            combined_reasoning = f"STRICT_CONSENSUS FAIL ({len(non_neutral)}/{total_passes} active) — no trade. " + " | ".join([f"[{r.get('label', f'Pass {i+1}')}] {r['direction']}" for i, r in enumerate(results)])
         elif not agreed:
             dominant_direction = "neutral"
-            combined_reasoning = f"AGREEMENT RATIO FAIL ({count}/{num_passes} for {dominant_direction}) — no trade. " + " | ".join([f"[Pass {i+1}] {r['direction']}" for i, r in enumerate(results)])
+            combined_reasoning = f"AGREEMENT_FAIL ({count}/{total_passes} for {dominant_direction}) — no trade. " + " | ".join([f"[{r.get('label', f'Pass {i+1}')}] {r['direction']}" for i, r in enumerate(results)])
         else:
-            combined_reasoning = " | ".join([f"[Pass {i+1}] {r['reasoning']}" for i, r in enumerate(results)])
+            combined_reasoning = " | ".join([f"[{r.get('label', f'Pass {i+1}')}] {r['reasoning']}" for i, r in enumerate(results)])
 
         # Use avg materiality of the dominant direction passes
         dominant_mats = [m for m, d in zip(materialities, directions) if d == dominant_direction]
@@ -451,7 +588,7 @@ def classify(headline: str, market: Market, source: str = "unknown", use_search:
             reasoning=combined_reasoning,
             latency_ms=latency,
             model=model_name,
-            consensus_passes=num_passes,
+            consensus_passes=total_passes,
             consensus_agreed=agreed,
         )
 

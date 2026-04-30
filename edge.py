@@ -142,7 +142,7 @@ def detect_edge_v2(
 
     # Only trade on high-composite signals
     # Sureshots get a lower threshold to ensure execution even if recency/niche scores are low
-    min_composite = 0.30 if is_sureshot else 0.50
+    min_composite = 0.60 if is_sureshot else 0.70
     if composite < min_composite:
         return None
 

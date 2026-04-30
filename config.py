@@ -4,9 +4,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- LLM Provider ---
-# Recommended: "gemini" (Gemini 2.0 Flash) — works locally AND on Railway, cheap, fast
-# Options: "gemini" | "groq" | "anthropic" | "ollama" (local only, no Railway)
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini").lower()
+# Recommended: "mixed" (Heterogeneous AI Consensus) — uses Gemini, Groq, and Nvidia together for 80%+ accuracy
+# Options: "mixed" | "gemini" | "groq" | "anthropic" | "nvidia" | "ollama"
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "mixed").lower()
 
 # --- Anthropic ---
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
@@ -17,6 +17,10 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 # --- Google Gemini ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")  # Flash = 2000 RPM (Tier 1). Pro-preview was 2 RPM = 429s
+
+# --- NVIDIA ---
+NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "")
+NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "nvidia/llama-3.1-nemotron-70b-instruct")
 
 # --- Ollama ---
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -125,7 +129,7 @@ BANKROLL_USD = float(os.getenv("BANKROLL_USD", "20"))
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 MAX_BET_USD = float(os.getenv("MAX_BET_USD", "2"))         # $2 max per trade on $20 bankroll
 DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "5"))  # Stop after $5 loss/day
-EDGE_THRESHOLD = float(os.getenv("EDGE_THRESHOLD", "0.10"))  # Lowered from 0.20 to increase trade volume
+EDGE_THRESHOLD = float(os.getenv("EDGE_THRESHOLD", "0.15"))  # Increased to 0.15 for stronger edge
 NEWS_LOOKBACK_HOURS = 12
 
 # --- Demo Runner Settings ---
@@ -139,7 +143,7 @@ MIN_RESOLVED_TRADES = int(os.getenv("MIN_RESOLVED_TRADES", "30"))      # Need 30
 MAX_RESOLVE_HOURS = float(os.getenv("MAX_RESOLVE_HOURS", "72"))  # 3 days max
 MAX_VOLUME_USD = float(os.getenv("MAX_VOLUME_USD", "500000"))
 MIN_VOLUME_USD = float(os.getenv("MIN_VOLUME_USD", "50"))    # Low: catch 5/15-min crypto windows ($100-$1000 vol)
-MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.10")) # Lowered from 0.20 to increase trade volume
+MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.80")) # Increased to 0.80 for 80% accuracy target
 
 # --- Market Quality Filters (maximise signal accuracy) ---
 MIN_CLOSE_HOURS  = float(os.getenv("MIN_CLOSE_HOURS",  "0.25"))  # Skip markets closing in < 15min (priced in)
@@ -158,8 +162,8 @@ USE_SEARCH_GROUNDING = os.getenv("USE_SEARCH_GROUNDING", "true").lower() == "tru
 # --- Consensus Settings (multi-agent inspired by MiroFish debate pattern) ---
 CONSENSUS_ENABLED = os.getenv("CONSENSUS_ENABLED", "true").lower() == "true"
 CONSENSUS_PASSES = int(os.getenv("CONSENSUS_PASSES", "3"))       # Analyst + Skeptic + Reflector
-STRICT_CONSENSUS = os.getenv("STRICT_CONSENSUS", "false").lower() == "true"
-CONSENSUS_MIN_AGREEMENT = float(os.getenv("CONSENSUS_MIN_AGREEMENT", "0.66"))  # 1.0 = unanimous, 0.66 = 2/3 agreement
+STRICT_CONSENSUS = os.getenv("STRICT_CONSENSUS", "true").lower() == "true"
+CONSENSUS_MIN_AGREEMENT = float(os.getenv("CONSENSUS_MIN_AGREEMENT", "1.0"))  # 1.0 = unanimous
 
 # --- RRF Multi-Signal Settings (inspired by SkillX fusion scoring) ---
 RRF_K = 60  # Reciprocal Rank Fusion constant
