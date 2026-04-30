@@ -52,8 +52,9 @@ def _ddg_search(query: str, num_results: int) -> list[str]:
     """DuckDuckGo search — free, no key, instant."""
     try:
         from duckduckgo_search import DDGS
+        # Use simple text search without strict time limits to ensure results
         with DDGS() as ddgs:
-            hits = list(ddgs.text(query, max_results=num_results, timelimit="m"))  # last month
+            hits = list(ddgs.text(query, max_results=num_results))
         results = []
         for h in hits:
             title = h.get("title", "").strip()
@@ -61,7 +62,7 @@ def _ddg_search(query: str, num_results: int) -> list[str]:
             if title or body:
                 results.append(f"{title}: {body}" if body else title)
         if results:
-            log.info(f"[search/ddg] '{query[:50]}' → {len(results)} results")
+            log.info(f"[search/ddg] '{query[:40]}...' → {len(results)} results")
         return results
     except Exception as e:
         log.debug(f"[search/ddg] failed: {e}")
@@ -70,20 +71,28 @@ def _ddg_search(query: str, num_results: int) -> list[str]:
 
 def _apify_search(query: str, num_results: int) -> list[str]:
     """Apify Google Search Scraper fallback."""
+    if not APIFY_TOKEN:
+        return []
     try:
         import httpx
+        # Using run-sync-get-dataset-items for speed
         resp = httpx.post(
             "https://api.apify.com/v2/acts/apify~google-search-scraper/run-sync-get-dataset-items",
-            params={"token": APIFY_TOKEN, "timeout": 25, "memory": 256},
+            params={"token": APIFY_TOKEN, "timeout": 20, "memory": 256},
             json={
                 "queries": query,
                 "maxPagesPerQuery": 1,
                 "resultsPerPage": num_results,
+                "mobileResults": False,
                 "languageCode": "en",
-                "countryCode": "us",
             },
-            timeout=35,
+            timeout=30,
         )
+        
+        if resp.status_code == 402:
+            log.warning(f"[search/apify] 402 Payment Required (Account has balance but actor may be restricted). Falling back.")
+            return []
+            
         resp.raise_for_status()
         items = resp.json()
         results = []
@@ -94,7 +103,7 @@ def _apify_search(query: str, num_results: int) -> list[str]:
                 if title or snippet:
                     results.append(f"{title}: {snippet}" if snippet else title)
         if results:
-            log.info(f"[search/apify] '{query[:50]}' → {len(results)} results")
+            log.info(f"[search/apify] '{query[:40]}...' → {len(results)} results")
         return results
     except Exception as e:
         log.debug(f"[search/apify] failed: {e}")
