@@ -23,18 +23,6 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s")
 
-    # DB RESET (Temporary for fresh start on Railway)
-    from config import DB_PATH
-    if os.path.exists(DB_PATH):
-        print(f"🗑️ Wiping DB at {DB_PATH} for fresh start...", flush=True)
-        try:
-            os.remove(DB_PATH)
-            print("✅ DB Reset Complete.", flush=True)
-        except Exception as e:
-            print(f"❌ Failed to reset DB: {e}", flush=True)
-    else:
-        print(f"ℹ️ No existing DB found at {DB_PATH}. Starting fresh.", flush=True)
-
     # Dashboard in background daemon thread
     threading.Thread(target=_run_dashboard, daemon=True).start()
 
