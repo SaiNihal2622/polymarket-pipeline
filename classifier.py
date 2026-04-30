@@ -210,7 +210,9 @@ Rate MATERIALITY (impact on probability):
 - 0.4 to 0.7: Meaningful impact, changes the odds
 - 0.8 to 1.0: Definitive, major development
 
-Respond with ONLY valid JSON:
+Respond with ONLY valid JSON. 
+CRICKET/IPL NOTE: A toss result, a major injury to a key player (e.g. Kohli, Dhoni, Bumrah), or a change in the playing XI is often a HIGH materiality (0.8+) event for match-winner markets.
+
 {{
   "direction": "bullish" | "bearish" | "neutral",
   "materiality": <float 0.0 to 1.0>,
@@ -237,7 +239,9 @@ Challenge the relevance of this news:
 
 If there is ANY doubt about relevance or impact, you MUST return "neutral".
 
-Respond with ONLY valid JSON:
+Respond with ONLY valid JSON.
+SKEPTIC TIP: If the news is just a "preview" or "speculation" about a toss/injury that hasn't happened yet, it is likely "neutral" or already priced in.
+
 {{
   "direction": "bullish" | "bearish" | "neutral",
   "materiality": <float 0.0 to 1.0>,

@@ -115,6 +115,9 @@ RSS_FEEDS = [
     "https://www.cricbuzz.com/rss/cbz_news.xml",
     "https://news.google.com/rss/search?q=IPL+2026+OR+Cricket+Match+OR+IPL+Trade&hl=en-IN&gl=IN&ceid=IN:en",
     "https://timesofindia.indiatimes.com/rssfeeds/54829575.cms",
+    "https://sports.ndtv.com/rss/cricket",
+    "https://www.hindustantimes.com/rss/cricket/rssfeed.xml",
+    "https://www.news18.com/rss/cricket.xml",
 ]
 
 # --- Pipeline Settings (tuned for $20 bankroll) ---

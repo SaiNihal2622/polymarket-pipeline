@@ -122,10 +122,14 @@ def detect_edge_v2(
     # --- Sureshot 1:1 Logic ---
     # If price is near 0.50 and materiality is high, it's a "sureshot"
     # Cricket 1:1 trades often happen when a major injury or toss occurs
-    is_sureshot = (0.35 <= market_price <= 0.65) and classification.materiality >= 0.75
+    cricket_keywords = ["toss", "injury", "playing XI", "out", "replaced", "captain"]
+    is_cricket = any(kw in news_event.headline.lower() for kw in cricket_keywords) or "cricket" in market.category.lower() or "cricket" in market.question.lower()
+    
+    is_sureshot = (0.35 <= market_price <= 0.65) and (classification.materiality >= 0.75 if is_cricket else classification.materiality >= 0.85)
+    
     if is_sureshot:
-        composite = max(composite, 0.80)  # Force high composite for sureshots
-        raw_edge = max(raw_edge, config.EDGE_THRESHOLD * 1.5) # Ensure it passes edge check
+        composite = max(composite, 0.85 if is_cricket else 0.80)  # Force high composite for sureshots
+        raw_edge = max(raw_edge, config.EDGE_THRESHOLD * 2.0 if is_cricket else config.EDGE_THRESHOLD * 1.5) 
 
     # Only trade on high-composite signals
     # Sureshots get a lower threshold to ensure execution
