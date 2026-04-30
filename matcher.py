@@ -40,9 +40,9 @@ def match_news_to_markets(
     Find markets that a news headline is relevant to.
     Uses strict word-boundary keyword overlap scoring.
     """
-    if top_k is not None:
-        max_matches = top_k
-    headline_lower = headline.lower()
+    if not headline:
+        return []
+    headline_lower = str(headline).lower()
     scored = []
 
     # Pre-tokenize headline for faster matching

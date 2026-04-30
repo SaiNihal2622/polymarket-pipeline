@@ -357,7 +357,11 @@ def _single_classify(prompt_template: str, headline: str, market: Market, source
     if direction not in ("bullish", "bearish", "neutral"):
         direction = "neutral"
 
-    materiality = max(0.0, min(1.0, float(result.get("materiality", 0))))
+    try:
+        materiality = float(result.get("materiality", 0))
+    except (TypeError, ValueError):
+        materiality = 0.0
+    materiality = max(0.0, min(1.0, materiality))
 
     return {
         "direction": direction,
