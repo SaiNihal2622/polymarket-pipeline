@@ -12,3 +12,4 @@ groq>=0.9.0
 telethon>=1.36.0
 # cache-bust: 2026-04-16
 duckduckgo-search>=6.0.0
+flask>=3.0.0

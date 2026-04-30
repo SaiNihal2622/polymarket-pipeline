@@ -28,34 +28,51 @@ def extract_keywords(question: str) -> list[str]:
     return keywords
 
 
+import re
+
 def match_news_to_markets(
     headline: str,
     markets: list[Market],
     max_matches: int = 5,
-    top_k: int | None = None,   # alias for max_matches (backwards compat)
+    top_k: int | None = None,
 ) -> list[Market]:
     """
     Find markets that a news headline is relevant to.
-    Uses keyword overlap scoring — fast, no API call.
+    Uses strict word-boundary keyword overlap scoring.
     """
     if top_k is not None:
         max_matches = top_k
     headline_lower = headline.lower()
     scored = []
 
+    # Pre-tokenize headline for faster matching
+    headline_words = set(re.findall(r'\b\w{3,}\b', headline_lower))
+
     for market in markets:
         keywords = extract_keywords(market.question)
         if not keywords:
             continue
 
-        # Count keyword hits
-        hits = sum(1 for kw in keywords if kw in headline_lower)
+        # Count keyword hits using word boundaries (exact word match)
+        hits = 0
+        matched_kws = []
+        for kw in keywords:
+            if kw in headline_words:
+                hits += 1
+                matched_kws.append(kw)
+
         if hits == 0:
             continue
 
-        # Score = hits / total keywords (relevance ratio)
+        # STRICTNESS: 
+        # 1. Need at least 2 hits OR if only 1 hit, it must be a long word (>6 chars)
+        # 2. Score must be > 0.2
         score = hits / len(keywords)
-        scored.append((score, market))
+        
+        is_strong_match = (hits >= 2) or (hits == 1 and len(matched_kws[0]) >= 7)
+        
+        if is_strong_match and score >= 0.15:
+            scored.append((score, market))
 
     # Sort by score descending
     scored.sort(key=lambda x: x[0], reverse=True)
@@ -69,40 +86,11 @@ def match_news_to_markets_broad(
     max_matches: int = 5,
 ) -> list[Market]:
     """
-    Broader matching using headline + summary text.
-    Falls back to category matching if keyword matching returns nothing.
+    Tightened broad matching. Headline + Summary keyword overlap.
+    No longer falls back to generic category matching as it causes hallucinations.
     """
-    # Try keyword matching first
-    matches = match_news_to_markets(headline, markets, max_matches)
-    if matches:
-        return matches
+    return match_news_to_markets(f"{headline} {summary}", markets, max_matches)
 
-    # Fallback: match on category keywords in the headline
-    combined = f"{headline} {summary}".lower()
-    category_keywords = {
-        "ai": ["ai", "openai", "gpt", "anthropic", "claude", "llm", "chatgpt", "gemini", "artificial intelligence"],
-        "crypto": ["bitcoin", "ethereum", "solana", "crypto", "blockchain", "defi", "token", "btc", "eth"],
-        "politics": ["trump", "biden", "congress", "senate", "election", "tariff", "fed", "white house", "sanctions", "legislation"],
-        "technology": ["apple", "google", "microsoft", "nvidia", "tech", "software", "startup", "meta", "tesla"],
-        "science": ["spacex", "nasa", "climate", "research", "discovery", "mars", "starship"],
-        "sports": ["ipl", "cricket", "nba", "nfl", "soccer", "football", "basketball", "tennis", "ufc", "f1",
-                    "champions league", "premier league", "playoffs", "world cup", "match", "tournament"],
-        "entertainment": ["oscars", "grammy", "emmy", "box office", "movie", "film", "netflix", "disney", "album", "streaming"],
-        "finance": ["fed", "interest rate", "inflation", "gdp", "recession", "stock", "s&p", "nasdaq", "treasury", "earnings"],
-        "world": ["war", "nato", "united nations", "ceasefire", "invasion", "geopolitical"],
-    }
-
-    matched_categories = set()
-    for cat, kws in category_keywords.items():
-        if any(kw in combined for kw in kws):
-            matched_categories.add(cat)
-
-    if not matched_categories:
-        return []
-
-    # Return markets in matching categories
-    category_matches = [m for m in markets if m.category in matched_categories]
-    return category_matches[:max_matches]
 
 
 if __name__ == "__main__":

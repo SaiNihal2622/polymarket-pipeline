@@ -120,7 +120,7 @@ def detect_edge_v2(
     )
 
     # Only trade on high-composite signals
-    if composite < 0.4:
+    if composite < 0.5:
         return None
 
     # Use composite to scale position size — higher composite = more confidence

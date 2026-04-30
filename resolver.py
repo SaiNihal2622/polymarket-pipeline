@@ -27,6 +27,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 log = logging.getLogger(__name__)
 
@@ -98,7 +100,7 @@ def _resolve_via_clob(token_id: str, timeout: int = 8) -> float | None:
     if not token_id:
         return None
     try:
-        r = httpx.get(f"{CLOB_API}/book", params={"token_id": token_id}, timeout=timeout)
+        r = httpx.get(f"{CLOB_API}/book-snapshot", params={"token_id": token_id}, timeout=timeout, verify=False)
         if r.status_code != 200:
             return None
         data = r.json()
@@ -152,7 +154,7 @@ def _resolve_via_gamma_direct(market_id: str, timeout: int = 10) -> float | None
     ]
     for params in attempts:
         try:
-            r = httpx.get(f"{GAMMA_API}/markets", params=params, timeout=timeout)
+            r = httpx.get(f"{GAMMA_API}/markets", params=params, timeout=timeout, verify=False)
             if r.status_code != 200:
                 continue
             data = r.json()
@@ -239,11 +241,11 @@ def _refresh_bulk_cache(pending_trades: list[dict]) -> None:
     fetched_total = 0
     first5_questions: list[str] = []  # debug: show what Gamma returns
 
-    for offset in range(0, 3000, 100):
+    for offset in range(0, 500, 100):  # Scanned 3000 before — reduced to 500 to avoid timeouts
         try:
             r = httpx.get(f"{GAMMA_API}/markets",
                 params={"closed": "true", "limit": 100, "offset": offset,
-                        "order": "updatedAt", "ascending": "false"}, timeout=15)
+                        "order": "updatedAt", "ascending": "false"}, timeout=15, verify=False)
             r.raise_for_status()
             data = r.json()
             items = data if isinstance(data, list) else data.get("data", [])
@@ -291,7 +293,7 @@ def _refresh_bulk_cache(pending_trades: list[dict]) -> None:
             continue  # already resolved
         try:
             r = httpx.get(f"{GAMMA_API}/markets",
-                params={"question": q[:100], "limit": 3, "closed": "true"}, timeout=8)
+                params={"question": q[:100], "limit": 3, "closed": "true"}, timeout=8, verify=False)
             if r.status_code == 200:
                 data = r.json()
                 items = data if isinstance(data, list) else data.get("data", [])
@@ -308,6 +310,33 @@ def _refresh_bulk_cache(pending_trades: list[dict]) -> None:
         except Exception:
             pass
 
+def _resolve_via_search(question: str) -> float | None:
+    """
+    Search-based resolution fallback using Gemini with Google Search grounding.
+    Returns 1.0 (YES), 0.0 (NO), 0.5 (PUSH/UNCLEAR), or None (error).
+    """
+    try:
+        from classifier import _call_gemini
+        prompt = f"""
+        Determine the outcome of this prediction market question: "{question}"
+        
+        Is the outcome YES or NO? 
+        If it happened, answer YES. If it did not happen or the condition was not met, answer NO.
+        If it's still ongoing or unclear, answer UNCLEAR.
+        
+        Return ONLY one word: YES, NO, or UNCLEAR.
+        """
+        # Call Gemini with search grounding enabled
+        res = _call_gemini(prompt, temperature=0.0, max_tokens=10, use_search=True)
+        res = res.upper().strip()
+        
+        if "YES" in res: return 1.0
+        if "NO" in res: return 0.0
+        if "UNCLEAR" in res: return None
+        return None
+    except Exception as e:
+        log.warning(f"[resolver:search] error for \"{question[:40]}\": {e}")
+        return None
 
 # ── Main resolution logic ────────────────────────────────────────────────────
 
@@ -342,7 +371,13 @@ def check_market_resolution(trade: dict) -> float | None:
     cached = _resolution_cache.get(market_id)
     if cached is not None:
         print(f"[resolver:cache] #{trade['id']} → {cached}")
-    return cached
+        return cached
+
+    # Strategy 4: Search-based fallback (last resort)
+    search_res = _resolve_via_search(trade.get("market_question", ""))
+    if search_res is not None:
+        print(f"[resolver:search] #{trade['id']} → {search_res}")
+    return search_res
 
 
 def resolve_trade(trade_id: int, market_result: float, side: str, amount_usd: float,
@@ -380,7 +415,7 @@ def resolve_trade(trade_id: int, market_result: float, side: str, amount_usd: fl
     return result_str, pnl
 
 
-def _void_stuck_trades(pending: list[dict], max_pending_hours: float = 36.0) -> int:
+def _void_stuck_trades(pending: list[dict], max_pending_hours: float = 720.0) -> int:
     """
     Void trades that have been pending too long — market probably resolved but
     Gamma hasn't indexed it. Marks as 'voided' so they don't clog the pipeline.
@@ -417,8 +452,8 @@ def run_resolution_check(verbose: bool = True) -> dict:
 
     if verbose: print(f"[resolver] Checking {len(pending)} pending demo trades...")
 
-    # Void trades stuck >36h (Polymarket likely resolved but Gamma not indexed)
-    voided = _void_stuck_trades(pending, max_pending_hours=36.0)
+    # Void trades stuck >720h (Polymarket likely resolved but Gamma not indexed)
+    voided = _void_stuck_trades(pending, max_pending_hours=720.0)
     if voided > 0:
         pending = get_pending_demo_trades()  # refresh
 
@@ -767,10 +802,10 @@ if __name__ == "__main__":
     stats = get_accuracy_stats()
     print(f"\nAccuracy: {stats['accuracy_pct']}% | {stats['wins']}W/{stats['losses']}L | PnL: ${stats['total_pnl']:+.2f}")
 
-    print("\n── Per-signal accuracy ──")
+    print("\n-- Per-signal accuracy --")
     for sig, s in get_signal_accuracies().items():
         print(f"  {s['label']:15s}: {s['accuracy_pct']:5.1f}% ({s['wins']}W/{s['losses']}L, avg_conf={s['avg_conf']:.2f})")
 
-    print("\n── Dynamic weights ──")
+    print("\n-- Dynamic weights --")
     for sig, w in get_dynamic_weights().items():
         print(f"  {sig:8s}: {w:.3f}")

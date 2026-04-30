@@ -1,1 +1,1 @@
-worker: python3.11 demo_runner.py
+web: python3.11 run_both.py

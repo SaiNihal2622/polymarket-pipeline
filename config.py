@@ -117,7 +117,7 @@ BANKROLL_USD = float(os.getenv("BANKROLL_USD", "20"))
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 MAX_BET_USD = float(os.getenv("MAX_BET_USD", "2"))         # $2 max per trade on $20 bankroll
 DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "5"))  # Stop after $5 loss/day
-EDGE_THRESHOLD = float(os.getenv("EDGE_THRESHOLD", "0.15"))  # Higher threshold = fewer but better trades
+EDGE_THRESHOLD = float(os.getenv("EDGE_THRESHOLD", "0.20"))  # Higher threshold = fewer but better trades
 NEWS_LOOKBACK_HOURS = 12
 
 # --- Demo Runner Settings ---
@@ -149,7 +149,7 @@ USE_SEARCH_GROUNDING = os.getenv("USE_SEARCH_GROUNDING", "true").lower() == "tru
 
 # --- Consensus Settings (multi-agent inspired by MiroFish debate pattern) ---
 CONSENSUS_ENABLED = os.getenv("CONSENSUS_ENABLED", "true").lower() == "true"
-CONSENSUS_PASSES = int(os.getenv("CONSENSUS_PASSES", "1"))       # 1 pass for speed
+CONSENSUS_PASSES = int(os.getenv("CONSENSUS_PASSES", "2"))       # Analyst + Skeptic check enabled by default
 CONSENSUS_MIN_AGREEMENT = float(os.getenv("CONSENSUS_MIN_AGREEMENT", "1.0"))  # 1.0 = unanimous
 
 # --- RRF Multi-Signal Settings (inspired by SkillX fusion scoring) ---

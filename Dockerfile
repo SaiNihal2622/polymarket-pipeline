@@ -8,4 +8,5 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 COPY . .
 
-CMD ["python", "demo_runner.py"]
+EXPOSE 8080
+CMD ["python", "run_both.py"]

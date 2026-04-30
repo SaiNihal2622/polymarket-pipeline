@@ -182,7 +182,7 @@ def _call_anthropic(prompt: str, temperature: float, max_tokens: int) -> str:
 # ============================================================
 
 # Primary classification prompt (analyst perspective)
-CLASSIFICATION_PROMPT = """You are a prediction market analyst with access to live web search.
+CLASSIFICATION_PROMPT = """You are an elite prediction market analyst. 
 
 ## Market Question
 {question}
@@ -195,52 +195,55 @@ YES: {yes_price:.2f} (implied probability: {yes_price:.0%})
 Source: {source}
 
 ## Your Task
-Use your search access to find the CURRENT price, latest developments, and context for this market.
-Then determine: does this news make the market question MORE likely to resolve YES, MORE likely to resolve NO, or is it NOT RELEVANT?
+Determine if this news headline is DIRECTLY and SIGNIFICANTLY relevant to the market question.
 
-Rate MATERIALITY (how much should this move the price?):
-- 0.0 = completely irrelevant
-- 0.3 = somewhat relevant, minor impact
-- 0.6 = clearly relevant, meaningful impact
-- 1.0 = definitive evidence, major impact
+A news item is ONLY relevant if it changes the fundamental probability of the specific event occurring. 
+Tangential connections (e.g. "inflation" for "baseball") are NOT relevant.
 
-Consider: Is this news already priced in? Is the current market price accurate given what you now know?
+Direction rules:
+- "bullish": The news makes a YES resolution substantially MORE likely.
+- "bearish": The news makes a YES resolution substantially LESS likely.
+- "neutral": The news is irrelevant, minor, already priced in, or ambiguous.
 
-Respond with ONLY valid JSON (no markdown, no explanation outside the JSON):
+Rate MATERIALITY (impact on probability):
+- 0.0 to 0.3: Irrelevant or minor noise (ALWAYS use "neutral" direction)
+- 0.4 to 0.7: Meaningful impact, changes the odds
+- 0.8 to 1.0: Definitive, major development
+
+Respond with ONLY valid JSON:
 {{
   "direction": "bullish" | "bearish" | "neutral",
   "materiality": <float 0.0 to 1.0>,
-  "reasoning": "<1 sentence max>"
+  "reasoning": "<1 concise sentence explaining the direct causal link or lack thereof>"
 }}"""
 
-# Devil's advocate prompt (skeptic perspective — used for consensus pass 2)
-SKEPTIC_PROMPT = """You are a SKEPTICAL prediction market analyst with access to live web search.
+# Devil's advocate prompt (skeptic perspective)
+SKEPTIC_PROMPT = """You are a skeptical prediction market analyst. Your job is to prevent false positive trades.
 
 ## Market Question
 {question}
 
-## Current Market Price
-YES: {yes_price:.2f} (implied probability: {yes_price:.0%})
+## Current Price
+YES: {yes_price:.2f}
 
-## News Headline Under Review
+## News Headline
 {headline}
-Source: {source}
 
 ## Your Task
-Search for the current state of this market. Then challenge the initial reaction to this headline:
-- Is this news ALREADY priced in by the market?
-- Is the current YES price of {yes_price:.0%} already reflecting this?
-- Does this news DIRECTLY affect the outcome, or is it tangential noise?
-- Could the opposite scenario still easily happen?
+Challenge the relevance of this news:
+1. Is the connection to the market question direct or purely speculative?
+2. Is this news already fully reflected in the price of {yes_price:.2f}?
+3. Does the headline actually provide new information, or is it just a recap?
 
-Only rate above 0.4 materiality if the news genuinely changes the odds significantly from the current price.
+If there is ANY doubt about relevance or impact, you MUST return "neutral".
 
-Respond with ONLY valid JSON (no markdown, no explanation outside the JSON):
+Respond with ONLY valid JSON:
 {{
   "direction": "bullish" | "bearish" | "neutral",
   "materiality": <float 0.0 to 1.0>,
-  "reasoning": "<1 sentence max>"
+  "reasoning": "<1 sentence explaining why this might be noise or priced-in>"
 }}"""
+
 
 PROMPTS = [CLASSIFICATION_PROMPT, SKEPTIC_PROMPT]
 

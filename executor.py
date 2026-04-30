@@ -12,12 +12,14 @@ def execute_trade(signal: Signal) -> dict:
     """Execute a trade on Polymarket or log a dry-run. Synchronous."""
     daily_spent = abs(logger.get_daily_pnl())
     if daily_spent + signal.bet_amount > config.DAILY_LOSS_LIMIT_USD:
-        return _log_and_return(signal, status="rejected_daily_limit", order_id=None)
+        return _log_and_return(signal, status="rejected_daily_limit", order_id=None, token_id=token_id)
+
+    token_id = get_token_id(signal.market, signal.side)
 
     if config.DRY_RUN:
-        return _log_and_return(signal, status="dry_run", order_id=None)
+        return _log_and_return(signal, status="dry_run", order_id=None, token_id=token_id)
 
-    return _execute_live(signal)
+    return _execute_live(signal, token_id=token_id)
 
 
 async def execute_trade_async(signal: Signal) -> dict:
@@ -25,7 +27,7 @@ async def execute_trade_async(signal: Signal) -> dict:
     return await asyncio.get_event_loop().run_in_executor(None, execute_trade, signal)
 
 
-def _execute_live(signal: Signal) -> dict:
+def _execute_live(signal: Signal, token_id: str | None) -> dict:
     """Place a real order via Polymarket CLOB client."""
     try:
         from py_clob_client.client import ClobClient
@@ -40,9 +42,9 @@ def _execute_live(signal: Signal) -> dict:
 
         client.set_api_creds(client.create_or_derive_api_creds())
 
-        token_id = get_token_id(signal.market, signal.side)
+        # token_id already passed in
         if not token_id:
-            return _log_and_return(signal, status="error_no_token", order_id=None)
+            return _log_and_return(signal, status="error_no_token", order_id=None, token_id=None)
 
         price = signal.market.yes_price if signal.side == "YES" else signal.market.no_price
 
@@ -65,7 +67,7 @@ def _execute_live(signal: Signal) -> dict:
         return _log_and_return(signal, status=f"error_{type(e).__name__}", order_id=None)
 
 
-def _log_and_return(signal: Signal, status: str, order_id: str | None) -> dict:
+def _log_and_return(signal: Signal, status: str, order_id: str | None, token_id: str | None = None) -> dict:
     """Log trade to SQLite and return result dict."""
     trade_id = logger.log_trade(
         market_id=signal.market.condition_id,
@@ -85,6 +87,7 @@ def _log_and_return(signal: Signal, status: str, order_id: str | None) -> dict:
         news_latency_ms=signal.news_latency_ms,
         classification_latency_ms=signal.classification_latency_ms,
         total_latency_ms=signal.total_latency_ms,
+        token_id=token_id,
     )
 
     return {

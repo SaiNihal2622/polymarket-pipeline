@@ -239,7 +239,7 @@ def _startup_cleanup():
 
 
 # ── Settings ─────────────────────────────────────────────────────────────────
-DEMO_HOURS_WINDOW = float(getattr(config, "DEMO_HOURS_WINDOW", 24))    # markets closing within N hours
+DEMO_HOURS_WINDOW = float(os.getenv("DEMO_HOURS_WINDOW", str(getattr(config, "DEMO_HOURS_WINDOW", 30))))    # 30h window: niche short-resolution markets where AI has real edge
 SCAN_INTERVAL_MIN = int(getattr(config, "SCAN_INTERVAL_MIN", 30))       # re-scan every N minutes
 RESOLVE_INTERVAL_MIN = int(getattr(config, "RESOLVE_INTERVAL_MIN", 10)) # check resolutions every N minutes
 ACCURACY_THRESHOLD = float(getattr(config, "ACCURACY_THRESHOLD", 70.0)) # % to unlock live trading
@@ -464,6 +464,11 @@ def scan_and_trade() -> dict:
 
     # ── HARD BLOCKLIST ──────────────────────────────────────────────────
     HARD_SKIP = [
+        # Finance/stocks — empirical 0% accuracy (0W/2L)
+        "close above", "close below", "(spy)", "(qqq)", "(nvda)", "(tsla)",
+        "(aapl)", "(msft)", "(googl)", "(meta)", "(amzn)", "(nflx)",
+        "s&p 500", "nasdaq", "dow jones", "russell", "vix",
+        "stock close", "stock price", "share price", "earnings", "10-year",
         # Long-dated futures (can't resolve in 48h)
         "world series", "super bowl", "stanley cup", "french open", "wimbledon",
         "nba champion", "nba finals", "nfl afc", "nfl nfc", "nhl playoffs",
@@ -547,14 +552,15 @@ def scan_and_trade() -> dict:
     except Exception as e:
         log.warning(f"[engine] news matching failed: {e}")
 
-    # Batch whale + copy-trade signals
-    all_ids = [m.condition_id for m in all_candidates[:150]]
+    # Batch whale + copy-trade signals (now ALL candidates — bigger window catches whales)
+    all_ids = [m.condition_id for m in all_candidates[:300]]
     try:
-        whale_map = bulk_whale_signals(all_ids[:40], token_map=token_map)
+        whale_map = bulk_whale_signals(all_ids[:120], token_map=token_map)
     except Exception:
         whale_map = {}
     try:
-        copy_map = build_copy_signals(set(all_ids), top_n=30, min_usd=50.0)
+        # top_n=80 wallets, min_usd=15 — more wallets surface more signals on niche markets
+        copy_map = build_copy_signals(set(all_ids), top_n=80, min_usd=15.0)
         console.print(f"  [dim]Whale:{len(whale_map)} Copy:{len(copy_map)} News-matched:{len(news_map)}[/dim]")
     except Exception:
         copy_map = {}
@@ -588,7 +594,7 @@ def scan_and_trade() -> dict:
         price      = market.yes_price
         tok        = token_map.get(market.condition_id)
 
-        if hours_left > 48 or price < 0.07 or price > 0.93:
+        if hours_left > 30 or price < 0.10 or price > 0.90:
             continue
 
         is_crypto = any(k in q_lower for k in CRYPTO_KW)
@@ -626,12 +632,9 @@ def scan_and_trade() -> dict:
             wh_dir  = ws.direction
             wh_conf = min(0.80, abs(ws.yes_bias - 0.5) * 2.2)
 
-        # ── S4: CLOB crowd (only counts at true extremes) ──────────────
+        # ── S4: CLOB crowd — DISABLED (29% accuracy, 4W/10L)
+        # Kept as informational signal only; never fires a trade.
         clob_dir, clob_conf = "neutral", 0.0
-        if price >= 0.72:
-            clob_dir, clob_conf = "bullish", price
-        elif price <= 0.28:
-            clob_dir, clob_conf = "bearish", 1.0 - price
 
         # ── S5: AI Research pass 1 (analyst) ──────────────────────────
         gem_dir, gem_conf, gem_mat, gem_res_obj = "neutral", 0.0, 0.0, None
@@ -639,9 +642,12 @@ def scan_and_trade() -> dict:
         has_news  = len(matched_headlines) >= 1
         has_news2 = len(matched_headlines) >= 2
 
+        # Research budget: AI runs on virtually all in-window markets.
+        # Apify web search invoked inside research_market when Gemini uncertain.
+        # Only skip ultra-low-volume markets (<$80) to save budget.
         should_research = (
-            ai_calls_left > 0 and hours_left <= 36
-            and (has_news or cp_conf >= 0.40 or clob_conf >= 0.65 or market.volume >= 3000)
+            ai_calls_left > 0 and hours_left <= 30
+            and market.volume >= 80
         )
         if should_research:
             try:
@@ -659,7 +665,8 @@ def scan_and_trade() -> dict:
         # consensus_agreed = True only if both passes agree on direction.
         consensus_agreed = False
         consensus_score  = 0.0
-        if gem_dir != "neutral" and ai_calls_left > 0 and has_news:
+        # Always run skeptic pass when AI gave a direction — consensus is our highest-accuracy gate
+        if gem_dir != "neutral" and ai_calls_left > 0:
             try:
                 from classifier import classify as _classify, SKEPTIC_PROMPT
                 top_headline = matched_headlines[0] if matched_headlines else market.question
@@ -703,9 +710,9 @@ def scan_and_trade() -> dict:
         signals_record["consensus"] = f"{gem_dir}:{consensus_score:.3f}" if consensus_agreed else "neutral"
         signals_record["rrf"]       = f"{gem_dir}:{rrf_score:.3f}" if rrf_score >= 0.35 else "neutral"
 
-        # Agreeing signals per direction
-        bull_sigs  = [(l,c) for l,d,c in all_sigs if d == "bullish" and c > 0]
-        bear_sigs  = [(l,c) for l,d,c in all_sigs if d == "bearish"  and c > 0]
+        # Agreeing signals per direction (crowd EXCLUDED — 29% accuracy poisons signal)
+        bull_sigs  = [(l,c) for l,d,c in all_sigs if d == "bullish" and c > 0 and l != "crowd"]
+        bear_sigs  = [(l,c) for l,d,c in all_sigs if d == "bearish"  and c > 0 and l != "crowd"]
         max_bull   = max((c for _,c in bull_sigs), default=0.0)
         max_bear   = max((c for _,c in bear_sigs), default=0.0)
         boost_b    = min(0.18, sum(dyn_weights.get(l,0.05)*0.5 for l,_ in bull_sigs))
@@ -730,71 +737,42 @@ def scan_and_trade() -> dict:
         def _dir(d): return "YES" if d == "bullish" else "NO"
         strategies_to_try: list[tuple[str, str, float]] = []
 
-        # ── Single-signal strategies ───────────────────────────────────
-        # S1: Pure AI (analyst pass only, needs news)
-        if gem_dir != "neutral" and gem_conf >= 0.45 and has_news:
-            strategies_to_try.append(("S1_ai_only", _dir(gem_dir), gem_conf))
+        # ── CONSENSUS-FIRST ENGINE ──
+        # Past trial: S8 alone hit 47% (random). RRF score isn't enough.
+        # The ONLY proven path is consensus (AI + Skeptic both agree).
+        # We allow S8 only when RRF is EXTREMELY high (≥0.70) AND consensus agrees.
 
-        # S2: Crowd extreme (price already reflects strong consensus)
-        if clob_dir != "neutral" and clob_conf >= 0.78:
-            strategies_to_try.append(("S2_crowd_only", _dir(clob_dir), clob_conf))
-
-        # S3: Copy-trade only (wallets putting real money)
-        if cp_dir != "neutral" and cp_conf >= 0.55:
-            strategies_to_try.append(("S3_copy_only", _dir(cp_dir), cp_conf))
-
-        # S4: Whale only (large holder bias)
-        if wh_dir != "neutral" and wh_conf >= 0.50:
-            strategies_to_try.append(("S4_whale_only", _dir(wh_dir), wh_conf))
-
-        # ── Consensus / skeptic strategies ────────────────────────────
-        # S5: Consensus — analyst + skeptic BOTH agree (devil's advocate passed)
-        if consensus_agreed and consensus_score >= 0.40:
+        # ★★★ S5: CONSENSUS — analyst + skeptic agree. THE primary strategy.
+        if consensus_agreed and consensus_score >= 0.50:
             strategies_to_try.append(("S5_consensus", _dir(gem_dir), consensus_score))
 
-        # S6: High materiality — AI says news is very significant (≥0.55)
-        if gem_dir != "neutral" and gem_mat >= 0.55 and has_news:
-            strategies_to_try.append(("S6_hi_materiality", _dir(gem_dir), gem_mat))
-
-        # ── RRF composite strategies ───────────────────────────────────
-        # S7: RRF composite score ≥0.40 (price_room + recency + niche + materiality)
-        if gem_dir != "neutral" and rrf_score >= 0.40:
-            strategies_to_try.append(("S7_rrf_composite", _dir(gem_dir), rrf_score))
-
-        # S8: RRF high-conviction (≥0.50) — all 5 RRF dimensions strong
-        if gem_dir != "neutral" and rrf_score >= 0.50:
+        # ★★ S8: ULTRA-HIGH RRF + consensus required (was 0.55, no consensus needed → 47%)
+        if (gem_dir != "neutral" and rrf_score >= 0.70 and consensus_agreed):
             strategies_to_try.append(("S8_rrf_highconv", _dir(gem_dir), rrf_score + 0.05))
 
-        # ── Multi-signal combo strategies ─────────────────────────────
-        # S9: AI + 2 news headlines (strong news context)
-        if gem_dir != "neutral" and gem_conf >= 0.38 and has_news2:
-            strategies_to_try.append(("S9_ai_news2", _dir(gem_dir), gem_conf + 0.06))
-
-        # S10: AI + crowd agree same direction
-        if (gem_dir != "neutral" and gem_conf >= 0.35
-                and clob_dir == gem_dir and clob_conf >= 0.65):
-            strategies_to_try.append(("S10_ai_crowd", _dir(gem_dir), max(gem_conf, clob_conf)))
-
-        # S11: AI + copy agree same direction
-        if (gem_dir != "neutral" and gem_conf >= 0.35
-                and cp_dir == gem_dir and cp_conf >= 0.40):
-            strategies_to_try.append(("S11_ai_copy", _dir(gem_dir), max(gem_conf, cp_conf)))
-
-        # S12: Copy + Whale agree same direction
-        if (cp_dir != "neutral" and cp_conf >= 0.45
-                and wh_dir == cp_dir and wh_conf >= 0.40):
-            strategies_to_try.append(("S12_copy_whale", _dir(cp_dir), max(cp_conf, wh_conf)))
-
-        # S13: 3+ signals agree (any combo)
-        if n_agree >= 3 and best_score > 0:
-            strategies_to_try.append(("S13_multi3", best_side, best_score))
-
-        # S14: MAX-score baseline (control group — current approach)
-        if best_score >= 0.52 and (has_news or clob_conf >= 0.72 or cp_conf >= 0.50):
-            strategies_to_try.append(("S14_max_baseline", best_side, best_score))
+        # ★★ S6: HIGH-MATERIALITY + consensus required
+        if (gem_dir != "neutral" and gem_mat >= 0.70
+                and gem_conf >= 0.60 and consensus_agreed):
+            strategies_to_try.append(("S6_hi_materiality", _dir(gem_dir), gem_mat))
 
         if not strategies_to_try:
             continue
+
+        # ── PER-MARKET DEDUP: pick the SINGLE best strategy per market ──
+        # Previously: 1 market spawned 5+ duplicate rows (inflated stats).
+        # Now: each market produces exactly ONE trade under its top strategy.
+        # Priority order based on empirical accuracy from the trial:
+        STRAT_PRIORITY = {
+            "S5_consensus":      100,  # consensus = highest conviction
+            "S8_rrf_highconv":    90,  # RRF ≥0.55
+            "S7_rrf_composite":   80,  # RRF ≥0.45 + materiality/consensus/news
+            "S6_hi_materiality":  70,  # AI mat ≥0.65 + conf ≥0.55 (backup)
+        }
+        strategies_to_try.sort(
+            key=lambda s: STRAT_PRIORITY.get(s[0], 0), reverse=True
+        )
+        # Keep only the top-priority strategy
+        strategies_to_try = strategies_to_try[:1]
 
         # ── Log one trade per strategy ─────────────────────────────────
         allowed, reason = can_trade_today()
@@ -806,8 +784,8 @@ def scan_and_trade() -> dict:
         strats_logged = 0
 
         for strat_name, strat_side, strat_score in strategies_to_try:
-            # Skip if already logged this (market_id, strategy) combo
-            combo_key = f"{market.condition_id}::{strat_name}"
+            # Skip if market already logged (extra safety)
+            combo_key = f"{market.condition_id}"
             if combo_key in already_logged:
                 continue
 
