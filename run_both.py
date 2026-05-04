@@ -38,7 +38,7 @@ if __name__ == "__main__":
     # Dashboard in main thread to ensure Railway health checks pass
     try:
         from web_dashboard import app
-        port = int(os.getenv("PORT", "8080"))
+        port = int(os.getenv("PORT", "8081"))
         print(f"📊 Dashboard listening on 0.0.0.0:{port}", flush=True)
         # We run the Flask app in the main thread
         app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)

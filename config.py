@@ -25,6 +25,11 @@ NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "nvidia/llama-3.1-nemotron-70b-instruct
 # --- Ollama ---
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
+# --- Mimo AI (Premium Backend) ---
+MIMO_API_KEY = os.getenv("MIMO_API_KEY", "")
+MIMO_MODEL = os.getenv("MIMO_MODEL", "mimo-v2.5-pro")
+MIMO_BASE_URL = os.getenv("MIMO_BASE_URL", "https://token-plan-sgp.xiaomimimo.com/v1")
+
 # --- Polymarket CLOB ---
 POLYMARKET_API_KEY = os.getenv("POLYMARKET_API_KEY", "")
 POLYMARKET_API_SECRET = os.getenv("POLYMARKET_API_SECRET", "")
@@ -90,11 +95,6 @@ RSS_FEEDS = [
     "https://news.google.com/rss/search?q=NBA+game+result+OR+NBA+trade+OR+NBA+injury&hl=en-US&gl=US&ceid=US:en",
     "https://news.google.com/rss/search?q=76ers+OR+Lakers+OR+Celtics+OR+Warriors+OR+Bucks&hl=en-US&gl=US&ceid=US:en",
 
-    # ── Cricket / IPL ────────────────────────────────────────────────────────
-    "https://news.google.com/rss/search?q=IPL+2026+cricket&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=IPL+match+result+OR+cricket+T20+2026&hl=en-US&gl=US&ceid=US:en",
-    "https://feeds.bbci.co.uk/sport/cricket/rss.xml",
-
     # ── Tennis ───────────────────────────────────────────────────────────────
     "https://news.google.com/rss/search?q=ATP+tennis+2026+OR+WTA+tennis+2026&hl=en-US&gl=US&ceid=US:en",
     "https://news.google.com/rss/search?q=Djokovic+OR+Alcaraz+OR+Sinner+OR+Medvedev+tennis&hl=en-US&gl=US&ceid=US:en",
@@ -114,14 +114,6 @@ RSS_FEEDS = [
 
     # ── Science / Space ──────────────────────────────────────────────────────
     "https://news.google.com/rss/search?q=SpaceX+OR+NASA+OR+Starship+2026&hl=en-US&gl=US&ceid=US:en",
-    # ── Specialized Sports (Cricket/IPL) ──────────────────────────────────────
-    "https://www.espncricinfo.com/rss/content/story/feeds/0.xml",
-    "https://www.cricbuzz.com/rss/cbz_news.xml",
-    "https://news.google.com/rss/search?q=IPL+2026+OR+Cricket+Match+OR+IPL+Trade&hl=en-IN&gl=IN&ceid=IN:en",
-    "https://timesofindia.indiatimes.com/rssfeeds/54829575.cms",
-    "https://sports.ndtv.com/rss/cricket",
-    "https://www.hindustantimes.com/rss/cricket/rssfeed.xml",
-    "https://www.news18.com/rss/cricket.xml",
 ]
 
 # --- Pipeline Settings (tuned for $20 bankroll) ---
@@ -200,8 +192,8 @@ TWITTER_KEYWORDS = [
     "Fed rate", "tariff", "Congress", "White House", "sanctions",
     "Trump", "Biden", "election", "Supreme Court",
     # Sports
-    "IPL", "NBA", "NFL", "Champions League", "World Cup",
-    "Premier League", "cricket", "playoffs",
+    "NBA", "NFL", "Champions League", "World Cup",
+    "Premier League", "playoffs",
     # Science / Space
     "SpaceX", "Starship", "NASA", "climate",
     # Entertainment

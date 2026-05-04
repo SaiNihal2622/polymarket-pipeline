@@ -99,13 +99,16 @@ class PipelineV2:
 
             self.stats["markets_matched"] += len(matched)
 
-            # Classify against each matched market
-            for market in matched:
-                try:
-                    classification = await classify_async(
-                        event.headline, market, event.source
-                    )
+            # Classify all matched markets in parallel
+            tasks = [classify_async(event.headline, m, event.source) for m in matched]
+            classifications = await asyncio.gather(*tasks, return_exceptions=True)
 
+            for market, classification in zip(matched, classifications):
+                if isinstance(classification, Exception):
+                    log.warning(f"[pipeline] Classification error for {market.question}: {classification}")
+                    continue
+
+                try:
                     signal = detect_edge_v2(market, classification, event)
 
                     # Log consensus disagreements for transparency
@@ -129,7 +132,7 @@ class PipelineV2:
                             f"({signal.total_latency_ms}ms)"
                         )
                 except Exception as e:
-                    log.warning(f"[pipeline] Classification error: {e}")
+                    log.warning(f"[pipeline] Signal detection error: {e}")
 
     async def _execute_signals(self):
         """Execute trades from the signal queue."""

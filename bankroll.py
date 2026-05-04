@@ -101,9 +101,9 @@ def can_trade_today() -> tuple[bool, str]:
     is_demo = os.getenv("DRY_RUN", "true").lower() == "true"
     bankroll = get_current_bankroll()
     pnl_today = todays_pnl()
-    # Demo mode: 50% loss cap (virtual money — learning mode)
+    # Demo mode: 30% loss cap (virtual money — learning mode, prevents total wipeout)
     # Live mode: 15% loss cap (real money — strict protection)
-    cap = 0.50 if is_demo else DAILY_LOSS_CAP
+    cap = 0.30 if is_demo else DAILY_LOSS_CAP
     if pnl_today < -(bankroll * cap):
         return False, f"Daily loss cap hit: ${pnl_today:.2f} < -{cap:.0%}"
     return True, "ok"

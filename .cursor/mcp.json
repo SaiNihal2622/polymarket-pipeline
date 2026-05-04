@@ -1,0 +1,30 @@
+﻿{
+    "mcpServers":  {
+                       "hermes-agent":  {
+                                            "args":  [
+                                                         "run",
+                                                         "hermes",
+                                                         "mcp",
+                                                         "serve"
+                                                     ],
+                                            "env":  {
+                                                        "PYTHONIOENCODING":  "utf-8"
+                                                    },
+                                            "command":  "uv",
+                                            "cwd":  "C:/Users/saini/Desktop/mythos/external/hermes-agent"
+                                        },
+                       "code-review-graph":  {
+                                                 "args":  [
+                                                              "code-review-graph",
+                                                              "serve"
+                                                          ],
+                                                 "command":  "uvx"
+                                             },
+                       "mythos-seo":  {
+                                          "args":  [
+                                                       "C:/Users/saini/Desktop/mythos/mcps/mythos-server/index.js"
+                                                   ],
+                                          "command":  "node"
+                                      }
+                   }
+}

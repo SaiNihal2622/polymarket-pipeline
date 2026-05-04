@@ -8,5 +8,5 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 COPY . .
 
-EXPOSE 8080
+EXPOSE 8081
 CMD ["python", "run_both.py"]

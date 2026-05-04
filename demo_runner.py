@@ -766,8 +766,17 @@ def scan_and_trade() -> dict:
         if (gem_dir != "neutral" and rrf_score >= 0.70 and consensus_agreed):
             strategies_to_try.append(("S8_rrf_highconv", _dir(gem_dir), rrf_score + 0.05))
 
-        # Removed S5_consensus and S9_sureshot as they proved highly unprofitable 
-        # (22% and 17.6% win rate respectively) during the trial run.
+        # ★★ S5: CONSENSUS-FIRST — restored with stricter thresholds
+        # Was 22% at rrf>=0.35; now requires rrf>=0.55 + consensus + materiality>=0.50
+        if (gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.50
+                and rrf_score >= 0.55 and gem_mat >= 0.50):
+            strategies_to_try.append(("S5_consensus", _dir(gem_dir), consensus_score))
+
+        # ★★ S9: SURESHOT — restored with ultra-strict thresholds
+        # Was 17.6%; now requires materiality>=0.70 + confidence>=0.75 + rrf>=0.60
+        if (gem_dir != "neutral" and gem_mat >= 0.70 and gem_conf >= 0.75
+                and rrf_score >= 0.60 and consensus_agreed):
+            strategies_to_try.append(("S9_sureshot", _dir(gem_dir), gem_conf))
 
         if not strategies_to_try:
             continue
@@ -778,6 +787,8 @@ def scan_and_trade() -> dict:
         # Priority order based on empirical accuracy from the trial:
         STRAT_PRIORITY = {
             "S8_rrf_highconv":   200,  # 100% win rate -> Top priority
+            "S9_sureshot":       150,  # Ultra-strict: mat>=0.70 + conf>=0.75
+            "S5_consensus":       90,  # Restored with stricter thresholds
             "S7_rrf_composite":   80,  # RRF ≥0.45 + materiality/consensus/news
             "S6_hi_materiality":  70,  # AI mat ≥0.65 + conf ≥0.55 (backup)
         }

@@ -526,7 +526,7 @@ def health():
 
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "8080"))
+    port = int(os.getenv("PORT", "8081"))
     print(f"Dashboard running on http://0.0.0.0:{port}")
     print(f"   DB: {DB_PATH}")
     app.run(host="0.0.0.0", port=port, debug=False)
