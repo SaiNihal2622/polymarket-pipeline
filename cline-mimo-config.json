@@ -1,0 +1,16 @@
+{
+  "apiProvider": "openai-compatible",
+  "openAiCompatibleBaseUrl": "https://api.xiaomimimo.com/v1",
+  "openAiCompatibleApiKey": "tp-svf9i440f463x5kzorbkymjdt0s7fm60ew34belv2tng58i7",
+  "openAiCompatibleModelId": "mimo-v2.5-pro",
+  "openAiCompatibleModelInfo": {
+    "maxTokens": 8192,
+    "contextWindow": 128000,
+    "supportsImages": false,
+    "supportsComputerUse": false,
+    "supportsPromptCache": false,
+    "inputPrice": 0.0,
+    "outputPrice": 0.0,
+    "description": "MiMo v2.5 Pro - Xiaomi's reasoning model"
+  }
+}
