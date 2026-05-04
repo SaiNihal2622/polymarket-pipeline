@@ -150,8 +150,11 @@ def _resolve_via_gamma_direct(market_id: str, timeout: int = 10) -> float | None
     attempts = [
         {"conditionId": market_id, "limit": 1},
         {"condition_id": market_id, "limit": 1},
-        {"clob_token_ids": market_id, "limit": 1},
     ]
+    # Only try clob_token_ids if market_id is numeric (a token ID)
+    if market_id.isdigit():
+        attempts.append({"clob_token_ids": market_id, "limit": 1})
+        
     for params in attempts:
         try:
             r = httpx.get(f"{GAMMA_API}/markets", params=params, timeout=timeout, verify=False)

@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import json
 import time
+import asyncio
 import logging
+import random
 from dataclasses import dataclass
 
 import config
@@ -23,123 +25,119 @@ log = logging.getLogger(__name__)
 # LLM Backend Abstraction
 # ============================================================
 
-def _call_llm(prompt: str, temperature: float = 0.1, max_tokens: int = 200) -> str:
-    """Call the configured LLM backend. Returns raw text response."""
+async def _call_llm_async(prompt: str, temperature: float = 0.1, max_tokens: int = 200) -> str:
+    """Call the configured LLM backend asynchronously."""
     provider = config.LLM_PROVIDER
 
     if provider == "gemini":
-        return _call_gemini(prompt, temperature, max_tokens)
+        return await _call_gemini_async(prompt, temperature, max_tokens)
     elif provider == "groq":
-        return _call_groq(prompt, temperature, max_tokens)
+        return await _call_groq_async(prompt, temperature, max_tokens)
     elif provider == "nvidia":
-        return _call_nvidia(prompt, temperature, max_tokens)
+        return await _call_nvidia_async(prompt, temperature, max_tokens)
     elif provider == "ollama":
-        return _call_ollama(prompt, temperature, max_tokens)
+        return await _call_ollama_async(prompt, temperature, max_tokens)
+    elif provider == "mimo":
+        return await _call_mimo_async(prompt, temperature, max_tokens)
     elif provider == "anthropic":
-        return _call_anthropic(prompt, temperature, max_tokens)
+        return await _call_anthropic_async(prompt, temperature, max_tokens)
     elif provider == "mixed":
-        # Mixed mode: default to Gemini for single calls
-        return _call_gemini(prompt, temperature, max_tokens)
+        if config.MIMO_API_KEY:
+            return await _call_mimo_async(prompt, temperature, max_tokens)
+        return await _call_gemini_async(prompt, temperature, max_tokens)
     else:
-        # Auto-detect
-        if config.GEMINI_API_KEY:
-            return _call_gemini(prompt, temperature, max_tokens)
+        if config.MIMO_API_KEY:
+            return await _call_mimo_async(prompt, temperature, max_tokens)
+        elif config.GEMINI_API_KEY:
+            return await _call_gemini_async(prompt, temperature, max_tokens)
         elif config.GROQ_API_KEY:
-            return _call_groq(prompt, temperature, max_tokens)
+            return await _call_groq_async(prompt, temperature, max_tokens)
         elif config.NVIDIA_API_KEY:
-            return _call_nvidia(prompt, temperature, max_tokens)
-        elif config.OLLAMA_BASE_URL:
-            return _call_ollama(prompt, temperature, max_tokens)
+            return await _call_nvidia_async(prompt, temperature, max_tokens)
         elif config.ANTHROPIC_API_KEY:
-            return _call_anthropic(prompt, temperature, max_tokens)
+            return await _call_anthropic_async(prompt, temperature, max_tokens)
         else:
-            raise RuntimeError("No LLM configured — set GEMINI_API_KEY, GROQ_API_KEY, NVIDIA_API_KEY, ANTHROPIC_API_KEY, or OLLAMA_BASE_URL")
+            raise RuntimeError("No LLM configured")
+
+
+def _call_llm(prompt: str, temperature: float = 0.1, max_tokens: int = 200) -> str:
+    """Synchronous fallback (calls async version and runs it)."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # This is tricky from within a running loop, but _call_llm should ideally not be used in V2
+            import nest_asyncio
+            nest_asyncio.apply()
+        return loop.run_until_complete(_call_llm_async(prompt, temperature, max_tokens))
+    except:
+        # Fallback to a truly synchronous way if needed, but we want to move to async
+        return asyncio.run(_call_llm_async(prompt, temperature, max_tokens))
 
 
 _gemini_last_call    = 0.0
 _GEMINI_MIN_INTERVAL = 6.0   # 6s spacing ≈ 10 RPM — safer for free tier (MiroFish doubles calls)
 
 
-def _call_gemini(prompt: str, temperature: float, max_tokens: int, use_search: bool = False) -> str:
-    """
-    Call Gemini with 4s spacing + jitter.
-    429 handling per Google docs (pay-as-you-go):
-      - Attempt 1: wait with truncated exponential backoff (2s)
-      - Attempt 2: wait 4s
-      - Attempt 3+: instant Groq fallback — never stall the scan
-    503 (UNAVAILABLE): 1 retry after 5s, then Groq fallback.
-    """
-    import time as _time
-    import random as _random
+async def _call_gemini_async(prompt: str, temperature: float, max_tokens: int, use_search: bool = False) -> str:
+    """Async Gemini call with rate limiting and fallback."""
     global _gemini_last_call
-
     from google import genai
+    
     client = genai.Client(api_key=config.GEMINI_API_KEY)
-
-    jitter  = _random.uniform(0.1, 0.8)
-    elapsed = _time.time() - _gemini_last_call
-    wait    = max(0.0, _GEMINI_MIN_INTERVAL + jitter - elapsed)
+    
+    jitter = random.uniform(0.1, 0.5)
+    elapsed = time.time() - _gemini_last_call
+    wait = max(0.0, _GEMINI_MIN_INTERVAL + jitter - elapsed)
     if wait > 0:
-        _time.sleep(wait)
+        await asyncio.sleep(wait)
 
-    _429_backoffs = [2, 5]   # short backoff — fall to Groq fast (2s, 5s, then Groq)
-
+    _429_backoffs = [2, 5]
     for attempt in range(3):
         try:
-            _gemini_last_call = _time.time()
-            gen_config = {
-                "temperature": temperature,
-                "max_output_tokens": max_tokens,
-            }
-            # Search grounding: let Gemini look up live info about the market
-            # Only used for fast-closing markets where RSS has no coverage
+            _gemini_last_call = time.time()
+            gen_config = {"temperature": temperature, "max_output_tokens": max_tokens}
             call_kwargs = {"model": config.GEMINI_MODEL, "contents": prompt, "config": gen_config}
+            
             if use_search and config.USE_SEARCH_GROUNDING:
                 from google.genai import types as _gtypes
-                call_kwargs["config"] = {**gen_config, "tools": [_gtypes.Tool(google_search=_gtypes.GoogleSearch())]}
-            response = client.models.generate_content(**call_kwargs)
+                call_kwargs["config"]["tools"] = [_gtypes.Tool(google_search=_gtypes.GoogleSearch())]
+            
+            response = await client.models.generate_content(**call_kwargs)
             return response.text.strip()
         except Exception as e:
             err = str(e)
             if "429" in err or "RESOURCE_EXHAUSTED" in err:
                 if attempt < len(_429_backoffs):
-                    wait_s = _429_backoffs[attempt] + _random.uniform(0, 1)
-                    log.warning(f"[gemini] 429 — backoff {wait_s:.1f}s (attempt {attempt+1}/3)")
-                    _time.sleep(wait_s)
+                    await asyncio.sleep(_429_backoffs[attempt] + random.uniform(0, 1))
                 else:
-                    log.warning("[gemini] 429 persists → falling back to Groq")
-                    return _call_groq(prompt, temperature, max_tokens)
+                    return await _call_groq_async(prompt, temperature, max_tokens)
             elif "503" in err or "UNAVAILABLE" in err:
                 if attempt == 0:
-                    log.warning("[gemini] 503 — retrying once after 5s")
-                    _time.sleep(5)
+                    await asyncio.sleep(5)
                 else:
-                    log.warning("[gemini] 503 retry failed → falling back to Groq")
-                    return _call_groq(prompt, temperature, max_tokens)
+                    return await _call_groq_async(prompt, temperature, max_tokens)
             else:
                 raise
 
-    # All retries exhausted — Groq fallback
-    log.warning("[gemini] All retries exhausted → Groq fallback")
-    return _call_groq(prompt, temperature, max_tokens)
+    return await _call_groq_async(prompt, temperature, max_tokens)
 
 
-def _call_groq(prompt: str, temperature: float, max_tokens: int) -> str:
-    """Call Groq API (fast inference) with 429 retry logic."""
-    import time as _time
-    from groq import Groq
-    client = Groq(api_key=config.GROQ_API_KEY)
+def _call_gemini(prompt: str, temperature: float, max_tokens: int, use_search: bool = False) -> str:
+    """Legacy sync wrapper."""
+    return asyncio.run(_call_gemini_async(prompt, temperature, max_tokens, use_search))
+
+
+async def _call_groq_async(prompt: str, temperature: float, max_tokens: int) -> str:
+    """Async Groq call."""
+    from groq import AsyncGroq
+    client = AsyncGroq(api_key=config.GROQ_API_KEY)
     model = config.CLASSIFICATION_MODEL
-    # Map non-groq model names to a safe default
-    if not model or "claude" in model or "haiku" in model or "sonnet" in model or "gemma" in model:
-        model = "llama-3.3-70b-versatile"  # best free Groq model — much better than 8b
+    if not model or "claude" in model or "sonnet" in model:
+        model = "llama-3.3-70b-versatile"
 
-    max_retries = 4
-    backoff = 15
-
-    for attempt in range(max_retries):
+    for attempt in range(3):
         try:
-            response = client.chat.completions.create(
+            response = await client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=temperature,
@@ -147,89 +145,120 @@ def _call_groq(prompt: str, temperature: float, max_tokens: int) -> str:
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
-            err = str(e)
-            if "429" in err or "rate_limit" in err.lower() or "resource_exhausted" in err.lower():
-                wait = backoff * (2 ** attempt)
-                log.warning(f"[groq] 429 rate limit — waiting {wait}s before retry {attempt+1}/{max_retries}")
-                _time.sleep(wait)
+            if "429" in str(e):
+                await asyncio.sleep(5 * (attempt + 1))
             else:
                 raise
+    raise RuntimeError("Groq failed")
 
-    raise RuntimeError(f"Groq API failed after {max_retries} retries")
+
+def _call_groq(prompt: str, temperature: float, max_tokens: int) -> str:
+    """Legacy sync wrapper."""
+    return asyncio.run(_call_groq_async(prompt, temperature, max_tokens))
 
 
-def _call_nvidia(prompt: str, temperature: float, max_tokens: int) -> str:
-    """Call NVIDIA NIM API (Nemotron-70B). OpenAI-compatible endpoint."""
-    import time as _time
+async def _call_mimo_async(prompt: str, temperature: float, max_tokens: int) -> str:
+    """Async Mimo call."""
     import httpx
-
-    api_key = config.NVIDIA_API_KEY
+    api_key = config.MIMO_API_KEY
     if not api_key:
-        log.warning("[nvidia] No NVIDIA_API_KEY — falling back to Groq")
-        return _call_groq(prompt, temperature, max_tokens)
+        return await _call_gemini_async(prompt, temperature, max_tokens)
 
-    model = config.NVIDIA_MODEL
-    url = "https://integrate.api.nvidia.com/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    url = f"{config.MIMO_BASE_URL}/chat/completions"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {
-        "model": model,
+        "model": config.MIMO_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
 
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            with httpx.Client(timeout=30) as client:
-                resp = client.post(url, headers=headers, json=payload)
+    async with httpx.AsyncClient(timeout=45) as client:
+        for attempt in range(3):
+            try:
+                resp = await client.post(url, headers=headers, json=payload)
                 resp.raise_for_status()
-                data = resp.json()
-                return data["choices"][0]["message"]["content"].strip()
-        except Exception as e:
-            err = str(e)
-            if "429" in err or "rate" in err.lower():
-                wait = 5 * (attempt + 1)
-                log.warning(f"[nvidia] 429 — waiting {wait}s (attempt {attempt+1}/{max_retries})")
-                _time.sleep(wait)
-            elif attempt < max_retries - 1:
-                log.warning(f"[nvidia] Error: {e} — retrying")
-                _time.sleep(2)
-            else:
-                log.warning(f"[nvidia] All retries failed — falling back to Groq")
-                return _call_groq(prompt, temperature, max_tokens)
-
-    log.warning("[nvidia] Exhausted retries — Groq fallback")
-    return _call_groq(prompt, temperature, max_tokens)
+                return resp.json()["choices"][0]["message"]["content"].strip()
+            except Exception as e:
+                if attempt < 2:
+                    await asyncio.sleep(2)
+                else:
+                    return await _call_gemini_async(prompt, temperature, max_tokens)
+    return await _call_gemini_async(prompt, temperature, max_tokens)
 
 
-def _call_ollama(prompt: str, temperature: float, max_tokens: int) -> str:
-    """Call Ollama local model."""
-    import ollama
-    model = config.CLASSIFICATION_MODEL
-
-    response = ollama.chat(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        options={"temperature": temperature, "num_predict": max_tokens},
-    )
-    return response["message"]["content"].strip()
+def _call_mimo(prompt: str, temperature: float, max_tokens: int) -> str:
+    """Legacy sync wrapper."""
+    return asyncio.run(_call_mimo_async(prompt, temperature, max_tokens))
 
 
-def _call_anthropic(prompt: str, temperature: float, max_tokens: int) -> str:
-    """Call Anthropic Claude API."""
-    import anthropic
-    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
-    response = client.messages.create(
+async def _call_nvidia_async(prompt: str, temperature: float, max_tokens: int) -> str:
+    """Async NVIDIA NIM call."""
+    import httpx
+    api_key = config.NVIDIA_API_KEY
+    if not api_key:
+        return await _call_groq_async(prompt, temperature, max_tokens)
+
+    url = "https://integrate.api.nvidia.com/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    payload = {
+        "model": config.NVIDIA_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        for attempt in range(2):
+            try:
+                resp = await client.post(url, headers=headers, json=payload)
+                resp.raise_for_status()
+                return resp.json()["choices"][0]["message"]["content"].strip()
+            except Exception:
+                await asyncio.sleep(2)
+        return await _call_groq_async(prompt, temperature, max_tokens)
+
+
+async def _call_anthropic_async(prompt: str, temperature: float, max_tokens: int) -> str:
+    """Async Anthropic call."""
+    from anthropic import AsyncAnthropic
+    client = AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY)
+    response = await client.messages.create(
         model=config.CLASSIFICATION_MODEL,
         max_tokens=max_tokens,
         temperature=temperature,
         messages=[{"role": "user", "content": prompt}],
     )
     return response.content[0].text.strip()
+
+
+def _call_anthropic(prompt: str, temperature: float, max_tokens: int) -> str:
+    """Legacy sync wrapper."""
+    return asyncio.run(_call_anthropic_async(prompt, temperature, max_tokens))
+
+
+async def _call_ollama_async(prompt: str, temperature: float, max_tokens: int) -> str:
+    """Async Ollama call."""
+    import ollama
+    # Note: ollama-python doesn't have an official async client yet, but we can wrap it
+    # Or use httpx to call the API directly. Let's use httpx for true async.
+    import httpx
+    url = f"{config.OLLAMA_BASE_URL}/api/chat"
+    payload = {
+        "model": config.CLASSIFICATION_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+        "options": {"temperature": temperature, "num_predict": max_tokens},
+    }
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(url, json=payload)
+        resp.raise_for_status()
+        return resp.json()["message"]["content"].strip()
+
+
+def _call_ollama(prompt: str, temperature: float, max_tokens: int) -> str:
+    """Legacy sync wrapper."""
+    return asyncio.run(_call_ollama_async(prompt, temperature, max_tokens))
 
 
 # ============================================================
@@ -392,10 +421,10 @@ def _parse_json_response(text: str) -> dict:
         raise  # re-raise if we can't extract anything useful
 
 
-def _single_classify_with_provider(prompt_template: str, headline: str, market: Market, source: str,
-                                     temperature: float = 0.1, use_search: bool = False,
-                                     force_provider: str | None = None) -> dict:
-    """Run a single classification pass with a specific provider. Returns raw result dict."""
+async def _single_classify_with_provider_async(prompt_template: str, headline: str, market: Market, source: str,
+                                              temperature: float = 0.1, use_search: bool = False,
+                                              force_provider: str | None = None) -> dict:
+    """Run a single classification pass with a specific provider asynchronously."""
     prompt = prompt_template.format(
         question=market.question,
         yes_price=market.yes_price,
@@ -403,19 +432,24 @@ def _single_classify_with_provider(prompt_template: str, headline: str, market: 
         source=source,
     )
 
-    # Route to the specified provider
-    if force_provider == "gemini":
-        text = _call_gemini(prompt, temperature=temperature, max_tokens=200, use_search=use_search)
-    elif force_provider == "groq":
-        text = _call_groq(prompt, temperature=temperature, max_tokens=200)
-    elif force_provider == "nvidia":
-        text = _call_nvidia(prompt, temperature=temperature, max_tokens=200)
-    elif config.LLM_PROVIDER in ("gemini", "mixed") or (not config.LLM_PROVIDER and config.GEMINI_API_KEY):
-        text = _call_gemini(prompt, temperature=temperature, max_tokens=200, use_search=use_search)
-    else:
-        text = _call_llm(prompt, temperature=temperature, max_tokens=200)
+    try:
+        if force_provider == "gemini":
+            text = await _call_gemini_async(prompt, temperature=temperature, max_tokens=200, use_search=use_search)
+        elif force_provider == "groq":
+            text = await _call_groq_async(prompt, temperature=temperature, max_tokens=200)
+        elif force_provider == "nvidia":
+            text = await _call_nvidia_async(prompt, temperature=temperature, max_tokens=200)
+        elif force_provider == "mimo":
+            text = await _call_mimo_async(prompt, temperature=temperature, max_tokens=200)
+        elif config.LLM_PROVIDER in ("gemini", "mixed") or (not config.LLM_PROVIDER and config.GEMINI_API_KEY):
+            text = await _call_gemini_async(prompt, temperature=temperature, max_tokens=200, use_search=use_search)
+        else:
+            text = await _call_llm_async(prompt, temperature=temperature, max_tokens=200)
 
-    result = _parse_json_response(text)
+        result = _parse_json_response(text)
+    except Exception as e:
+        log.warning(f"[classifier] Error in {force_provider or 'default'}: {e}")
+        return {"direction": "neutral", "materiality": 0.0, "reasoning": f"Error: {e}", "provider": force_provider}
 
     direction = result.get("direction", "neutral")
     if direction not in ("bullish", "bearish", "neutral"):
@@ -435,116 +469,79 @@ def _single_classify_with_provider(prompt_template: str, headline: str, market: 
     }
 
 
+def _single_classify_with_provider(prompt_template: str, headline: str, market: Market, source: str,
+                                     temperature: float = 0.1, use_search: bool = False,
+                                     force_provider: str | None = None) -> dict:
+    """Legacy sync wrapper."""
+    return asyncio.run(_single_classify_with_provider_async(prompt_template, headline, market, source, temperature, use_search, force_provider))
+
+
 # Legacy wrapper for backward compatibility
 def _single_classify(prompt_template: str, headline: str, market: Market, source: str,
                      temperature: float = 0.1, use_search: bool = False) -> dict:
     return _single_classify_with_provider(prompt_template, headline, market, source, temperature, use_search)
 
 
-def classify(headline: str, market: Market, source: str = "unknown", use_search: bool = False) -> Classification:
+async def classify_async(headline: str, market: Market, source: str = "unknown", use_search: bool = False) -> Classification:
     """
-    Classify a news headline against a market question.
-
-    MODE: "mixed" (default) — Heterogeneous AI Consensus
-      Pass 1: Gemini 2.0 Flash (Analyst) — fast, web-grounded
-      Pass 2: Groq Llama-3.3-70B (Skeptic) — independent model family
-      Pass 3: NVIDIA Nemotron-70B (Reflector) — third independent model
-
-    ALL THREE must agree on direction AND each must score materiality >= 0.70
-    for a trade to execute. This eliminates model-specific hallucinations.
+    Classify a news headline against a market question asynchronously.
+    Runs consensus passes in parallel for maximum performance.
     """
     start = time.time()
     num_passes = config.CONSENSUS_PASSES if config.CONSENSUS_ENABLED else 1
     provider = config.LLM_PROVIDER
-
-    # In mixed mode: use 3 different AI providers
     is_mixed = provider == "mixed"
 
     if is_mixed:
-        model_name = "mixed/gemini+groq+nvidia"
-        # Each pass uses a DIFFERENT provider + DIFFERENT prompt
+        model_name = "mixed/parallel-consensus"
         pass_configs = [
-            {"provider": "gemini",  "prompt": PROMPTS[0], "temp": 0.1, "label": "Gemini-Analyst"},
-            {"provider": "groq",    "prompt": PROMPTS[1], "temp": 0.15, "label": "Groq-Skeptic"},
-            {"provider": "nvidia",  "prompt": PROMPTS[2], "temp": 0.1, "label": "Nvidia-Reflector"},
+            {"provider": "mimo",    "prompt": PROMPTS[0], "temp": 0.1,  "label": "Mimo-Analyst"},
+            {"provider": "gemini",  "prompt": PROMPTS[1], "temp": 0.1,  "label": "Gemini-Skeptic"},
+            {"provider": "groq",    "prompt": PROMPTS[2], "temp": 0.15, "label": "Groq-Reflector"},
         ]
     else:
-        if provider == "gemini":
-            model_name = "gemini/" + config.GEMINI_MODEL
-        elif provider == "groq":
-            model_name = "groq/" + config.CLASSIFICATION_MODEL
-        elif provider == "nvidia":
-            model_name = "nvidia/" + config.NVIDIA_MODEL
-        elif provider == "ollama":
-            model_name = "ollama/" + config.CLASSIFICATION_MODEL
-        else:
-            model_name = config.CLASSIFICATION_MODEL
-        pass_configs = None
+        model_name = provider
+        pass_configs = [
+            {"provider": provider, "prompt": PROMPTS[i % len(PROMPTS)], "temp": 0.1 + (0.05 * i), "label": f"Pass-{i+1}"}
+            for i in range(num_passes)
+        ]
+
+    # Run all passes in PARALLEL
+    tasks = [
+        _single_classify_with_provider_async(
+            cfg["prompt"], headline, market, source,
+            temperature=cfg["temp"],
+            use_search=(cfg["provider"] == "gemini"),
+            force_provider=cfg["provider"]
+        )
+        for cfg in pass_configs
+    ]
+    
+    results = await asyncio.gather(*tasks)
+    
+    # Attach labels for logging
+    for i, res in enumerate(results):
+        res["label"] = pass_configs[i]["label"]
+        log.info(f"[consensus] {res['label']}: {res['direction']} mat={res['materiality']:.2f}")
+
+    latency = int((time.time() - start) * 1000)
+
+    # Check consensus
+    directions = [r["direction"] for r in results]
+    materialities = [r["materiality"] for r in results]
+    non_neutral = [d for d in directions if d != "neutral"]
+
+    if not non_neutral:
+        return Classification(
+            direction="neutral", materiality=0.0, reasoning="All passes neutral",
+            latency_ms=latency, model=model_name, consensus_passes=len(results), consensus_agreed=True
+        )
 
     try:
-        results = []
-
-        if is_mixed and pass_configs:
-            # === HETEROGENEOUS CONSENSUS: 3 different AI models ===
-            for cfg in pass_configs:
-                try:
-                    result = _single_classify_with_provider(
-                        cfg["prompt"], headline, market, source,
-                        temperature=cfg["temp"],
-                        use_search=(cfg["provider"] == "gemini"),
-                        force_provider=cfg["provider"],
-                    )
-                    result["label"] = cfg["label"]
-                    results.append(result)
-                    log.info(f"[consensus] {cfg['label']}: {result['direction']} mat={result['materiality']:.2f}")
-                except Exception as e:
-                    log.warning(f"[consensus] {cfg['label']} failed: {e} — marking neutral")
-                    results.append({
-                        "direction": "neutral",
-                        "materiality": 0.0,
-                        "reasoning": f"{cfg['label']} error: {e}",
-                        "provider": cfg["provider"],
-                        "label": cfg["label"],
-                    })
-        else:
-            # === SINGLE-PROVIDER MODE (legacy) ===
-            for i in range(num_passes):
-                prompt = PROMPTS[i % len(PROMPTS)]
-                temp = 0.1 if i == 0 else 0.2
-                result = _single_classify_with_provider(prompt, headline, market, source, temperature=temp, use_search=use_search)
-                result["label"] = f"Pass-{i+1}"
-                results.append(result)
-
-        latency = int((time.time() - start) * 1000)
-
-        # Check consensus
-        directions = [r["direction"] for r in results]
-        materialities = [r["materiality"] for r in results]
-
-        non_neutral = [d for d in directions if d != "neutral"]
-
-        if not non_neutral:
-            return Classification(
-                direction="neutral",
-                materiality=0.0,
-                reasoning="All classification passes returned neutral",
-                latency_ms=latency,
-                model=model_name,
-                consensus_passes=len(results),
-                consensus_agreed=True,
-            )
-
-        # Count occurrences of each direction
         from collections import Counter
         counts = Counter(directions)
         non_neutral_counts = {d: c for d, c in counts.items() if d != "neutral"}
-
-        if not non_neutral_counts:
-            dominant_direction = "neutral"
-            count = 0
-        else:
-            dominant_direction, count = max(non_neutral_counts.items(), key=lambda x: x[1])
-
+        dominant_direction, count = max(non_neutral_counts.items(), key=lambda x: x[1])
         total_passes = len(results)
         agreement_ratio = count / total_passes
         agreed = agreement_ratio >= config.CONSENSUS_MIN_AGREEMENT
@@ -714,12 +711,16 @@ def research_market(market: Market, news_context: list[str] | None = None) -> Cl
     )
 
 
-async def classify_async(headline: str, market: Market, source: str = "unknown") -> Classification:
-    """Async wrapper around classify()."""
-    import asyncio
-    return await asyncio.get_event_loop().run_in_executor(
-        None, classify, headline, market, source
-    )
+def classify(headline: str, market: Market, source: str = "unknown", use_search: bool = False) -> Classification:
+    """Sync wrapper around classify_async."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            import nest_asyncio
+            nest_asyncio.apply()
+        return loop.run_until_complete(classify_async(headline, market, source, use_search))
+    except:
+        return asyncio.run(classify_async(headline, market, source, use_search))
 
 
 if __name__ == "__main__":

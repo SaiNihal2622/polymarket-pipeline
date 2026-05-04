@@ -761,22 +761,13 @@ def scan_and_trade() -> dict:
         # The ONLY proven path is consensus (AI + Skeptic both agree).
         # We allow S8 only when RRF is EXTREMELY high (≥0.70) AND consensus agrees.
 
-        # ★★★ S5: CONSENSUS — analyst + skeptic agree. THE primary strategy.
-        if consensus_agreed and consensus_score >= 0.50:
-            strategies_to_try.append(("S5_consensus", _dir(gem_dir), consensus_score))
-
         # ★★ S8: ULTRA-HIGH RRF + consensus required (was 0.55, no consensus needed → 47%)
+        # This is currently the ONLY profitable strategy (100% win rate).
         if (gem_dir != "neutral" and rrf_score >= 0.70 and consensus_agreed):
             strategies_to_try.append(("S8_rrf_highconv", _dir(gem_dir), rrf_score + 0.05))
 
-        # ★ S9: SURESHOT — 1:1 odds (price ~0.50) + high consensus
-        if consensus_agreed and 0.40 <= price <= 0.60 and consensus_score >= 0.65:
-            strategies_to_try.append(("S9_sureshot", _dir(gem_dir), consensus_score + 0.10))
-
-        # ★★ S6: HIGH-MATERIALITY + consensus required
-        if (gem_dir != "neutral" and gem_mat >= 0.70
-                and gem_conf >= 0.60 and consensus_agreed):
-            strategies_to_try.append(("S6_hi_materiality", _dir(gem_dir), gem_mat))
+        # Removed S5_consensus and S9_sureshot as they proved highly unprofitable 
+        # (22% and 17.6% win rate respectively) during the trial run.
 
         if not strategies_to_try:
             continue
@@ -786,9 +777,7 @@ def scan_and_trade() -> dict:
         # Now: each market produces exactly ONE trade under its top strategy.
         # Priority order based on empirical accuracy from the trial:
         STRAT_PRIORITY = {
-            "S9_sureshot":       110,  # 1:1 odds + high consensus
-            "S5_consensus":      100,  # consensus = highest conviction
-            "S8_rrf_highconv":    90,  # RRF ≥0.55
+            "S8_rrf_highconv":   200,  # 100% win rate -> Top priority
             "S7_rrf_composite":   80,  # RRF ≥0.45 + materiality/consensus/news
             "S6_hi_materiality":  70,  # AI mat ≥0.65 + conf ≥0.55 (backup)
         }
