@@ -94,6 +94,24 @@ def _get_recent_trades(limit: int = 30) -> list[dict]:
                 r["signals_parsed"] = {}
         else:
             r["signals_parsed"] = {}
+        # Compute time-to-resolve
+        r["time_to_resolve"] = ""
+        if r.get("resolved_at") and r.get("created_at"):
+            try:
+                created = datetime.fromisoformat(r["created_at"].replace("Z", "+00:00"))
+                resolved = datetime.fromisoformat(r["resolved_at"].replace("Z", "+00:00"))
+                delta = resolved - created
+                total_secs = int(delta.total_seconds())
+                if total_secs < 0:
+                    r["time_to_resolve"] = ""
+                elif total_secs < 3600:
+                    r["time_to_resolve"] = f"{total_secs // 60}m"
+                elif total_secs < 86400:
+                    r["time_to_resolve"] = f"{total_secs // 3600}h {(total_secs % 3600) // 60}m"
+                else:
+                    r["time_to_resolve"] = f"{total_secs // 86400}d {(total_secs % 86400) // 3600}h"
+            except Exception:
+                pass
     return rows
 
 
@@ -447,7 +465,7 @@ HTML = r"""
       <table>
         <thead>
           <tr>
-            <th>Time</th><th>Market Question</th><th>Side</th><th>Edge</th><th>Amount</th><th>Status</th><th>Result</th>
+            <th>Time</th><th>Market Question</th><th>Side</th><th>Edge</th><th>Amount</th><th>Status</th><th>Result</th><th>TTR</th>
           </tr>
         </thead>
         <tbody>
@@ -468,6 +486,7 @@ HTML = r"""
                 <span class="pill pill-pending">PENDING</span>
               {% endif %}
             </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">{{ t.time_to_resolve }}</td>
           </tr>
           {% endfor %}
         </tbody>

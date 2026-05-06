@@ -16,18 +16,18 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
 # --- Google Gemini ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")  # Flash = 2000 RPM (Tier 1). Pro-preview was 2 RPM = 429s
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")  # Flash = 15 RPM free tier, fast + good
 
 # --- NVIDIA ---
 NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "")
-NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "nvidia/llama-3.3-70b-instruct")
+NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "nvidia/llama-3.3-70b-instruct")  # Best free NVIDIA model
 
 # --- Ollama ---
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
 # --- Mimo AI (Premium Backend) ---
 MIMO_API_KEY = os.getenv("MIMO_API_KEY", "")
-MIMO_MODEL = os.getenv("MIMO_MODEL", "mimo-v2-pro")
+MIMO_MODEL = os.getenv("MIMO_MODEL", "mimo-v2-pro")  # Best MiMo model
 MIMO_BASE_URL = os.getenv("MIMO_BASE_URL", "https://token-plan-sgp.xiaomimimo.com/v1")
 
 # --- Polymarket CLOB ---
@@ -116,12 +116,12 @@ RSS_FEEDS = [
     "https://news.google.com/rss/search?q=SpaceX+OR+NASA+OR+Starship+2026&hl=en-US&gl=US&ceid=US:en",
 ]
 
-# --- Pipeline Settings (tuned for $20 bankroll) ---
-BANKROLL_USD = float(os.getenv("BANKROLL_USD", "20"))
+# --- Pipeline Settings (tuned for $1 flat bets, 80% accuracy target) ---
+BANKROLL_USD = float(os.getenv("BANKROLL_USD", "100"))
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
-MAX_BET_USD = float(os.getenv("MAX_BET_USD", "2"))         # $2 max per trade on $20 bankroll
-DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "5"))  # Stop after $5 loss/day
-EDGE_THRESHOLD = float(os.getenv("EDGE_THRESHOLD", "0.15"))  # Increased to 0.15 for stronger edge
+MAX_BET_USD = float(os.getenv("MAX_BET_USD", "1"))          # $1 flat bet per signal
+DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "10"))  # Stop after $10 loss/day
+EDGE_THRESHOLD = float(os.getenv("EDGE_THRESHOLD", "0.20"))  # 0.20 = only strong edges pass
 NEWS_LOOKBACK_HOURS = 12
 
 # --- Demo Runner Settings ---
@@ -155,7 +155,7 @@ USE_SEARCH_GROUNDING = os.getenv("USE_SEARCH_GROUNDING", "true").lower() == "tru
 CONSENSUS_ENABLED = os.getenv("CONSENSUS_ENABLED", "true").lower() == "true"
 CONSENSUS_PASSES = int(os.getenv("CONSENSUS_PASSES", "3"))       # Analyst + Skeptic + Reflector
 STRICT_CONSENSUS = os.getenv("STRICT_CONSENSUS", "true").lower() == "true"
-CONSENSUS_MIN_AGREEMENT = float(os.getenv("CONSENSUS_MIN_AGREEMENT", "1.0"))  # 1.0 = unanimous
+CONSENSUS_MIN_AGREEMENT = float(os.getenv("CONSENSUS_MIN_AGREEMENT", "0.67"))  # 2/3 agreement = good signal
 
 # --- RRF Multi-Signal Settings (inspired by SkillX fusion scoring) ---
 RRF_K = 60  # Reciprocal Rank Fusion constant
