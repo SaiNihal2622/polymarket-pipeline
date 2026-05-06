@@ -71,9 +71,12 @@ def _print_accuracy_oneliner():
         acc_str = f"[{color}]{acc:.1f}%[/{color}] ({wins}W / {losses}L)"
 
     need = max(0, MIN_RESOLVED - total_resolved)
+    ttr = stats.get("avg_ttr_hours", 0)
+    ttr_str = f" | TTR: {ttr:.1f}h" if ttr > 0 else ""
     console.print(
         f"  [bold cyan]▶ ACCURACY:[/bold cyan] {acc_str}  "
         f"| logged={total_logged}  resolved={total_resolved}  "
+        f"{ttr_str}"
         f"| need {need} more to go-live"
     )
 
@@ -594,7 +597,13 @@ def scan_and_trade() -> dict:
         price      = market.yes_price
         tok        = token_map.get(market.condition_id)
 
-        if hours_left > 30 or price < 0.10 or price > 0.90:
+        if hours_left > 30 or price < 0.15 or price > 0.85:
+            continue
+
+        # Skip "uncertain zone" prices (0.40-0.60) — crowd says 50/50, no edge
+        # These are coin-flip markets where AI has no informational advantage
+        if 0.40 <= price <= 0.60:
+            log.debug(f"[skip:uncertain] price={price:.2f} in dead zone: {q_lower[:50]}")
             continue
 
         is_crypto = any(k in q_lower for k in CRYPTO_KW)

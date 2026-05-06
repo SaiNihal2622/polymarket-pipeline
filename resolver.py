@@ -455,8 +455,8 @@ def run_resolution_check(verbose: bool = True) -> dict:
 
     if verbose: print(f"[resolver] Checking {len(pending)} pending demo trades...")
 
-    # Void trades stuck >720h (Polymarket likely resolved but Gamma not indexed)
-    voided = _void_stuck_trades(pending, max_pending_hours=720.0)
+    # Void trades stuck >168h (7 days — Polymarket likely resolved but Gamma not indexed)
+    voided = _void_stuck_trades(pending, max_pending_hours=168.0)
     if voided > 0:
         pending = get_pending_demo_trades()  # refresh
 
@@ -509,6 +509,18 @@ def get_accuracy_stats() -> dict:
         JOIN outcomes o ON t.id = o.trade_id
         WHERE t.status IN ('demo', 'dry_run')
     """).fetchone()
+
+    # TTR: average time-to-resolution for resolved trades
+    ttr_row = conn.execute("""
+        SELECT AVG(
+            (julianday(o.resolved_at) - julianday(t.created_at)) * 24
+        ) as avg_ttr_hours
+        FROM trades t
+        JOIN outcomes o ON t.id = o.trade_id
+        WHERE t.status IN ('demo', 'dry_run')
+          AND o.resolved_at IS NOT NULL
+          AND t.created_at IS NOT NULL
+    """).fetchone()
     conn.close()
 
     total = int(row["total"] or 0)
@@ -518,6 +530,7 @@ def get_accuracy_stats() -> dict:
     pnl   = float(row["total_pnl"] or 0)
     decisive = total - pushes
     acc = (wins / decisive * 100) if decisive > 0 else 0.0
+    avg_ttr = float(ttr_row["avg_ttr_hours"] or 0) if ttr_row and ttr_row["avg_ttr_hours"] else 0.0
     return {
         "total_logged":   int(logged_row["total"] or 0),
         "total_resolved": total,
@@ -525,6 +538,7 @@ def get_accuracy_stats() -> dict:
         "accuracy_pct": round(acc, 1),
         "total_pnl": round(pnl, 2),
         "ready_for_live": decisive >= 10 and acc >= 70.0,
+        "avg_ttr_hours": round(avg_ttr, 1),
     }
 
 

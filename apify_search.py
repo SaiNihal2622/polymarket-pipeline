@@ -21,10 +21,119 @@ _search_cache: dict[str, tuple[list[str], float]] = {}
 _CACHE_TTL = 300  # 5 minutes
 
 
+def search_mimo_web(query: str, num_results: int = 5) -> list[str]:
+    """
+    Use MiMo's tool-calling flow for web search.
+    1. Send query to MiMo with web_search tool
+    2. Execute actual search via DuckDuckGo
+    3. Feed results back to MiMo for synthesis
+    4. Return synthesized search results
+    """
+    import config as _cfg
+    if not getattr(_cfg, "MIMO_API_KEY", ""):
+        return []
+
+    try:
+        import httpx
+        import json as _json
+
+        base_url = (getattr(_cfg, "MIMO_BASE_URL", "") or "https://api.xiaomimimo.com/v1").rstrip("/")
+        headers = {
+            "Authorization": f"Bearer {_cfg.MIMO_API_KEY}",
+            "Content-Type": "application/json",
+        }
+
+        # Define web_search tool for MiMo's tool-calling
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "web_search",
+                    "description": "Search the web for real-time information, news, prices, and current events",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "The search query"}
+                        },
+                        "required": ["query"]
+                    }
+                }
+            }
+        ]
+
+        # Turn 1: Ask MiMo to search
+        resp1 = httpx.post(
+            f"{base_url}/chat/completions",
+            headers=headers,
+            json={
+                "model": getattr(_cfg, "MIMO_MODEL", "mimo-v2.5-pro") or "mimo-v2.5-pro",
+                "messages": [{"role": "user", "content": f"Search the web for: {query}"}],
+                "tools": tools,
+                "tool_choice": "auto",
+                "max_tokens": 300,
+            },
+            timeout=15,
+        )
+
+        if resp1.status_code != 200:
+            return []
+
+        data1 = resp1.json()
+        msg1 = data1.get("choices", [{}])[0].get("message", {})
+        tool_calls = msg1.get("tool_calls")
+
+        if not tool_calls:
+            # MiMo didn't call the tool, fall back to DuckDuckGo directly
+            return _ddg_search(query, num_results)
+
+        # Turn 2: Execute actual search via DuckDuckGo
+        search_query = _json.loads(tool_calls[0]["function"]["arguments"]).get("query", query)
+        raw_results = _ddg_search(search_query, num_results)
+
+        if not raw_results:
+            return []
+
+        # Turn 3: Feed results back to MiMo for synthesis
+        search_context = "\n".join([f"- {r}" for r in raw_results])
+        messages = [
+            {"role": "user", "content": f"Search the web for: {query}"},
+            msg1,
+            {
+                "role": "tool",
+                "tool_call_id": tool_calls[0]["id"],
+                "content": search_context,
+            }
+        ]
+
+        resp2 = httpx.post(
+            f"{base_url}/chat/completions",
+            headers=headers,
+            json={
+                "model": getattr(_cfg, "MIMO_MODEL", "mimo-v2.5-pro") or "mimo-v2.5-pro",
+                "messages": messages,
+                "max_tokens": 500,
+            },
+            timeout=15,
+        )
+
+        if resp2.status_code == 200:
+            synthesized = resp2.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+            if synthesized:
+                log.info(f"[search/mimo-web] '{query[:40]}...' → synthesized {len(synthesized)} chars")
+                return [f"MiMo Web Search: {synthesized[:500]}"]
+
+        # Fall back to raw results if synthesis fails
+        return raw_results
+
+    except Exception as e:
+        log.debug(f"[search/mimo-web] failed: {e}")
+        return []
+
+
 def search_web(query: str, num_results: int = 5) -> list[str]:
     """
     Search the web and return top results as list of "title: snippet" strings.
-    Tries DuckDuckGo first (instant), then Apify (slower but reliable).
+    Provider priority: MiMo Web Search > DuckDuckGo > Apify > Gemini Grounding
     """
     cache_key = query.lower().strip()[:120]
     if cache_key in _search_cache:
@@ -32,20 +141,26 @@ def search_web(query: str, num_results: int = 5) -> list[str]:
         if time.time() - ts < _CACHE_TTL:
             return results
 
-    # 1. DuckDuckGo (primary — free, instant, no rate limits per key)
+    # 1. MiMo Web Search (AI-powered synthesis with tool-calling)
+    results = search_mimo_web(query, num_results)
+    if results:
+        _search_cache[cache_key] = (results, time.time())
+        return results
+
+    # 2. DuckDuckGo (free, instant, no rate limits per key)
     results = _ddg_search(query, num_results)
     if results:
         _search_cache[cache_key] = (results, time.time())
         return results
 
-    # 2. Apify fallback
+    # 3. Apify fallback
     if APIFY_TOKEN:
         results = _apify_search(query, num_results)
         if results:
             _search_cache[cache_key] = (results, time.time())
             return results
 
-    # 3. Gemini grounding fallback (when DDG + Apify both fail)
+    # 4. Gemini grounding fallback (when all else fails)
     results = _gemini_grounding_search(query)
     if results:
         _search_cache[cache_key] = (results, time.time())
