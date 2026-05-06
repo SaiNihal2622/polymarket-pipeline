@@ -42,22 +42,26 @@ async def _call_llm_async(prompt: str, temperature: float = 0.1, max_tokens: int
     elif provider == "anthropic":
         return await _call_anthropic_async(prompt, temperature, max_tokens)
     elif provider == "mixed":
+        # Priority: MiMo → NVIDIA → Groq → Gemini (Gemini last due to 429s)
         if config.MIMO_API_KEY:
             return await _call_mimo_async(prompt, temperature, max_tokens)
         elif config.NVIDIA_API_KEY:
             return await _call_nvidia_async(prompt, temperature, max_tokens)
+        elif config.GROQ_API_KEY:
+            return await _call_groq_async(prompt, temperature, max_tokens)
         elif config.GEMINI_API_KEY:
             return await _call_gemini_async(prompt, temperature, max_tokens)
         return await _call_groq_async(prompt, temperature, max_tokens)
     else:
+        # Default fallback: MiMo → NVIDIA → Groq → Gemini → Anthropic
         if config.MIMO_API_KEY:
             return await _call_mimo_async(prompt, temperature, max_tokens)
-        elif config.GEMINI_API_KEY:
-            return await _call_gemini_async(prompt, temperature, max_tokens)
-        elif config.GROQ_API_KEY:
-            return await _call_groq_async(prompt, temperature, max_tokens)
         elif config.NVIDIA_API_KEY:
             return await _call_nvidia_async(prompt, temperature, max_tokens)
+        elif config.GROQ_API_KEY:
+            return await _call_groq_async(prompt, temperature, max_tokens)
+        elif config.GEMINI_API_KEY:
+            return await _call_gemini_async(prompt, temperature, max_tokens)
         elif config.ANTHROPIC_API_KEY:
             return await _call_anthropic_async(prompt, temperature, max_tokens)
         else:
@@ -83,7 +87,11 @@ _GEMINI_MIN_INTERVAL = 6.0   # 6s spacing ≈ 10 RPM — safer for free tier (Mi
 
 
 async def _call_gemini_async(prompt: str, temperature: float, max_tokens: int, use_search: bool = False) -> str:
-    """Async Gemini call with rate limiting and fallback."""
+    """Async Gemini call with rate limiting and fallback.
+    
+    Fallback chain on 429/503: MiMo → NVIDIA → Groq (skips redundant retries
+    when Gemini is persistently rate-limited).
+    """
     global _gemini_last_call
     from google import genai
     
@@ -95,8 +103,9 @@ async def _call_gemini_async(prompt: str, temperature: float, max_tokens: int, u
     if wait > 0:
         await asyncio.sleep(wait)
 
-    _429_backoffs = [2, 5]
-    for attempt in range(3):
+    # Only 1 retry for 429 — fail fast to MiMo/NVIDIA instead of wasting 15s
+    _429_backoffs = [2]
+    for attempt in range(2):
         try:
             _gemini_last_call = time.time()
             gen_config = {"temperature": temperature, "max_output_tokens": max_tokens}
@@ -112,25 +121,18 @@ async def _call_gemini_async(prompt: str, temperature: float, max_tokens: int, u
             err = str(e)
             if "429" in err or "RESOURCE_EXHAUSTED" in err:
                 if attempt < len(_429_backoffs):
+                    log.warning(f"[gemini] 429 — backoff {_429_backoffs[attempt]}s (attempt {attempt+1}/2)")
                     await asyncio.sleep(_429_backoffs[attempt] + random.uniform(0, 1))
                 else:
-                    if config.MIMO_API_KEY:
-                        return await _call_mimo_async(prompt, temperature, max_tokens)
-                    elif config.NVIDIA_API_KEY:
-                        return await _call_nvidia_async(prompt, temperature, max_tokens)
-                    return await _call_groq_async(prompt, temperature, max_tokens)
+                    log.warning("[gemini] 429 persists → falling back to MiMo/NVIDIA/Groq")
+                    break  # exit loop to fallback chain below
             elif "503" in err or "UNAVAILABLE" in err:
-                if attempt == 0:
-                    await asyncio.sleep(5)
-                else:
-                    if config.MIMO_API_KEY:
-                        return await _call_mimo_async(prompt, temperature, max_tokens)
-                    elif config.NVIDIA_API_KEY:
-                        return await _call_nvidia_async(prompt, temperature, max_tokens)
-                    return await _call_groq_async(prompt, temperature, max_tokens)
+                log.warning("[gemini] 503 — falling back to MiMo/NVIDIA/Groq")
+                break
             else:
                 raise
 
+    # Fallback chain: MiMo → NVIDIA → Groq
     if config.MIMO_API_KEY:
         return await _call_mimo_async(prompt, temperature, max_tokens)
     elif config.NVIDIA_API_KEY:
@@ -199,8 +201,14 @@ async def _call_mimo_async(prompt: str, temperature: float, max_tokens: int) -> 
                 if attempt < 2:
                     await asyncio.sleep(2)
                 else:
-                    return await _call_gemini_async(prompt, temperature, max_tokens)
-    return await _call_gemini_async(prompt, temperature, max_tokens)
+                    # Fallback: NVIDIA → Groq (NOT Gemini to avoid circular loop)
+                    if config.NVIDIA_API_KEY:
+                        return await _call_nvidia_async(prompt, temperature, max_tokens)
+                    return await _call_groq_async(prompt, temperature, max_tokens)
+    # Fallback: NVIDIA → Groq
+    if config.NVIDIA_API_KEY:
+        return await _call_nvidia_async(prompt, temperature, max_tokens)
+    return await _call_groq_async(prompt, temperature, max_tokens)
 
 
 def _call_mimo(prompt: str, temperature: float, max_tokens: int) -> str:
@@ -510,15 +518,16 @@ async def classify_async(headline: str, market: Market, source: str = "unknown",
 
     if is_mixed:
         model_name = "mixed/parallel-consensus"
+        # Priority order: MiMo → NVIDIA → Groq → Gemini (Gemini last due to 429s)
         providers = []
         if config.MIMO_API_KEY:
             providers.append("mimo")
         if config.NVIDIA_API_KEY:
             providers.append("nvidia")
-        if config.GEMINI_API_KEY:
-            providers.append("gemini")
         if config.GROQ_API_KEY:
             providers.append("groq")
+        if config.GEMINI_API_KEY:
+            providers.append("gemini")
         if not providers:
             providers = ["groq"]
         labels_map = {"mimo": "MiMo-Analyst", "nvidia": "NVIDIA-Skeptic", "gemini": "Gemini-Skeptic", "groq": "Groq-Reflector"}
