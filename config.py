@@ -20,14 +20,14 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")  # Flash = 2000 RPM
 
 # --- NVIDIA ---
 NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "")
-NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "nvidia/llama-3.1-nemotron-70b-instruct")
+NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "nvidia/llama-3.3-70b-instruct")
 
 # --- Ollama ---
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
 # --- Mimo AI (Premium Backend) ---
 MIMO_API_KEY = os.getenv("MIMO_API_KEY", "")
-MIMO_MODEL = os.getenv("MIMO_MODEL", "mimo-v2.5-pro")
+MIMO_MODEL = os.getenv("MIMO_MODEL", "mimo-v2-pro")
 MIMO_BASE_URL = os.getenv("MIMO_BASE_URL", "https://token-plan-sgp.xiaomimimo.com/v1")
 
 # --- Polymarket CLOB ---

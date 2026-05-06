@@ -44,7 +44,11 @@ async def _call_llm_async(prompt: str, temperature: float = 0.1, max_tokens: int
     elif provider == "mixed":
         if config.MIMO_API_KEY:
             return await _call_mimo_async(prompt, temperature, max_tokens)
-        return await _call_gemini_async(prompt, temperature, max_tokens)
+        elif config.NVIDIA_API_KEY:
+            return await _call_nvidia_async(prompt, temperature, max_tokens)
+        elif config.GEMINI_API_KEY:
+            return await _call_gemini_async(prompt, temperature, max_tokens)
+        return await _call_groq_async(prompt, temperature, max_tokens)
     else:
         if config.MIMO_API_KEY:
             return await _call_mimo_async(prompt, temperature, max_tokens)
@@ -110,15 +114,27 @@ async def _call_gemini_async(prompt: str, temperature: float, max_tokens: int, u
                 if attempt < len(_429_backoffs):
                     await asyncio.sleep(_429_backoffs[attempt] + random.uniform(0, 1))
                 else:
+                    if config.MIMO_API_KEY:
+                        return await _call_mimo_async(prompt, temperature, max_tokens)
+                    elif config.NVIDIA_API_KEY:
+                        return await _call_nvidia_async(prompt, temperature, max_tokens)
                     return await _call_groq_async(prompt, temperature, max_tokens)
             elif "503" in err or "UNAVAILABLE" in err:
                 if attempt == 0:
                     await asyncio.sleep(5)
                 else:
+                    if config.MIMO_API_KEY:
+                        return await _call_mimo_async(prompt, temperature, max_tokens)
+                    elif config.NVIDIA_API_KEY:
+                        return await _call_nvidia_async(prompt, temperature, max_tokens)
                     return await _call_groq_async(prompt, temperature, max_tokens)
             else:
                 raise
 
+    if config.MIMO_API_KEY:
+        return await _call_mimo_async(prompt, temperature, max_tokens)
+    elif config.NVIDIA_API_KEY:
+        return await _call_nvidia_async(prompt, temperature, max_tokens)
     return await _call_groq_async(prompt, temperature, max_tokens)
 
 
@@ -494,10 +510,21 @@ async def classify_async(headline: str, market: Market, source: str = "unknown",
 
     if is_mixed:
         model_name = "mixed/parallel-consensus"
+        providers = []
+        if config.MIMO_API_KEY:
+            providers.append("mimo")
+        if config.NVIDIA_API_KEY:
+            providers.append("nvidia")
+        if config.GEMINI_API_KEY:
+            providers.append("gemini")
+        if config.GROQ_API_KEY:
+            providers.append("groq")
+        if not providers:
+            providers = ["groq"]
+        labels_map = {"mimo": "MiMo-Analyst", "nvidia": "NVIDIA-Skeptic", "gemini": "Gemini-Skeptic", "groq": "Groq-Reflector"}
         pass_configs = [
-            {"provider": "mimo",    "prompt": PROMPTS[0], "temp": 0.1,  "label": "Mimo-Analyst"},
-            {"provider": "gemini",  "prompt": PROMPTS[1], "temp": 0.1,  "label": "Gemini-Skeptic"},
-            {"provider": "groq",    "prompt": PROMPTS[2], "temp": 0.15, "label": "Groq-Reflector"},
+            {"provider": providers[i % len(providers)], "prompt": PROMPTS[i % len(PROMPTS)], "temp": 0.1 + (0.05 * i), "label": labels_map.get(providers[i % len(providers)], f"Pass-{i+1}")}
+            for i in range(min(3, len(providers)))
         ]
     else:
         model_name = provider
