@@ -667,20 +667,20 @@ def _build_analyst_prompt(market: Market, search_results: list[str]) -> str:
 
 def research_market(market: Market, news_context: list[str] | None = None) -> Classification:
     """
-    MiroFish research: Gemini search → Apify+Groq fallback.
+    MiroFish research: MiMo/NVIDIA primary → Gemini search fallback.
     Strategy:
-      1. Try Gemini with live web search (fast, accurate)
-      2. If Gemini 429/fails → Apify Google Search + Groq llama-3.3-70b
-      3. Return best signal found
+      1. Live web search (DDG → Apify → Gemini grounding)
+      2. MiMo or NVIDIA with web context (primary — fast, no 429s)
+      3. Gemini with search grounding as fallback (when MiMo/NVIDIA fail)
 
     news_context: optional pre-matched headlines from scraper (used as extra context)
     """
     start = time.time()
 
     a_dir, a_mat, a_reason = "neutral", 0.0, ""
-    model_used = "groq"
+    model_used = "none"
 
-    # ── Step 1: Live web search (DDG → Apify) ─────────────────────────────
+    # ── Step 1: Live web search (DDG → Apify → Gemini grounding) ──────────
     web_results: list[str] = []
     try:
         from apify_search import search_market as _search_market
@@ -688,30 +688,70 @@ def research_market(market: Market, news_context: list[str] | None = None) -> Cl
     except Exception as e:
         log.debug(f"[research] web search failed: {e}")
 
+    # If DDG + Apify both failed, use Gemini's built-in search grounding
+    if not web_results:
+        try:
+            from apify_search import _gemini_grounding_search
+            web_results = _gemini_grounding_search(market.question)
+            if web_results:
+                log.info(f"[research] Gemini grounding returned {len(web_results)} results")
+        except Exception as e:
+            log.debug(f"[research] Gemini grounding fallback failed: {e}")
+
     # Prepend any pre-matched news headlines as extra context
     if news_context:
         extra = [f"[news] {h}" for h in news_context[:3]]
         web_results = extra + web_results
 
-    # ── Step 2: Try Gemini with built-in search grounding ─────────────────
-    # Gemini is best when not rate-limited because it searches with context
-    try:
-        gemini_prompt = _build_analyst_prompt(market, web_results)
-        a_text = _call_gemini(gemini_prompt, temperature=0.1, max_tokens=300, use_search=True)
-        a_res  = _parse_json_response(a_text)
-        g_dir  = a_res.get("direction", "neutral")
-        if g_dir not in ("bullish", "bearish", "neutral"):
-            g_dir = "neutral"
-        g_mat    = max(0.0, min(1.0, float(a_res.get("materiality", 0))))
-        g_reason = a_res.get("reasoning", "")
-        if g_dir != "neutral" and g_mat >= 0.30:
-            a_dir, a_mat, a_reason = g_dir, g_mat, g_reason
-            model_used = "gemini+search"
-            log.info(f"[research] Gemini: {g_dir} {g_mat:.2f} '{market.question[:35]}'")
-    except Exception as e:
-        log.debug(f"[research] Gemini unavailable: {e}")
+    # ── Step 2: MiMo/NVIDIA primary (fast, no rate limits) ────────────────
+    primary_prompt = _build_analyst_prompt(market, web_results)
+    for provider_name, call_fn in [
+        ("MiMo", lambda p: _call_mimo_async(p, 0.1, 300)),
+        ("NVIDIA", lambda p: _call_nvidia_async(p, 0.1, 300)),
+    ]:
+        if a_dir != "neutral" and a_mat >= 0.40:
+            break
+        try:
+            p_text = asyncio.run(call_fn(primary_prompt))
+            p_res  = _parse_json_response(p_text)
+            p_dir  = p_res.get("direction", "neutral")
+            if p_dir not in ("bullish", "bearish", "neutral"):
+                p_dir = "neutral"
+            p_mat    = max(0.0, min(1.0, float(p_res.get("materiality", 0))))
+            p_reason = p_res.get("reasoning", "")
+            src_tag  = f"DDG+{provider_name}" if web_results else provider_name
+            conf_mul = 0.95 if web_results else 0.80
 
-    # ── Step 3: Groq with DDG context (always runs as primary or supplement) ─
+            if p_dir != "neutral" and p_mat >= 0.28:
+                if a_dir == "neutral" or p_mat * conf_mul > a_mat:
+                    a_dir    = p_dir
+                    a_mat    = p_mat * conf_mul
+                    a_reason = f"[{src_tag}] {p_reason}"
+                    model_used = src_tag
+                    log.info(f"[research] {src_tag}: {p_dir} {p_mat:.2f} '{market.question[:35]}'")
+        except Exception as e:
+            log.debug(f"[research] {provider_name} failed: {e}")
+
+    # ── Step 3: Gemini with search grounding (fallback) ───────────────────
+    if a_dir == "neutral" or a_mat < 0.40:
+        try:
+            gemini_prompt = _build_analyst_prompt(market, web_results)
+            a_text = _call_gemini(gemini_prompt, temperature=0.1, max_tokens=300, use_search=True)
+            a_res  = _parse_json_response(a_text)
+            g_dir  = a_res.get("direction", "neutral")
+            if g_dir not in ("bullish", "bearish", "neutral"):
+                g_dir = "neutral"
+            g_mat    = max(0.0, min(1.0, float(a_res.get("materiality", 0))))
+            g_reason = a_res.get("reasoning", "")
+            if g_dir != "neutral" and g_mat >= 0.30:
+                if a_dir == "neutral" or g_mat > a_mat:
+                    a_dir, a_mat, a_reason = g_dir, g_mat, g_reason
+                    model_used = "gemini+search"
+                    log.info(f"[research] Gemini: {g_dir} {g_mat:.2f} '{market.question[:35]}'")
+        except Exception as e:
+            log.debug(f"[research] Gemini fallback unavailable: {e}")
+
+    # ── Step 4: Groq last resort ──────────────────────────────────────────
     if a_dir == "neutral" or a_mat < 0.40:
         try:
             groq_prompt = _build_analyst_prompt(market, web_results)

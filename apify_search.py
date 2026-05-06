@@ -45,6 +45,12 @@ def search_web(query: str, num_results: int = 5) -> list[str]:
             _search_cache[cache_key] = (results, time.time())
             return results
 
+    # 3. Gemini grounding fallback (when DDG + Apify both fail)
+    results = _gemini_grounding_search(query)
+    if results:
+        _search_cache[cache_key] = (results, time.time())
+        return results
+
     return []
 
 
@@ -107,6 +113,48 @@ def _apify_search(query: str, num_results: int) -> list[str]:
         return results
     except Exception as e:
         log.debug(f"[search/apify] failed: {e}")
+        return []
+
+
+def _gemini_grounding_search(query: str) -> list[str]:
+    """
+    Use Gemini's built-in Google Search grounding as a last-resort search.
+    Returns search results as list of strings when DDG and Apify both fail.
+    """
+    try:
+        from google import genai
+        from google.genai import types as _gtypes
+        import config as _cfg
+
+        client = genai.Client(api_key=_cfg.GEMINI_API_KEY)
+        prompt = (
+            f"Search the web for: {query}\n\n"
+            f"Return the top 5 most relevant and recent results. "
+            f"For each result, provide: title and a 1-2 sentence summary.\n"
+            f"Format: one result per line as 'Title: Summary'"
+        )
+        gen_config = {
+            "temperature": 0.1,
+            "max_output_tokens": 500,
+            "tools": [_gtypes.Tool(google_search=_gtypes.GoogleSearch())],
+        }
+        response = client.models.generate_content(
+            model=_cfg.GEMINI_MODEL,
+            contents=prompt,
+            config=gen_config,
+        )
+        text = response.text.strip()
+        # Parse lines into results
+        results = []
+        for line in text.split("\n"):
+            line = line.strip().lstrip("0123456789.-*) ")
+            if ":" in line and len(line) > 20:
+                results.append(line[:300])
+        if results:
+            log.info(f"[search/gemini-grounding] '{query[:40]}...' → {len(results)} results")
+        return results[:5]
+    except Exception as e:
+        log.debug(f"[search/gemini-grounding] failed: {e}")
         return []
 
 
