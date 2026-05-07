@@ -187,12 +187,15 @@ def _resolve_via_gamma_direct(market_id: str, timeout: int = 10) -> float | None
     """
     Directly fetch a single market from Gamma by conditionId.
     Tries multiple param formats since the API is inconsistent.
+    Also tries with closed=true for resolved markets.
     """
     if not market_id:
         return None
     attempts = [
         {"conditionId": market_id, "limit": 1},
         {"condition_id": market_id, "limit": 1},
+        {"conditionId": market_id, "limit": 1, "closed": "true"},
+        {"id": market_id, "limit": 1},
     ]
     # Only try clob_token_ids if market_id is numeric (a token ID)
     if market_id.isdigit():
@@ -381,7 +384,7 @@ def _refresh_bulk_cache(pending_trades: list[dict]) -> None:
 
 def _resolve_via_search(question: str) -> float | None:
     """
-    Search-based resolution fallback using MiMo (Gemini is permanently 429'd).
+    Search-based resolution fallback using MiMo API (the working LLM backend).
     Returns 1.0 (YES), 0.0 (NO), or None (error/unclear).
     """
     try:
@@ -391,20 +394,21 @@ def _resolve_via_search(question: str) -> float | None:
 Is the outcome YES or NO? If it happened, answer YES. If not, answer NO. If still ongoing or unclear, answer UNCLEAR.
 Return ONLY one word: YES, NO, or UNCLEAR."""
 
-        # Use MiMo first (most reliable), then NVIDIA, then Groq
+        # Use MiMo API first (most reliable - confirmed working on Railway)
         result_text = None
         if _cfg.MIMO_API_KEY:
             try:
-                r = _httpx.post("https://integrate.api.nvidia.com/v1/chat/completions",
+                r = _httpx.post(f"{_cfg.MIMO_BASE_URL}/chat/completions",
                     headers={"Authorization": f"Bearer {_cfg.MIMO_API_KEY}", "Content-Type": "application/json"},
-                    json={"model": "nvidia/llama-3.3-nemotron-super-49b-v1",
+                    json={"model": _cfg.MIMO_MODEL,
                           "messages": [{"role": "user", "content": prompt}],
                           "temperature": 0.0, "max_tokens": 10},
                     timeout=15)
                 if r.status_code == 200:
                     result_text = r.json()["choices"][0]["message"]["content"].strip()
-            except Exception:
-                pass
+                    log.info(f"[resolver:search] MiMo resolved: {result_text}")
+            except Exception as e:
+                log.debug(f"[resolver:search] MiMo failed: {e}")
         if not result_text and _cfg.NVIDIA_API_KEY:
             try:
                 r = _httpx.post("https://integrate.api.nvidia.com/v1/chat/completions",
