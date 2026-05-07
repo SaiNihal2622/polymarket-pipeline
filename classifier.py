@@ -42,26 +42,22 @@ async def _call_llm_async(prompt: str, temperature: float = 0.1, max_tokens: int
     elif provider == "anthropic":
         return await _call_anthropic_async(prompt, temperature, max_tokens)
     elif provider == "mixed":
-        # Priority: MiMo → NVIDIA → Groq → Gemini (Gemini last due to 429s)
+        # Priority: MiMo → NVIDIA → Groq (Gemini removed — permanent 429s)
         if config.MIMO_API_KEY:
             return await _call_mimo_async(prompt, temperature, max_tokens)
         elif config.NVIDIA_API_KEY:
             return await _call_nvidia_async(prompt, temperature, max_tokens)
         elif config.GROQ_API_KEY:
             return await _call_groq_async(prompt, temperature, max_tokens)
-        elif config.GEMINI_API_KEY:
-            return await _call_gemini_async(prompt, temperature, max_tokens)
-        return await _call_groq_async(prompt, temperature, max_tokens)
+        return await _call_mimo_async(prompt, temperature, max_tokens)
     else:
-        # Default fallback: MiMo → NVIDIA → Groq → Gemini → Anthropic
+        # Default fallback: MiMo → NVIDIA → Groq (Gemini removed)
         if config.MIMO_API_KEY:
             return await _call_mimo_async(prompt, temperature, max_tokens)
         elif config.NVIDIA_API_KEY:
             return await _call_nvidia_async(prompt, temperature, max_tokens)
         elif config.GROQ_API_KEY:
             return await _call_groq_async(prompt, temperature, max_tokens)
-        elif config.GEMINI_API_KEY:
-            return await _call_gemini_async(prompt, temperature, max_tokens)
         elif config.ANTHROPIC_API_KEY:
             return await _call_anthropic_async(prompt, temperature, max_tokens)
         else:
@@ -485,11 +481,9 @@ async def classify_async(headline: str, market: Market, source: str = "unknown",
             providers.append("nvidia")
         if config.GROQ_API_KEY:
             providers.append("groq")
-        if config.GEMINI_API_KEY:
-            providers.append("gemini")
         if not providers:
             providers = ["groq"]
-        labels_map = {"mimo": "MiMo-Analyst", "nvidia": "NVIDIA-Skeptic", "gemini": "Gemini-Skeptic", "groq": "Groq-Reflector"}
+        labels_map = {"mimo": "MiMo-Analyst", "nvidia": "NVIDIA-Skeptic", "groq": "Groq-Reflector"}
         pass_configs = [
             {"provider": providers[i % len(providers)], "prompt": PROMPTS[i % len(PROMPTS)], "temp": 0.1 + (0.05 * i), "label": labels_map.get(providers[i % len(providers)], f"Pass-{i+1}")}
             for i in range(min(3, len(providers)))
@@ -691,26 +685,7 @@ def research_market(market: Market, news_context: list[str] | None = None) -> Cl
         except Exception as e:
             log.debug(f"[research] {provider_name} failed: {e}")
 
-    # ── Step 3: Gemini with search grounding (fallback) ───────────────────
-    if a_dir == "neutral" or a_mat < 0.40:
-        try:
-            gemini_prompt = _build_analyst_prompt(market, web_results)
-            a_text = _call_gemini(gemini_prompt, temperature=0.1, max_tokens=300, use_search=True)
-            a_res  = _parse_json_response(a_text)
-            g_dir  = a_res.get("direction", "neutral")
-            if g_dir not in ("bullish", "bearish", "neutral"):
-                g_dir = "neutral"
-            g_mat    = max(0.0, min(1.0, float(a_res.get("materiality", 0))))
-            g_reason = a_res.get("reasoning", "")
-            if g_dir != "neutral" and g_mat >= 0.30:
-                if a_dir == "neutral" or g_mat > a_mat:
-                    a_dir, a_mat, a_reason = g_dir, g_mat, g_reason
-                    model_used = "gemini+search"
-                    log.info(f"[research] Gemini: {g_dir} {g_mat:.2f} '{market.question[:35]}'")
-        except Exception as e:
-            log.debug(f"[research] Gemini fallback unavailable: {e}")
-
-    # ── Step 4: Groq last resort ──────────────────────────────────────────
+    # ── Step 3: Groq last resort ──────────────────────────────────────────
     if a_dir == "neutral" or a_mat < 0.40:
         try:
             groq_prompt = _build_analyst_prompt(market, web_results)

@@ -6,7 +6,7 @@ load_dotenv()
 # --- LLM Provider ---
 # Recommended: "mixed" (Heterogeneous AI Consensus) — uses Gemini, Groq, and Nvidia together for 80%+ accuracy
 # Options: "mixed" | "gemini" | "groq" | "anthropic" | "nvidia" | "ollama"
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "mixed").lower()
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "mimo").lower()
 
 # --- Anthropic ---
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
