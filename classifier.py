@@ -87,52 +87,11 @@ _GEMINI_MIN_INTERVAL = 6.0   # 6s spacing ≈ 10 RPM — safer for free tier (Mi
 
 
 async def _call_gemini_async(prompt: str, temperature: float, max_tokens: int, use_search: bool = False) -> str:
-    """Async Gemini call with rate limiting and fallback.
+    """Async Gemini call — DISABLED (permanent 429 on this project).
     
-    Fallback chain on 429/503: MiMo → NVIDIA → Groq (skips redundant retries
-    when Gemini is persistently rate-limited).
+    Goes straight to MiMo → NVIDIA → Groq fallback chain.
     """
-    global _gemini_last_call
-    from google import genai
-    
-    client = genai.Client(api_key=config.GEMINI_API_KEY)
-    
-    jitter = random.uniform(0.1, 0.5)
-    elapsed = time.time() - _gemini_last_call
-    wait = max(0.0, _GEMINI_MIN_INTERVAL + jitter - elapsed)
-    if wait > 0:
-        await asyncio.sleep(wait)
-
-    # Only 1 retry for 429 — fail fast to MiMo/NVIDIA instead of wasting 15s
-    _429_backoffs = [2]
-    for attempt in range(2):
-        try:
-            _gemini_last_call = time.time()
-            gen_config = {"temperature": temperature, "max_output_tokens": max_tokens}
-            call_kwargs = {"model": config.GEMINI_MODEL, "contents": prompt, "config": gen_config}
-            
-            if use_search and config.USE_SEARCH_GROUNDING:
-                from google.genai import types as _gtypes
-                call_kwargs["config"]["tools"] = [_gtypes.Tool(google_search=_gtypes.GoogleSearch())]
-            
-            response = await client.models.generate_content(**call_kwargs)
-            return response.text.strip()
-        except Exception as e:
-            err = str(e)
-            if "429" in err or "RESOURCE_EXHAUSTED" in err:
-                if attempt < len(_429_backoffs):
-                    log.warning(f"[gemini] 429 — backoff {_429_backoffs[attempt]}s (attempt {attempt+1}/2)")
-                    await asyncio.sleep(_429_backoffs[attempt] + random.uniform(0, 1))
-                else:
-                    log.warning("[gemini] 429 persists → falling back to MiMo/NVIDIA/Groq")
-                    break  # exit loop to fallback chain below
-            elif "503" in err or "UNAVAILABLE" in err:
-                log.warning("[gemini] 503 — falling back to MiMo/NVIDIA/Groq")
-                break
-            else:
-                raise
-
-    # Fallback chain: MiMo → NVIDIA → Groq
+    # Gemini is permanently 429'd — skip entirely to avoid wasting time
     if config.MIMO_API_KEY:
         return await _call_mimo_async(prompt, temperature, max_tokens)
     elif config.NVIDIA_API_KEY:

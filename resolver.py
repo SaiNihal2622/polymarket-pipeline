@@ -101,38 +101,75 @@ def _resolve_via_clob(token_id: str, timeout: int = 8) -> float | None:
         return None
     try:
         r = httpx.get(f"{CLOB_API}/book-snapshot", params={"token_id": token_id}, timeout=timeout, verify=False)
-        if r.status_code != 200:
+        if r.status_code == 200:
+            data = r.json()
+            bids = data.get("bids", []) or []
+            asks = data.get("asks", []) or []
+
+            print(f"[resolver:CLOB_book] token={token_id[:12]} bids={len(bids)} asks={len(asks)} raw={str(data)[:120]}")
+            if not bids and not asks:
+                lp = data.get("last_trade_price") or data.get("midpoint")
+                if lp is not None:
+                    lp = float(lp)
+                    if lp >= 0.98:  return 1.0
+                    if lp <= 0.02:  return 0.0
+                return None
+
+            prices: list[float] = []
+            for side in (bids, asks):
+                for entry in side[:5]:
+                    try:
+                        prices.append(float(entry.get("price", 0)))
+                    except (ValueError, TypeError):
+                        pass
+
+            if not prices:
+                return None
+
+            avg_price = sum(prices) / len(prices)
+            if avg_price >= 0.95:  return 1.0
+            if avg_price <= 0.05:  return 0.0
             return None
-        data = r.json()
-        bids = data.get("bids", []) or []
-        asks = data.get("asks", []) or []
 
-        # If no book at all, market may be resolved (no liquidity post-resolution)
-        print(f"[resolver:CLOB_book] token={token_id[:12]} bids={len(bids)} asks={len(asks)} raw={str(data)[:120]}")
-        if not bids and not asks:
-            # Try midpoint from last_trade_price or hash field
-            lp = data.get("last_trade_price") or data.get("midpoint")
-            if lp is not None:
-                lp = float(lp)
-                if lp >= 0.98:  return 1.0
-                if lp <= 0.02:  return 0.0
-            return None
+        # 404 or other error — market may be resolved and delisted from CLOB
+        # Try CLOB /prices endpoint as alternative
+        if r.status_code == 404:
+            print(f"[resolver:CLOB_book] 404 for token={token_id[:12]} — trying /prices")
+            try:
+                pr = httpx.get(f"{CLOB_API}/prices", params={"token_ids": token_id}, timeout=timeout, verify=False)
+                if pr.status_code == 200:
+                    pdata = pr.json()
+                    # pdata is typically a dict: {"token_id": "0.99"} or a list
+                    if isinstance(pdata, dict):
+                        price_str = pdata.get(token_id) or pdata.get("price")
+                        if price_str is not None:
+                            p = float(price_str)
+                            if p >= 0.95: return 1.0
+                            if p <= 0.05: return 0.0
+                    elif isinstance(pdata, list) and pdata:
+                        p = float(pdata[0]) if not isinstance(pdata[0], dict) else float(pdata[0].get("price", 0.5))
+                        if p >= 0.95: return 1.0
+                        if p <= 0.05: return 0.0
+            except Exception:
+                pass
 
-        prices: list[float] = []
-        for side in (bids, asks):
-            for entry in side[:5]:
-                try:
-                    prices.append(float(entry.get("price", 0)))
-                except (ValueError, TypeError):
-                    pass
+            # Also try Gamma lookup by clobTokenIds
+            try:
+                gr = httpx.get(f"{GAMMA_API}/markets",
+                    params={"clob_token_ids": f'["{token_id}"]', "limit": 1},
+                    timeout=timeout, verify=False)
+                if gr.status_code == 200:
+                    gdata = gr.json()
+                    items = gdata if isinstance(gdata, list) else gdata.get("data", [])
+                    for m in items:
+                        result = _parse_outcome(m)
+                        if result is not None:
+                            print(f"[resolver:CLOB→Gamma] token={token_id[:12]} → {result}")
+                            return result
+            except Exception:
+                pass
 
-        if not prices:
-            return None
-
-        avg_price = sum(prices) / len(prices)
-        if avg_price >= 0.95:  return 1.0   # resolved YES
-        if avg_price <= 0.05:  return 0.0   # resolved NO
-        return None  # still trading
+        return None
     except Exception as e:
         log.debug(f"[resolver:clob] {token_id[:12]}: {e}")
         return None
@@ -188,7 +225,22 @@ def _normalize_q(s: str, length: int = 80) -> str:
     s = re.sub(r'\s+', ' ', s)
     s = s.replace('\u2019', "'").replace('\u2018', "'")
     s = s.replace('\u2013', '-').replace('\u2014', '-')
+    # Remove common suffixes that Gamma adds/removes inconsistently
+    for suffix in ['?', '.', '!', ' - polymarket', ' | polymarket']:
+        if s.endswith(suffix):
+            s = s[:-len(suffix)]
     return s[:length]
+
+
+def _fuzzy_match(q1: str, q2: str, threshold: float = 0.80) -> bool:
+    """Fuzzy match two questions using SequenceMatcher. Returns True if similar enough."""
+    from difflib import SequenceMatcher
+    n1 = _normalize_q(q1, 120)
+    n2 = _normalize_q(q2, 120)
+    if n1 == n2:
+        return True
+    ratio = SequenceMatcher(None, n1, n2).ratio()
+    return ratio >= threshold
 
 
 def _parse_outcome(m: dict) -> float | None:
@@ -265,11 +317,19 @@ def _refresh_bulk_cache(pending_trades: list[dict]) -> None:
                 result = _parse_outcome(m)
                 # Match by question text
                 matched_cid = None
+                # Try exact normalized match first (fast)
                 for ln in (80, 60, 40):
                     gq = _normalize_q(gq_full, ln)
                     if gq in pending_by_q:
                         matched_cid = pending_by_q[gq]
                         break
+                # If no exact match, try fuzzy match against all pending trades
+                if not matched_cid:
+                    for t in pending_trades:
+                        pq = t.get("market_question", "")
+                        if _fuzzy_match(gq_full, pq, threshold=0.80):
+                            matched_cid = t["market_id"]
+                            break
                 if matched_cid and result is not None:
                     _resolution_cache[matched_cid] = result
                     matched += 1
@@ -315,27 +375,48 @@ def _refresh_bulk_cache(pending_trades: list[dict]) -> None:
 
 def _resolve_via_search(question: str) -> float | None:
     """
-    Search-based resolution fallback using Gemini with Google Search grounding.
-    Returns 1.0 (YES), 0.0 (NO), 0.5 (PUSH/UNCLEAR), or None (error).
+    Search-based resolution fallback using MiMo (Gemini is permanently 429'd).
+    Returns 1.0 (YES), 0.0 (NO), or None (error/unclear).
     """
     try:
-        from classifier import _call_gemini
-        prompt = f"""
-        Determine the outcome of this prediction market question: "{question}"
-        
-        Is the outcome YES or NO? 
-        If it happened, answer YES. If it did not happen or the condition was not met, answer NO.
-        If it's still ongoing or unclear, answer UNCLEAR.
-        
-        Return ONLY one word: YES, NO, or UNCLEAR.
-        """
-        # Call Gemini with search grounding enabled
-        res = _call_gemini(prompt, temperature=0.0, max_tokens=10, use_search=True)
-        res = res.upper().strip()
-        
-        if "YES" in res: return 1.0
-        if "NO" in res: return 0.0
-        if "UNCLEAR" in res: return None
+        import config as _cfg
+        import httpx as _httpx
+        prompt = f"""Determine the outcome of this prediction market: "{question}"
+Is the outcome YES or NO? If it happened, answer YES. If not, answer NO. If still ongoing or unclear, answer UNCLEAR.
+Return ONLY one word: YES, NO, or UNCLEAR."""
+
+        # Use MiMo first (most reliable), then NVIDIA, then Groq
+        result_text = None
+        if _cfg.MIMO_API_KEY:
+            try:
+                r = _httpx.post("https://integrate.api.nvidia.com/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {_cfg.MIMO_API_KEY}", "Content-Type": "application/json"},
+                    json={"model": "nvidia/llama-3.3-nemotron-super-49b-v1",
+                          "messages": [{"role": "user", "content": prompt}],
+                          "temperature": 0.0, "max_tokens": 10},
+                    timeout=15)
+                if r.status_code == 200:
+                    result_text = r.json()["choices"][0]["message"]["content"].strip()
+            except Exception:
+                pass
+        if not result_text and _cfg.NVIDIA_API_KEY:
+            try:
+                r = _httpx.post("https://integrate.api.nvidia.com/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {_cfg.NVIDIA_API_KEY}", "Content-Type": "application/json"},
+                    json={"model": "meta/llama-3.3-70b-instruct",
+                          "messages": [{"role": "user", "content": prompt}],
+                          "temperature": 0.0, "max_tokens": 10},
+                    timeout=15)
+                if r.status_code == 200:
+                    result_text = r.json()["choices"][0]["message"]["content"].strip()
+            except Exception:
+                pass
+        if not result_text:
+            return None
+
+        result_text = result_text.upper().strip()
+        if "YES" in result_text: return 1.0
+        if "NO" in result_text: return 0.0
         return None
     except Exception as e:
         log.warning(f"[resolver:search] error for \"{question[:40]}\": {e}")
