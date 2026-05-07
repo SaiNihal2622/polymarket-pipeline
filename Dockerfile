@@ -6,6 +6,9 @@ COPY requirements-railway.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements-railway.txt
 
+# Create /data directory for persistent DB (mount Railway volume here)
+RUN mkdir -p /data
+
 COPY . .
 
 EXPOSE 8081

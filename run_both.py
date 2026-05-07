@@ -22,7 +22,7 @@ if __name__ == "__main__":
                         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
     # ── FRESH START: wipe all old trades if requested ──
-    wipe_env = os.getenv("WIPE_ON_START", "true").lower()
+    wipe_env = os.getenv("WIPE_ON_START", "false").lower()
     if wipe_env == "true":
         print("🔄 WIPE_ON_START=true — clearing all old trades for fresh start", flush=True)
         try:

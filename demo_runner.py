@@ -771,22 +771,33 @@ def scan_and_trade() -> dict:
         # The ONLY proven path is consensus (AI + Skeptic both agree).
         # We allow S8 only when RRF is EXTREMELY high (≥0.70) AND consensus agrees.
 
-        # ★★ S8: ULTRA-HIGH RRF + consensus required (was 0.55, no consensus needed → 47%)
-        # This is currently the ONLY profitable strategy (100% win rate).
-        if (gem_dir != "neutral" and rrf_score >= 0.70 and consensus_agreed):
+        # ★★ S8: HIGH RRF + consensus required
+        # Relaxed from 0.70 → 0.50 to generate trades while maintaining quality
+        if (gem_dir != "neutral" and rrf_score >= 0.50 and consensus_agreed):
             strategies_to_try.append(("S8_rrf_highconv", _dir(gem_dir), rrf_score + 0.05))
 
-        # ★★ S5: CONSENSUS-FIRST — restored with stricter thresholds
-        # Was 22% at rrf>=0.35; now requires rrf>=0.55 + consensus + materiality>=0.50
-        if (gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.50
-                and rrf_score >= 0.55 and gem_mat >= 0.50):
+        # ★★ S5: CONSENSUS-FIRST — balanced thresholds
+        # Requires consensus + reasonable materiality + RRF
+        if (gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.40
+                and rrf_score >= 0.40 and gem_mat >= 0.35):
             strategies_to_try.append(("S5_consensus", _dir(gem_dir), consensus_score))
 
-        # ★★ S9: SURESHOT — restored with ultra-strict thresholds
-        # Was 17.6%; now requires materiality>=0.70 + confidence>=0.75 + rrf>=0.60
-        if (gem_dir != "neutral" and gem_mat >= 0.70 and gem_conf >= 0.75
-                and rrf_score >= 0.60 and consensus_agreed):
+        # ★★ S9: SURESHOT — high-confidence AI signal
+        # Requires strong materiality + confidence + RRF
+        if (gem_dir != "neutral" and gem_mat >= 0.55 and gem_conf >= 0.60
+                and rrf_score >= 0.45 and consensus_agreed):
             strategies_to_try.append(("S9_sureshot", _dir(gem_dir), gem_conf))
+
+        # ★★ S10: MULTI-SIGNAL — copy-trade + AI agree
+        # Combines whale/copy-trade signal with AI direction
+        if (gem_dir != "neutral" and n_agree >= 2 and consensus_agreed):
+            strategies_to_try.append(("S10_multi_signal", _dir(gem_dir), best_score))
+
+        # ★★ S11: AI-ONLY — strong AI signal without requiring RRF
+        # For markets where RRF computation fails but AI is confident
+        if (gem_dir != "neutral" and gem_mat >= 0.60 and gem_conf >= 0.65
+                and consensus_agreed and rrf_score < 0.40):
+            strategies_to_try.append(("S11_ai_only", _dir(gem_dir), gem_conf))
 
         if not strategies_to_try:
             continue
@@ -796,11 +807,13 @@ def scan_and_trade() -> dict:
         # Now: each market produces exactly ONE trade under its top strategy.
         # Priority order based on empirical accuracy from the trial:
         STRAT_PRIORITY = {
-            "S8_rrf_highconv":   200,  # 100% win rate -> Top priority
-            "S9_sureshot":       150,  # Ultra-strict: mat>=0.70 + conf>=0.75
-            "S5_consensus":       90,  # Restored with stricter thresholds
-            "S7_rrf_composite":   80,  # RRF ≥0.45 + materiality/consensus/news
-            "S6_hi_materiality":  70,  # AI mat ≥0.65 + conf ≥0.55 (backup)
+            "S8_rrf_highconv":   200,  # RRF ≥0.50 + consensus — top priority
+            "S9_sureshot":       150,  # High-confidence AI: mat≥0.55 + conf≥0.60
+            "S10_multi_signal":  130,  # Multi-signal: n_agree≥2 + consensus
+            "S5_consensus":       90,  # Consensus-first: mat≥0.35 + rrf≥0.40
+            "S11_ai_only":        70,  # AI-only: strong AI without RRF
+            "S7_rrf_composite":   60,  # RRF composite (legacy)
+            "S6_hi_materiality":  50,  # High materiality (legacy)
         }
         strategies_to_try.sort(
             key=lambda s: STRAT_PRIORITY.get(s[0], 0), reverse=True
@@ -982,7 +995,7 @@ def run_loop():
     ))
 
     # ── FRESH START: wipe all old trades ──────────────────────────────────────
-    wipe_env = os.getenv("WIPE_ON_START", "true").lower()
+    wipe_env = os.getenv("WIPE_ON_START", "false").lower()
     if wipe_env == "true":
         console.print("\n[bold red]🔄 WIPE_ON_START=true — clearing all old trades for fresh accuracy measurement[/bold red]")
         _wipe_all_trades()
