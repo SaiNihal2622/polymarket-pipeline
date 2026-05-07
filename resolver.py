@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-resolver.py — Resolves demo trades via three strategies:
+resolver.py — Resolves demo trades via multiple strategies:
 
-Strategy 1 (PRIMARY): CLOB API per-trade — confirmed working from Railway.
-  fetch_book(token_id) → if best_bid > 0.95 → YES resolved
-                       → if best_ask < 0.05 → NO resolved
-  Clean, no bulk fetch, no text matching needed.
-
-Strategy 2 (SECONDARY): Gamma REST endpoint per trade.
-  GET gamma-api.polymarket.com/markets?id=<id>&limit=1
+Strategy 1 (PRIMARY): Gamma REST endpoint per trade.
+  GET gamma-api.polymarket.com/markets?slug=<conditionId>
   Parse outcomePrices to get final result.
 
+Strategy 2 (SECONDARY): CLOB API per-trade.
+  fetch_book(token_id) → if best_bid > 0.95 → YES resolved
+                       → if best_ask < 0.05 → NO resolved
+
 Strategy 3 (TERTIARY): Bulk Gamma closed-market scan + question text match.
-  Scans 3000 closed markets, matches by question text (fuzzy).
-  Kept as fallback for markets where token_id is missing.
+  Scans 500 closed markets, matches by question text (fuzzy).
+
+Strategy 4 (FALLBACK): MiMo AI search-based resolution.
 """
 from __future__ import annotations
 
@@ -42,6 +42,7 @@ _db_env = os.getenv("DB_PATH", "")
 DB_PATH = Path(_db_env) if _db_env else Path(__file__).parent / "trades.db"
 GAMMA_API = "https://gamma-api.polymarket.com"
 CLOB_API  = "https://clob.polymarket.com"
+DATA_API  = "https://data-api.polymarket.com"
 
 
 # ── DB helpers ──────────────────────────────────────────────────────────────
@@ -55,7 +56,6 @@ def _conn() -> sqlite3.Connection:
 
 def get_pending_demo_trades() -> list[dict]:
     conn = _conn()
-    # Include token_id so CLOB resolution works directly without extra DB lookup
     rows = conn.execute("""
         SELECT t.id, t.market_id, t.market_question, t.side, t.amount_usd,
                t.claude_score, t.market_price, t.edge, t.created_at, t.token_id
@@ -71,13 +71,6 @@ def get_pending_demo_trades() -> list[dict]:
 
 
 def _get_token_id_for_trade(market_id: str) -> str | None:
-    """
-    Look up YES-token id from DB only.
-    NOTE: Gamma's conditionId filter is fundamentally broken — it always returns
-    the same default market regardless of the conditionId queried. We do NOT
-    attempt Gamma lookup here. token_id is only available for trades logged
-    after the token_id fix (trades #187+).
-    """
     try:
         conn = _conn()
         cols = {r[1] for r in conn.execute("PRAGMA table_info(trades)").fetchall()}
@@ -94,15 +87,144 @@ def _get_token_id_for_trade(market_id: str) -> str | None:
         return None
 
 
-# ── Strategy 1: CLOB book prices ────────────────────────────────────────────
+# ── Parse outcome from Gamma market dict ────────────────────────────────────
+
+def _parse_outcome(m: dict) -> float | None:
+    """Extract result from Gamma market dict. Returns 1.0 (YES) / 0.0 (NO) / None."""
+    # Check outcomePrices first (most reliable)
+    outcome_prices_raw = m.get("outcomePrices", "")
+    if outcome_prices_raw:
+        try:
+            prices = json.loads(outcome_prices_raw) if isinstance(outcome_prices_raw, str) else outcome_prices_raw
+            if len(prices) >= 2:
+                yes_price = float(prices[0])
+                no_price  = float(prices[1])
+                if yes_price >= 0.85:   return 1.0
+                if no_price  >= 0.85:   return 0.0
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    # Check resolutionPrice
+    res_price = m.get("resolutionPrice")
+    if res_price is not None:
+        try:
+            rp = float(res_price)
+            if rp >= 0.90: return 1.0
+            if rp <= 0.10: return 0.0
+        except (ValueError, TypeError):
+            pass
+
+    # Check resolvedOutcome field (some Gamma markets have this)
+    resolved_outcome = m.get("resolvedOutcome")
+    if resolved_outcome:
+        ro = str(resolved_outcome).strip().lower()
+        if ro in ("yes", "true", "1"): return 1.0
+        if ro in ("no", "false", "0"): return 0.0
+
+    # Check if market is closed and has clear winner via outcomes array
+    outcomes = m.get("outcomes", "")
+    if outcomes:
+        try:
+            outs = json.loads(outcomes) if isinstance(outcomes, str) else outcomes
+            if isinstance(outs, list) and len(outs) >= 2:
+                # Sometimes outcomes contain the resolution directly
+                pass
+        except Exception:
+            pass
+
+    return None
+
+
+# ── Strategy 1: Gamma REST per-trade (MOST RELIABLE) ───────────────────────
+
+def _resolve_via_gamma_slug(trade: dict) -> float | None:
+    """
+    Look up market on Gamma by slug (conditionId) or question text.
+    This is the MOST reliable method.
+    """
+    question = trade.get("market_question", "")
+    market_id = trade.get("market_id", "")
+    if not market_id and not question:
+        return None
+    
+    # Try 1: Direct slug lookup (conditionId as slug)
+    if market_id:
+        try:
+            r = httpx.get(f"{GAMMA_API}/markets",
+                params={"slug": market_id, "limit": 1},
+                timeout=10, verify=False)
+            if r.status_code == 200:
+                data = r.json()
+                items = data if isinstance(data, list) else data.get("data", [])
+                for m in items:
+                    result = _parse_outcome(m)
+                    if result is not None:
+                        return result
+        except Exception:
+            pass
+
+    # Try 2: conditionId filter
+    if market_id:
+        for param_name in ["conditionId", "condition_id"]:
+            try:
+                r = httpx.get(f"{GAMMA_API}/markets",
+                    params={param_name: market_id, "limit": 1},
+                    timeout=10, verify=False)
+                if r.status_code == 200:
+                    data = r.json()
+                    items = data if isinstance(data, list) else data.get("data", [])
+                    for m in items:
+                        m_cid = m.get("conditionId") or m.get("id") or ""
+                        if m_cid == market_id:
+                            result = _parse_outcome(m)
+                            if result is not None:
+                                return result
+            except Exception:
+                pass
+
+    # Try 3: Search by question text (closed=true)
+    if question:
+        try:
+            r = httpx.get(f"{GAMMA_API}/markets",
+                params={"question": question[:100], "limit": 5, "closed": "true"},
+                timeout=10, verify=False)
+            if r.status_code == 200:
+                data = r.json()
+                items = data if isinstance(data, list) else data.get("data", [])
+                for m in items:
+                    mq = (m.get("question") or "").strip()
+                    if _fuzzy_match(mq, question, threshold=0.85):
+                        result = _parse_outcome(m)
+                        if result is not None:
+                            return result
+        except Exception:
+            pass
+
+    # Try 4: Search by question text (closed=false — might still be active)
+    if question:
+        try:
+            r = httpx.get(f"{GAMMA_API}/markets",
+                params={"question": question[:100], "limit": 5, "closed": "false"},
+                timeout=10, verify=False)
+            if r.status_code == 200:
+                data = r.json()
+                items = data if isinstance(data, list) else data.get("data", [])
+                for m in items:
+                    mq = (m.get("question") or "").strip()
+                    if _fuzzy_match(mq, question, threshold=0.85):
+                        result = _parse_outcome(m)
+                        if result is not None:
+                            return result
+        except Exception:
+            pass
+
+    return None
+
+
+# ── Strategy 2: CLOB book prices ────────────────────────────────────────────
 
 def _resolve_via_clob(token_id: str, timeout: int = 8) -> float | None:
-    """
-    Check CLOB book for a YES token.
-    Resolved YES  → bids near 1.0 / asks near 1.0  → return 1.0
-    Resolved NO   → bids near 0.0 / asks near 0.0  → return 0.0
-    Still open    → mixed prices                    → return None
-    """
+    """Check CLOB book for a YES token."""
     if not token_id:
         return None
     try:
@@ -112,7 +234,6 @@ def _resolve_via_clob(token_id: str, timeout: int = 8) -> float | None:
             bids = data.get("bids", []) or []
             asks = data.get("asks", []) or []
 
-            print(f"[resolver:CLOB_book] token={token_id[:12]} bids={len(bids)} asks={len(asks)} raw={str(data)[:120]}")
             if not bids and not asks:
                 lp = data.get("last_trade_price") or data.get("midpoint")
                 if lp is not None:
@@ -137,15 +258,13 @@ def _resolve_via_clob(token_id: str, timeout: int = 8) -> float | None:
             if avg_price <= 0.05:  return 0.0
             return None
 
-        # 404 or other error — market may be resolved and delisted from CLOB
-        # Try CLOB /prices endpoint as alternative
+        # 404 = market resolved and delisted from CLOB
         if r.status_code == 404:
-            print(f"[resolver:CLOB_book] 404 for token={token_id[:12]} — trying /prices")
+            # Try CLOB /prices endpoint
             try:
                 pr = httpx.get(f"{CLOB_API}/prices", params={"token_ids": token_id}, timeout=timeout, verify=False)
                 if pr.status_code == 200:
                     pdata = pr.json()
-                    # pdata is typically a dict: {"token_id": "0.99"} or a list
                     if isinstance(pdata, dict):
                         price_str = pdata.get(token_id) or pdata.get("price")
                         if price_str is not None:
@@ -159,7 +278,7 @@ def _resolve_via_clob(token_id: str, timeout: int = 8) -> float | None:
             except Exception:
                 pass
 
-            # Also try Gamma lookup by clobTokenIds
+            # Try Gamma lookup by clobTokenIds
             try:
                 gr = httpx.get(f"{GAMMA_API}/markets",
                     params={"clob_token_ids": f'["{token_id}"]', "limit": 1},
@@ -170,7 +289,6 @@ def _resolve_via_clob(token_id: str, timeout: int = 8) -> float | None:
                     for m in items:
                         result = _parse_outcome(m)
                         if result is not None:
-                            print(f"[resolver:CLOB→Gamma] token={token_id[:12]} → {result}")
                             return result
             except Exception:
                 pass
@@ -179,47 +297,6 @@ def _resolve_via_clob(token_id: str, timeout: int = 8) -> float | None:
     except Exception as e:
         log.debug(f"[resolver:clob] {token_id[:12]}: {e}")
         return None
-
-
-# ── Strategy 2: Gamma REST per-trade ────────────────────────────────────────
-
-def _resolve_via_gamma_direct(market_id: str, timeout: int = 10) -> float | None:
-    """
-    Directly fetch a single market from Gamma by conditionId.
-    Tries multiple param formats since the API is inconsistent.
-    Also tries with closed=true for resolved markets.
-    """
-    if not market_id:
-        return None
-    attempts = [
-        {"conditionId": market_id, "limit": 1},
-        {"condition_id": market_id, "limit": 1},
-        {"conditionId": market_id, "limit": 1, "closed": "true"},
-        {"id": market_id, "limit": 1},
-    ]
-    # Only try clob_token_ids if market_id is numeric (a token ID)
-    if market_id.isdigit():
-        attempts.append({"clob_token_ids": market_id, "limit": 1})
-        
-    for params in attempts:
-        try:
-            r = httpx.get(f"{GAMMA_API}/markets", params=params, timeout=timeout, verify=False)
-            if r.status_code != 200:
-                continue
-            data = r.json()
-            items = data if isinstance(data, list) else data.get("data", [])
-            for m in items:
-                # Only accept this market if its conditionId/id matches ours
-                m_id = m.get("conditionId") or m.get("id") or ""
-                if m_id and m_id != market_id:
-                    continue  # wrong market — skip (Gamma filter is broken, must verify)
-                result = _parse_outcome(m)
-                if result is not None:
-                    log.debug(f"[resolver:gamma] {market_id[:16]} → {result}")
-                    return result
-        except Exception as e:
-            log.debug(f"[resolver:gamma] {market_id[:16]} attempt failed: {e}")
-    return None
 
 
 # ── Strategy 3: Bulk Gamma closed-market scan ───────────────────────────────
@@ -234,7 +311,6 @@ def _normalize_q(s: str, length: int = 80) -> str:
     s = re.sub(r'\s+', ' ', s)
     s = s.replace('\u2019', "'").replace('\u2018', "'")
     s = s.replace('\u2013', '-').replace('\u2014', '-')
-    # Remove common suffixes that Gamma adds/removes inconsistently
     for suffix in ['?', '.', '!', ' - polymarket', ' | polymarket']:
         if s.endswith(suffix):
             s = s[:-len(suffix)]
@@ -242,7 +318,6 @@ def _normalize_q(s: str, length: int = 80) -> str:
 
 
 def _fuzzy_match(q1: str, q2: str, threshold: float = 0.80) -> bool:
-    """Fuzzy match two questions using SequenceMatcher. Returns True if similar enough."""
     from difflib import SequenceMatcher
     n1 = _normalize_q(q1, 120)
     n2 = _normalize_q(q2, 120)
@@ -250,40 +325,6 @@ def _fuzzy_match(q1: str, q2: str, threshold: float = 0.80) -> bool:
         return True
     ratio = SequenceMatcher(None, n1, n2).ratio()
     return ratio >= threshold
-
-
-def _parse_outcome(m: dict) -> float | None:
-    """Extract result from Gamma market dict. Returns 1.0 (YES) / 0.0 (NO) / None.
-    
-    CRITICAL: Never return 0.5 (push). A market either resolved YES, NO, or is
-    still pending. The old code returned 0.5 for any closed+inactive market,
-    which caused ALL trades to resolve as 'push' with $0 PnL.
-    """
-    outcome_prices_raw = m.get("outcomePrices", "")
-    if outcome_prices_raw:
-        try:
-            prices = json.loads(outcome_prices_raw) if isinstance(outcome_prices_raw, str) else outcome_prices_raw
-            if len(prices) >= 2:
-                yes_price = float(prices[0])
-                no_price  = float(prices[1])
-                if yes_price >= 0.85:   return 1.0   # YES resolved
-                if no_price  >= 0.85:   return 0.0   # NO resolved
-        except (json.JSONDecodeError, ValueError):
-            pass
-
-    res_price = m.get("resolutionPrice")
-    if res_price is not None:
-        try:
-            rp = float(res_price)
-            if rp >= 0.90: return 1.0
-            if rp <= 0.10: return 0.0
-        except (ValueError, TypeError):
-            pass
-
-    # If market is resolved (closed=true) but we can't determine the outcome,
-    # return None — do NOT mark as push. Let it stay pending until we get
-    # clear resolution data.
-    return None
 
 
 def _refresh_bulk_cache(pending_trades: list[dict]) -> None:
@@ -303,9 +344,8 @@ def _refresh_bulk_cache(pending_trades: list[dict]) -> None:
 
     matched = 0
     fetched_total = 0
-    first5_questions: list[str] = []  # debug: show what Gamma returns
 
-    for offset in range(0, 500, 100):  # Scanned 3000 before — reduced to 500 to avoid timeouts
+    for offset in range(0, 500, 100):
         try:
             r = httpx.get(f"{GAMMA_API}/markets",
                 params={"closed": "true", "limit": 100, "offset": offset,
@@ -318,21 +358,13 @@ def _refresh_bulk_cache(pending_trades: list[dict]) -> None:
             fetched_total += len(items)
             for m in items:
                 gq_full = (m.get("question") or "").lower().strip()
-                if offset == 0 and len(first5_questions) < 5:
-                    first5_questions.append(gq_full[:70])
-
-                # Index ALL closed markets — even without clear outcome prices yet
-                # We check outcome separately below
                 result = _parse_outcome(m)
-                # Match by question text
                 matched_cid = None
-                # Try exact normalized match first (fast)
                 for ln in (80, 60, 40):
                     gq = _normalize_q(gq_full, ln)
                     if gq in pending_by_q:
                         matched_cid = pending_by_q[gq]
                         break
-                # If no exact match, try fuzzy match against all pending trades
                 if not matched_cid:
                     for t in pending_trades:
                         pq = t.get("market_question", "")
@@ -342,8 +374,6 @@ def _refresh_bulk_cache(pending_trades: list[dict]) -> None:
                 if matched_cid and result is not None:
                     _resolution_cache[matched_cid] = result
                     matched += 1
-                    print(f"[resolver:bulk] MATCH '{gq_full[:50]}' → {result}")
-                # Index by IDs for CLOB strategy
                 for id_field in ("conditionId", "id"):
                     cid2 = m.get(id_field, "")
                     if cid2 and result is not None:
@@ -353,16 +383,14 @@ def _refresh_bulk_cache(pending_trades: list[dict]) -> None:
             break
 
     _cache_fetched_at = now
-    if first5_questions:
-        print(f"[resolver] bulk sample questions: {first5_questions}")
     print(f"[resolver] bulk: {fetched_total} closed markets scanned, {matched} text-matched")
 
-    # Bonus: direct question-text search for each pending trade
-    for t in pending_trades[:20]:  # cap to avoid rate limits
+    # Direct question-text search for each pending trade
+    for t in pending_trades[:20]:
         q = t.get("market_question", "")
         mid = t["market_id"]
         if mid in _resolution_cache:
-            continue  # already resolved
+            continue
         try:
             r = httpx.get(f"{GAMMA_API}/markets",
                 params={"question": q[:100], "limit": 3, "closed": "true"}, timeout=8, verify=False)
@@ -371,7 +399,6 @@ def _refresh_bulk_cache(pending_trades: list[dict]) -> None:
                 items = data if isinstance(data, list) else data.get("data", [])
                 for m in items:
                     mq = (m.get("question") or "").strip()
-                    # Check if questions are close enough
                     if _normalize_q(mq, 60) == _normalize_q(q, 60):
                         result = _parse_outcome(m)
                         if result is not None:
@@ -382,23 +409,20 @@ def _refresh_bulk_cache(pending_trades: list[dict]) -> None:
         except Exception:
             pass
 
+
+# ── Strategy 4: MiMo AI search-based resolution ─────────────────────────────
+
 def _resolve_via_search(question: str) -> float | None:
-    """
-    Search-based resolution fallback using MiMo API (the working LLM backend).
-    Returns 1.0 (YES), 0.0 (NO), or None (error/unclear).
-    """
+    """Search-based resolution fallback using MiMo API."""
     try:
         import config as _cfg
-        import httpx as _httpx
         prompt = f"""Determine the outcome of this prediction market: "{question}"
 Is the outcome YES or NO? If it happened, answer YES. If not, answer NO. If still ongoing or unclear, answer UNCLEAR.
 Return ONLY one word: YES, NO, or UNCLEAR."""
 
-        # Use MiMo API first (most reliable - confirmed working on Railway)
-        result_text = None
         if _cfg.MIMO_API_KEY:
             try:
-                r = _httpx.post(f"{_cfg.MIMO_BASE_URL}/chat/completions",
+                r = httpx.post(f"{_cfg.MIMO_BASE_URL}/chat/completions",
                     headers={"Authorization": f"Bearer {_cfg.MIMO_API_KEY}", "Content-Type": "application/json"},
                     json={"model": _cfg.MIMO_MODEL,
                           "messages": [{"role": "user", "content": prompt}],
@@ -406,127 +430,63 @@ Return ONLY one word: YES, NO, or UNCLEAR."""
                     timeout=15)
                 if r.status_code == 200:
                     result_text = r.json()["choices"][0]["message"]["content"].strip()
-                    log.info(f"[resolver:search] MiMo resolved: {result_text}")
+                    result_text = result_text.upper().strip()
+                    if "YES" in result_text: return 1.0
+                    if "NO" in result_text: return 0.0
             except Exception as e:
                 log.debug(f"[resolver:search] MiMo failed: {e}")
-        if not result_text and _cfg.NVIDIA_API_KEY:
-            try:
-                r = _httpx.post("https://integrate.api.nvidia.com/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {_cfg.NVIDIA_API_KEY}", "Content-Type": "application/json"},
-                    json={"model": "meta/llama-3.3-70b-instruct",
-                          "messages": [{"role": "user", "content": prompt}],
-                          "temperature": 0.0, "max_tokens": 10},
-                    timeout=15)
-                if r.status_code == 200:
-                    result_text = r.json()["choices"][0]["message"]["content"].strip()
-            except Exception:
-                pass
-        if not result_text:
-            return None
-
-        result_text = result_text.upper().strip()
-        if "YES" in result_text: return 1.0
-        if "NO" in result_text: return 0.0
         return None
     except Exception as e:
-        log.warning(f"[resolver:search] error for \"{question[:40]}\": {e}")
+        log.warning(f"[resolver:search] error: {e}")
         return None
+
 
 # ── Main resolution logic ────────────────────────────────────────────────────
-
-def _resolve_via_gamma_slug(trade: dict) -> float | None:
-    """
-    Look up market on Gamma by slug derived from question text.
-    Most reliable method — works regardless of token_id or conditionId.
-    """
-    question = trade.get("market_question", "")
-    market_id = trade.get("market_id", "")
-    if not question:
-        return None
-    
-    # Try searching Gamma by question text (closed markets)
-    for closed_val in ["true", "false"]:
-        try:
-            r = httpx.get(f"{GAMMA_API}/markets",
-                params={"question": question[:100], "limit": 5, "closed": closed_val},
-                timeout=10, verify=False)
-            if r.status_code == 200:
-                data = r.json()
-                items = data if isinstance(data, list) else data.get("data", [])
-                for m in items:
-                    mq = (m.get("question") or "").strip()
-                    # Verify it's the same market by fuzzy matching question
-                    if _fuzzy_match(mq, question, threshold=0.85):
-                        # Check if this market's conditionId matches
-                        m_cid = m.get("conditionId") or m.get("id") or ""
-                        if m_cid and m_cid == market_id:
-                            result = _parse_outcome(m)
-                            if result is not None:
-                                return result
-                        # Even if conditionId doesn't match, if question matches closely
-                        # and market is clearly resolved, use it
-                        elif _fuzzy_match(mq, question, threshold=0.92):
-                            result = _parse_outcome(m)
-                            if result is not None:
-                                return result
-        except Exception as e:
-            log.debug(f"[resolver:gamma_slug] {question[:40]}: {e}")
-    return None
-
 
 def check_market_resolution(trade: dict) -> float | None:
     """
     Try all resolution strategies for a trade.
-    Order: Gamma slug (most reliable) → Bulk cache → CLOB → Gamma direct → AI search.
+    Order: Bulk cache → Gamma slug → CLOB → AI search.
     Returns 1.0/0.0 or None if still unresolved.
     """
     market_id = trade.get("market_id", "")
     tid       = trade.get("token_id")
 
-    # Fetch token_id if not stored with this trade
     if not tid:
         tid = _get_token_id_for_trade(market_id)
 
-    # Strategy 1: Bulk cache hit (question text matching — works regardless of IDs)
+    # Strategy 1: Bulk cache hit
     cached = _resolution_cache.get(market_id)
     if cached is not None:
         print(f"[resolver:cache] #{trade['id']} → {cached}")
         return cached
 
-    # Strategy 1.5: MCP client — enhanced Gamma resolution via polymarket-mcp-server
+    # Strategy 1.5: MCP client
     if mcp:
         try:
             mcp_result = mcp.check_resolution_sync(market_id)
             if mcp_result and mcp_result.get("outcome"):
                 outcome = mcp_result["outcome"]
                 result = 1.0 if outcome == "Yes" else 0.0
-                print(f"[resolver:MCP] #{trade['id']} → {result} (via MCP Gamma)")
+                print(f"[resolver:MCP] #{trade['id']} → {result}")
                 return result
         except Exception as e:
             log.debug(f"[resolver:MCP] #{trade['id']} error: {e}")
 
-    # Strategy 2: Gamma slug-based lookup (search by question text)
+    # Strategy 2: Gamma slug-based lookup (MOST RELIABLE)
     result = _resolve_via_gamma_slug(trade)
     if result is not None:
         print(f"[resolver:gamma_slug] #{trade['id']} → {result}")
         return result
 
-    # Strategy 3: Gamma direct REST lookup by conditionId
-    result = _resolve_via_gamma_direct(market_id)
-    if result is not None:
-        print(f"[resolver:Gamma] #{trade['id']} → {result}")
-        return result
-
-    # Strategy 4: CLOB book prices (needs correct token_id)
-    if tid and len(str(tid)) > 50:  # Only try CLOB with valid 76-digit token IDs
+    # Strategy 3: CLOB book prices
+    if tid and len(str(tid)) > 50:
         result = _resolve_via_clob(tid)
         if result is not None:
             print(f"[resolver:CLOB] #{trade['id']} token={tid[:12]}… → {result}")
             return result
-    else:
-        log.debug(f"[resolver:CLOB] #{trade['id']} no valid token_id — skipping CLOB")
 
-    # Strategy 5: Search-based fallback (AI — last resort)
+    # Strategy 4: AI search fallback
     search_res = _resolve_via_search(trade.get("market_question", ""))
     if search_res is not None:
         print(f"[resolver:search] #{trade['id']} → {search_res}")
@@ -537,11 +497,8 @@ def resolve_trade(trade_id: int, market_result: float, side: str, amount_usd: fl
                   market_price: float = 0.5):
     won = (side == "YES" and market_result == 1.0) or (side == "NO" and market_result == 0.0)
     if won:
-        # Actual payout depends on the price we bought at
-        # YES at price p → win pays (1-p)/p per dollar
-        # NO at price p  → win pays p/(1-p) per dollar
         bet_price = market_price if side == "YES" else (1.0 - market_price)
-        bet_price = max(0.01, min(0.99, bet_price))  # clamp to avoid div-by-zero
+        bet_price = max(0.01, min(0.99, bet_price))
         payout_ratio = (1.0 - bet_price) / bet_price
         pnl = round(amount_usd * payout_ratio, 4)
         result_str = "win"
@@ -569,10 +526,6 @@ def resolve_trade(trade_id: int, market_result: float, side: str, amount_usd: fl
 
 
 def _void_stuck_trades(pending: list[dict], max_pending_hours: float = 720.0) -> int:
-    """
-    Void trades that have been pending too long — market probably resolved but
-    Gamma hasn't indexed it. Marks as 'voided' so they don't clog the pipeline.
-    """
     from datetime import timedelta
     cutoff = datetime.now(timezone.utc) - timedelta(hours=max_pending_hours)
     void_ids = []
@@ -593,7 +546,7 @@ def _void_stuck_trades(pending: list[dict], max_pending_hours: float = 720.0) ->
         )
         conn.commit()
         conn.close()
-        print(f"[resolver] Voided {len(void_ids)} stuck trades (pending >{max_pending_hours:.0f}h): {void_ids}")
+        print(f"[resolver] Voided {len(void_ids)} stuck trades")
     return len(void_ids)
 
 
@@ -605,12 +558,10 @@ def run_resolution_check(verbose: bool = True) -> dict:
 
     if verbose: print(f"[resolver] Checking {len(pending)} pending demo trades...")
 
-    # Void trades stuck >168h (7 days — Polymarket likely resolved but Gamma not indexed)
     voided = _void_stuck_trades(pending, max_pending_hours=168.0)
     if voided > 0:
-        pending = get_pending_demo_trades()  # refresh
+        pending = get_pending_demo_trades()
 
-    # Kick off bulk scan (populates _resolution_cache for text-match fallback)
     _refresh_bulk_cache(pending)
 
     resolved = wins = losses = pushes = 0
@@ -660,7 +611,6 @@ def get_accuracy_stats() -> dict:
         WHERE t.status IN ('demo', 'dry_run')
     """).fetchone()
 
-    # TTR: average time-to-resolution for resolved trades
     ttr_row = conn.execute("""
         SELECT AVG(
             (julianday(o.resolved_at) - julianday(t.created_at)) * 24
@@ -693,12 +643,6 @@ def get_accuracy_stats() -> dict:
 
 
 def get_pipeline_comparison(new_pipeline_start_id: int = 192) -> dict:
-    """
-    Side-by-side accuracy: OLD pipeline (id < new_pipeline_start_id) vs
-    NEW pipeline (id >= new_pipeline_start_id, verifiable-market era).
-    Returns dict with 'old' and 'new' sub-dicts each containing
-    wins/losses/accuracy_pct/total_pnl, plus a category breakdown for new.
-    """
     conn = _conn()
 
     def _stats(where_clause: str, params: tuple = ()) -> dict:
@@ -727,7 +671,6 @@ def get_pipeline_comparison(new_pipeline_start_id: int = 192) -> dict:
     old = _stats("t.id < ?", (new_pipeline_start_id,))
     new = _stats("t.id >= ?", (new_pipeline_start_id,))
 
-    # Category breakdown for new pipeline
     cat_rows = conn.execute("""
         SELECT
             CASE
@@ -801,20 +744,8 @@ def get_resolved_trade_list() -> list[dict]:
     return [dict(r) for r in rows]
 
 
-# ── Per-signal accuracy tracking ─────────────────────────────────────────────
-
 def get_signal_accuracies() -> dict[str, dict]:
-    """
-    Return accuracy stats for each individual signal type.
-    Parses the JSON 'signals' column stored per trade.
-
-    Returns dict: {signal_name: {trades, wins, losses, accuracy_pct, avg_conf}}
-
-    Signal names: "pf" (price feed), "ai" (research), "copy" (copy-trade),
-                  "whale" (whale holders), "crowd" (CLOB crowd)
-    """
     import json as _json
-
     conn = _conn()
     rows = conn.execute("""
         SELECT t.signals, t.side, o.result
@@ -826,22 +757,17 @@ def get_signal_accuracies() -> dict[str, dict]:
     """).fetchall()
     conn.close()
 
-    # {signal: {wins, losses, total_conf, count}}
     stats: dict[str, dict] = {}
-
     for row in rows:
         try:
             sigs = _json.loads(row["signals"])
         except Exception:
             continue
-
-        trade_side = row["side"]   # "YES" or "NO"
-        outcome    = row["result"] # "win" or "loss"
-
+        trade_side = row["side"]
+        outcome    = row["result"]
         for sig_name, val in sigs.items():
             if not val or val == "neutral":
                 continue
-            # val format: "direction:confidence" e.g. "bearish:0.82"
             parts = val.split(":")
             if len(parts) != 2:
                 continue
@@ -850,12 +776,9 @@ def get_signal_accuracies() -> dict[str, dict]:
                 sig_conf = float(sig_conf_str)
             except ValueError:
                 continue
-
-            # Did this signal agree with the trade direction?
             trade_dir = "bullish" if trade_side == "YES" else "bearish"
             if sig_dir != trade_dir:
-                continue  # signal wasn't the reason for this trade direction
-
+                continue
             s = stats.setdefault(sig_name, {"wins": 0, "losses": 0, "total_conf": 0.0, "count": 0})
             s["count"]      += 1
             s["total_conf"] += sig_conf
@@ -878,56 +801,32 @@ def get_signal_accuracies() -> dict[str, dict]:
             "accuracy_pct": round(acc, 1),
             "avg_conf":     round(s["total_conf"] / s["count"], 2) if s["count"] else 0.0,
         }
-
-    # Sort by accuracy desc
     return dict(sorted(result.items(), key=lambda x: -x[1]["accuracy_pct"]))
 
 
-# Min resolved trades per signal before we trust the empirical accuracy
 _MIN_SIGNAL_TRADES = 8
-
-# Default weights when we don't have enough data yet
 _DEFAULT_WEIGHTS = {"pf": 0.40, "ai": 0.30, "copy": 0.20, "whale": 0.07, "crowd": 0.03}
 
 
 def get_dynamic_weights() -> dict[str, float]:
-    """
-    Compute signal weights from empirical per-signal accuracy.
-    Formula: weight ∝ (accuracy - 0.50) × trades  (only counts edge above 50%)
-    Falls back to default weights if insufficient data per signal.
-
-    Returns dict: {signal_name: weight}  (sums to 1.0)
-    """
     accs = get_signal_accuracies()
-
     raw: dict[str, float] = {}
     for sig, s in accs.items():
         if s["trades"] >= _MIN_SIGNAL_TRADES:
-            # Edge above 50% × number of trades = confidence-weighted edge
             edge = max(0.0, (s["accuracy_pct"] / 100.0) - 0.50)
             raw[sig] = edge * s["trades"]
-
     if not raw or sum(raw.values()) < 0.001:
         return _DEFAULT_WEIGHTS.copy()
-
     total = sum(raw.values())
     weights = {sig: round(v / total, 3) for sig, v in raw.items()}
-
-    # Ensure all 5 signals have a weight (minimum 0.02 floor for less-proven signals)
     for sig in _DEFAULT_WEIGHTS:
         if sig not in weights:
             weights[sig] = 0.02
-
-    # Re-normalise after adding floors
     total2 = sum(weights.values())
     return {sig: round(w / total2, 3) for sig, w in weights.items()}
 
 
 def get_strategy_accuracies() -> list[dict]:
-    """
-    Return accuracy per strategy for the 2-day trial.
-    Sorted by accuracy desc. Only includes strategies with ≥3 resolved trades.
-    """
     conn = _conn()
     rows = conn.execute("""
         SELECT
