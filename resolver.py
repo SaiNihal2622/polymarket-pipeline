@@ -26,6 +26,8 @@ import time as _time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from difflib import SequenceMatcher
+
 import httpx
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -200,11 +202,11 @@ def _resolve_via_gamma_slug(trade: dict) -> float | None:
         except Exception:
             pass
 
-    # Try 4: Search by question text (closed=false — might still be active)
+    # Try 4: Search by question text (all markets)
     if question:
         try:
             r = httpx.get(f"{GAMMA_API}/markets",
-                params={"question": question[:100], "limit": 5, "closed": "false"},
+                params={"question": question[:100], "limit": 5},
                 timeout=10, verify=False)
             if r.status_code == 200:
                 data = r.json()
@@ -218,6 +220,43 @@ def _resolve_via_gamma_slug(trade: dict) -> float | None:
         except Exception:
             pass
 
+    # Try 5: Keyword search — extract key terms and search Gamma broadly
+    if question:
+        try:
+            # Extract keywords: remove common words, keep nouns/proper nouns
+            stopwords = {"will", "the", "a", "an", "is", "be", "on", "in", "at", "or", "vs", "vs.", "hit", "low", "high", "week", "of", "for", "inc", "global"}
+            words = re.findall(r'[a-zA-Z$]+', question)
+            keywords = [w for w in words if w.lower() not in stopwords and len(w) > 2]
+            
+            # Try searching with top 3 keywords
+            if len(keywords) >= 2:
+                search_q = " ".join(keywords[:4])
+                for closed_val in ["true", None]:
+                    params = {"question": search_q, "limit": 10}
+                    if closed_val:
+                        params["closed"] = closed_val
+                    r = httpx.get(f"{GAMMA_API}/markets", params=params, timeout=10, verify=False)
+                    if r.status_code == 200:
+                        data = r.json()
+                        items = data if isinstance(data, list) else data.get("data", [])
+                        best_match = None
+                        best_sim = 0.0
+                        for m in items:
+                            mq = (m.get("question") or "").strip()
+                            sim = SequenceMatcher(None, _normalize_q(question, 120), _normalize_q(mq, 120)).ratio()
+                            if sim > best_sim:
+                                best_sim = sim
+                                best_match = m
+                        if best_match and best_sim >= 0.55:
+                            log.info(f"[resolver] Gamma keyword match sim={best_sim:.2f}: {best_match.get('question','')[:60]}")
+                            result = _parse_outcome(best_match)
+                            if result is not None:
+                                return result
+        except Exception:
+            pass
+
+    # Log why we couldn't resolve
+    log.info(f"[resolver] Gamma: no resolution found for '{question[:50]}' — market may not be resolved yet")
     return None
 
 
