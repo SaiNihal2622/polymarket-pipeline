@@ -32,6 +32,12 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 log = logging.getLogger(__name__)
 
+# MCP client for enhanced market resolution
+try:
+    import poly_mcp_client as mcp
+except ImportError:
+    mcp = None
+
 _db_env = os.getenv("DB_PATH", "")
 DB_PATH = Path(_db_env) if _db_env else Path(__file__).parent / "trades.db"
 GAMMA_API = "https://gamma-api.polymarket.com"
@@ -482,6 +488,18 @@ def check_market_resolution(trade: dict) -> float | None:
     if cached is not None:
         print(f"[resolver:cache] #{trade['id']} → {cached}")
         return cached
+
+    # Strategy 1.5: MCP client — enhanced Gamma resolution via polymarket-mcp-server
+    if mcp:
+        try:
+            mcp_result = mcp.check_resolution_sync(market_id)
+            if mcp_result and mcp_result.get("outcome"):
+                outcome = mcp_result["outcome"]
+                result = 1.0 if outcome == "Yes" else 0.0
+                print(f"[resolver:MCP] #{trade['id']} → {result} (via MCP Gamma)")
+                return result
+        except Exception as e:
+            log.debug(f"[resolver:MCP] #{trade['id']} error: {e}")
 
     # Strategy 2: Gamma slug-based lookup (search by question text)
     result = _resolve_via_gamma_slug(trade)
