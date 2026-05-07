@@ -49,6 +49,7 @@ def get_pending_market_ids() -> set:
 from markets import fetch_active_markets, filter_by_categories
 from edge import detect_edge_v2, Signal
 from resolver import run_resolution_check, get_accuracy_stats, get_resolved_trade_list, get_pipeline_comparison, get_strategy_accuracies
+from optimizer import enhance_signal, adaptive_thresholds, score_market_quality, kelly_size as optimizer_kelly
 
 console = Console()
 log = logging.getLogger(__name__)
