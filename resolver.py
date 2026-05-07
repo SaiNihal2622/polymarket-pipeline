@@ -424,10 +424,51 @@ Return ONLY one word: YES, NO, or UNCLEAR."""
 
 # ── Main resolution logic ────────────────────────────────────────────────────
 
+def _resolve_via_gamma_slug(trade: dict) -> float | None:
+    """
+    Look up market on Gamma by slug derived from question text.
+    Most reliable method — works regardless of token_id or conditionId.
+    """
+    question = trade.get("market_question", "")
+    market_id = trade.get("market_id", "")
+    if not question:
+        return None
+    
+    # Try searching Gamma by question text (closed markets)
+    for closed_val in ["true", "false"]:
+        try:
+            r = httpx.get(f"{GAMMA_API}/markets",
+                params={"question": question[:100], "limit": 5, "closed": closed_val},
+                timeout=10, verify=False)
+            if r.status_code == 200:
+                data = r.json()
+                items = data if isinstance(data, list) else data.get("data", [])
+                for m in items:
+                    mq = (m.get("question") or "").strip()
+                    # Verify it's the same market by fuzzy matching question
+                    if _fuzzy_match(mq, question, threshold=0.85):
+                        # Check if this market's conditionId matches
+                        m_cid = m.get("conditionId") or m.get("id") or ""
+                        if m_cid and m_cid == market_id:
+                            result = _parse_outcome(m)
+                            if result is not None:
+                                return result
+                        # Even if conditionId doesn't match, if question matches closely
+                        # and market is clearly resolved, use it
+                        elif _fuzzy_match(mq, question, threshold=0.92):
+                            result = _parse_outcome(m)
+                            if result is not None:
+                                return result
+        except Exception as e:
+            log.debug(f"[resolver:gamma_slug] {question[:40]}: {e}")
+    return None
+
+
 def check_market_resolution(trade: dict) -> float | None:
     """
-    Try all three resolution strategies for a trade.
-    Returns 1.0/0.0/0.5 or None if still unresolved.
+    Try all resolution strategies for a trade.
+    Order: Gamma slug (most reliable) → Bulk cache → CLOB → Gamma direct → AI search.
+    Returns 1.0/0.0 or None if still unresolved.
     """
     market_id = trade.get("market_id", "")
     tid       = trade.get("token_id")
@@ -436,28 +477,34 @@ def check_market_resolution(trade: dict) -> float | None:
     if not tid:
         tid = _get_token_id_for_trade(market_id)
 
-    # Strategy 1: CLOB book prices (most reliable — confirmed working from Railway)
-    if tid:
-        result = _resolve_via_clob(tid)
-        if result is not None:
-            print(f"[resolver:CLOB] #{trade['id']} token={tid[:12]}… → {result}")
-            return result
-    else:
-        print(f"[resolver:CLOB] #{trade['id']} no token_id — skipping CLOB")
-
-    # Strategy 2: Gamma direct REST lookup
-    result = _resolve_via_gamma_direct(market_id)
-    if result is not None:
-        print(f"[resolver:Gamma] #{trade['id']} → {result}")
-        return result
-
-    # Strategy 3: Bulk cache hit
+    # Strategy 1: Bulk cache hit (question text matching — works regardless of IDs)
     cached = _resolution_cache.get(market_id)
     if cached is not None:
         print(f"[resolver:cache] #{trade['id']} → {cached}")
         return cached
 
-    # Strategy 4: Search-based fallback (last resort)
+    # Strategy 2: Gamma slug-based lookup (search by question text)
+    result = _resolve_via_gamma_slug(trade)
+    if result is not None:
+        print(f"[resolver:gamma_slug] #{trade['id']} → {result}")
+        return result
+
+    # Strategy 3: Gamma direct REST lookup by conditionId
+    result = _resolve_via_gamma_direct(market_id)
+    if result is not None:
+        print(f"[resolver:Gamma] #{trade['id']} → {result}")
+        return result
+
+    # Strategy 4: CLOB book prices (needs correct token_id)
+    if tid and len(str(tid)) > 50:  # Only try CLOB with valid 76-digit token IDs
+        result = _resolve_via_clob(tid)
+        if result is not None:
+            print(f"[resolver:CLOB] #{trade['id']} token={tid[:12]}… → {result}")
+            return result
+    else:
+        log.debug(f"[resolver:CLOB] #{trade['id']} no valid token_id — skipping CLOB")
+
+    # Strategy 5: Search-based fallback (AI — last resort)
     search_res = _resolve_via_search(trade.get("market_question", ""))
     if search_res is not None:
         print(f"[resolver:search] #{trade['id']} → {search_res}")
