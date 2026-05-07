@@ -172,7 +172,10 @@ def search_web(query: str, num_results: int = 5) -> list[str]:
 def _ddg_search(query: str, num_results: int) -> list[str]:
     """DuckDuckGo search — free, no key, instant."""
     try:
-        from duckduckgo_search import DDGS
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            from duckduckgo_search import DDGS
         # Use simple text search without strict time limits to ensure results
         with DDGS() as ddgs:
             hits = list(ddgs.text(query, max_results=num_results))
