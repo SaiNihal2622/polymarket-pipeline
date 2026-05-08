@@ -480,11 +480,19 @@ def scan_and_trade() -> dict:
         "governor", "senator", "president", "fed chair", "confirmed as",
         "2027", "grammy", "oscar", "nobel", "eurovision",
         # Esports (pure luck/skill markets)
-        "(bo1)", "(bo3)", "map 1 winner", "map 2 winner", "map 3 winner",
+        "(bo1)", "(bo3)", "(bo5)", "map 1 winner", "map 2 winner", "map 3 winner",
         "game 1 winner", "game 2 winner", "game 3 winner", "game 4 winner",
         "first blood", "first tower", "first baron", "quadra kill", "penta kill",
         "dragon soul", "inhibitor", "total kills",
-        "dota 2", "valorant", "counter-strike", "league of legends",
+        "dota 2", "valorant", "counter-strike", "league of legends", " lol:", " lol ",
+        "cblol", "lck", "lpl", "lec", "lcs", "msi", "worlds 2026",
+        "call of duty", "cdl", "overwatch", "rainbow six",
+        # WNBA / NBA / sports game winners — crowd already priced in, no AI edge
+        " vs. ", " vs ", "moneyline", "1h moneyline",
+        # Stocks / finance — AI has no edge on price targets
+        "finish week", "hit (low)", "hit (high)", "close above $", "close below $",
+        "above $", "below $", "hit $", "(pltr)", "(coin)", "(hood)", "(mstr)",
+        "robinhood", "palantir", "coinbase",
         # Sports O/U / props (unresearchable — block ALL o/u patterns)
         " o/u ", "o/u ", ": o/u", "over/under",
         "both teams to score", "leading at halftime", "half time",
