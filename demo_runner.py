@@ -837,6 +837,12 @@ def scan_and_trade() -> dict:
                 continue
 
             bet_price    = price if strat_side == "YES" else (1.0 - price)
+            # ── ROI FILTER: ≥100% ROI (same as detect_edge_v2 Gate 4b) ──
+            # Buy only if bet_price ≤ 0.50 → payout ratio ≥ 2:1
+            if bet_price > 0.50:
+                roi_pct = (1.0 / bet_price - 1.0) * 100
+                log.debug(f"[strategy] SKIP {strat_name} {strat_side} bet_price={bet_price:.2f} — ROI={roi_pct:.0f}% < 100%")
+                continue
             payout_ratio = (1.0 - bet_price) / bet_price
             ev           = strat_score * payout_ratio - (1.0 - strat_score)
             if ev < 0.01:
