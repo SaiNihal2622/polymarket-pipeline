@@ -133,6 +133,19 @@ def detect_edge_v2(
         raw_edge = classification.materiality * market_price
         price_room = market_price
 
+    # ── GATE 4b: Minimum ROI filter (ensures ≥100% ROI per trade) ─────────
+    # YES: buy only if price ≤ 0.50 → profit per $1 = (1/price - 1) ≥ $1.00
+    # NO: buy only if YES price ≥ 0.50 → NO price ≤ 0.50 → same math
+    if side == "YES" and market_price > config.MAX_YES_ENTRY_PRICE:
+        roi_pct = (1.0 / market_price - 1.0) * 100
+        log.debug(f"[edge] REJECTED YES price={market_price:.2f} > {config.MAX_YES_ENTRY_PRICE:.2f} — ROI={roi_pct:.0f}% too low, need ≥100%")
+        return None
+    if side == "NO" and market_price < config.MIN_NO_ENTRY_PRICE:
+        no_price = 1.0 - market_price
+        roi_pct = (1.0 / no_price - 1.0) * 100
+        log.debug(f"[edge] REJECTED NO price={no_price:.2f} > 0.50 — ROI={roi_pct:.0f}% too low, need ≥100%")
+        return None
+
     # ── GATE 5: Edge threshold (free — pure math) ─────────────────────────
     if raw_edge < config.EDGE_THRESHOLD:
         log.debug(f"[edge] REJECTED edge={raw_edge:.3f} < {config.EDGE_THRESHOLD}")

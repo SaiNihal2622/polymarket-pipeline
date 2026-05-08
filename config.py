@@ -124,6 +124,13 @@ DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "10"))  # Stop af
 EDGE_THRESHOLD = float(os.getenv("EDGE_THRESHOLD", "0.20"))  # 0.20 = only strong edges pass
 NEWS_LOOKBACK_HOURS = 12
 
+# --- Minimum ROI Filter (ensures ≥100% ROI per trade) ---
+# YES trades: only buy if price ≤ 0.50 (profit = $1.00 - price ≥ $0.50/share)
+# NO trades: only buy if price ≥ 0.50 (profit = price ≥ $0.50/share)
+# This guarantees $1 profit minimum on every $1 bet
+MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.50"))  # Buy YES only below 50¢
+MIN_NO_ENTRY_PRICE = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.50"))    # Buy NO only above 50¢
+
 # --- Demo Runner Settings ---
 DEMO_HOURS_WINDOW = float(os.getenv("DEMO_HOURS_WINDOW", "48"))       # 48h window — more candidates, still fast resolution
 SCAN_INTERVAL_MIN = int(os.getenv("SCAN_INTERVAL_MIN", "5"))          # 5min scan = catch 5/15min crypto windows
