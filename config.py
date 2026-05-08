@@ -124,12 +124,12 @@ DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "10"))  # Stop af
 EDGE_THRESHOLD = float(os.getenv("EDGE_THRESHOLD", "0.20"))  # 0.20 = only strong edges pass
 NEWS_LOOKBACK_HOURS = 12
 
-# --- Minimum ROI Filter (ensures ≥100% ROI per trade) ---
-# YES trades: only buy if price ≤ 0.50 (profit = $1.00 - price ≥ $0.50/share)
-# NO trades: only buy if price ≥ 0.50 (profit = price ≥ $0.50/share)
-# This guarantees $1 profit minimum on every $1 bet
-MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.50"))  # Buy YES only below 50¢
-MIN_NO_ENTRY_PRICE = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.50"))    # Buy NO only above 50¢
+# --- High-ROI Price Sweet Spot (target 150-500% ROI per trade) ---
+# YES trades: buy only 15-40¢ → if win, profit = 60-85¢ per share (150-567% ROI)
+# NO trades: buy only 15-40¢ (price ≥ 0.60 → NO share = 1-price = 15-40¢) → same ROI
+# This ensures every trade has asymmetric upside: risk $1 to make $1.50-$5.67
+MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.40"))  # Buy YES only below 40¢
+MIN_NO_ENTRY_PRICE = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.60"))    # Buy NO only above 60¢ (NO share ≤ 40¢)
 
 # --- Demo Runner Settings ---
 DEMO_HOURS_WINDOW = float(os.getenv("DEMO_HOURS_WINDOW", "48"))       # 48h window — more candidates, still fast resolution

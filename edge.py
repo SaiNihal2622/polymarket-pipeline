@@ -198,6 +198,14 @@ def detect_edge_v2(
     # Kelly position sizing with composite boost
     bet_amount = size_position(raw_edge, composite_boost=composite)
 
+    # ROI-weighted sizing: higher ROI trades get bigger bets
+    # ROI 150% = 1.0x, ROI 300% = 1.5x, ROI 500% = 2.0x
+    buy_price = market_price if side == "YES" else (1.0 - market_price)
+    if buy_price > 0 and buy_price < 1.0:
+        roi_pct = ((1.0 - buy_price) / buy_price) * 100
+        roi_multiplier = min(1.0 + (roi_pct - 100) / 400, 2.0)  # 1.0x at 100% ROI, 2.0x at 500%+ ROI
+        bet_amount = min(bet_amount * max(roi_multiplier, 1.0), config.MAX_BET_USD)
+
     # Sureshot boost: up to 2x (conservative) within bankroll limits
     if is_sureshot:
         bet_amount = min(bet_amount * 2.0, config.MAX_BET_USD)
@@ -301,7 +309,20 @@ def compute_composite_score(
         recency_signal = 0.1
     score += weights["recency"] * recency_signal
 
-    return round(score, 4)
+    # 6. Asymmetric payoff bonus — cheaper entry = higher ROI = bonus
+    # Sweet spot: 15-40¢ entry → 150-567% ROI → bonus 0.05-0.15
+    buy_price = market.yes_price  # already filtered by side in caller
+    if buy_price <= 0.20:
+        roi_bonus = 0.15   # 400%+ ROI: max bonus
+    elif buy_price <= 0.30:
+        roi_bonus = 0.10   # 233%+ ROI: good bonus
+    elif buy_price <= 0.40:
+        roi_bonus = 0.05   # 150%+ ROI: small bonus
+    else:
+        roi_bonus = 0.0
+    score += roi_bonus
+
+    return round(min(score, 1.0), 4)
 
 
 def size_position(edge: float, composite_boost: float = 0.5) -> float:
