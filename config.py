@@ -128,8 +128,8 @@ NEWS_LOOKBACK_HOURS = 12
 # YES trades: buy only 15-40¢ → if win, profit = 60-85¢ per share (150-567% ROI)
 # NO trades: buy only 15-40¢ (price ≥ 0.60 → NO share = 1-price = 15-40¢) → same ROI
 # This ensures every trade has asymmetric upside: risk $1 to make $1.50-$5.67
-MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.40"))  # Buy YES only below 40¢
-MIN_NO_ENTRY_PRICE = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.60"))    # Buy NO only above 60¢ (NO share ≤ 40¢)
+MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.50"))  # Buy YES below 50¢ (balanced: volume + ROI)
+MIN_NO_ENTRY_PRICE = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.50"))    # Buy NO above 50¢ (balanced: volume + ROI)
 
 # --- Demo Runner Settings ---
 DEMO_HOURS_WINDOW = float(os.getenv("DEMO_HOURS_WINDOW", "48"))       # 48h window — more candidates, still fast resolution
