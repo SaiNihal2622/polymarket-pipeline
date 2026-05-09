@@ -43,8 +43,19 @@ if __name__ == "__main__":
         # We run the Flask app in the main thread
         app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
     except Exception as e:
+        import traceback
         print(f"⚠️  Dashboard failed to start: {e}", file=sys.stderr, flush=True)
-        # If dashboard fails, we should still keep the process alive for the pipeline
-        import time
-        while True:
-            time.sleep(60)
+        traceback.print_exc()
+        # Fallback: run a minimal health-check server so Railway doesn't kill us
+        from http.server import HTTPServer, BaseHTTPRequestHandler
+        class FallbackHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.write = self.wfile.write
+                self.write(b"Pipeline running (dashboard fallback)")
+            def log_message(self, *a): pass
+        port = int(os.getenv("PORT", "8081"))
+        print(f"📊 Fallback health server on 0.0.0.0:{port}", flush=True)
+        HTTPServer(("0.0.0.0", port), FallbackHandler).serve_forever()
