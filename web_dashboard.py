@@ -117,6 +117,11 @@ def _get_recent_trades(limit: int = 30) -> list[dict]:
             try:
                 created = datetime.fromisoformat(r["created_at"].replace("Z", "+00:00"))
                 resolved = datetime.fromisoformat(r["resolved_at"].replace("Z", "+00:00"))
+                # Normalize both to aware or both to naive
+                if resolved.tzinfo and not created.tzinfo:
+                    created = created.replace(tzinfo=resolved.tzinfo)
+                elif created.tzinfo and not resolved.tzinfo:
+                    resolved = resolved.replace(tzinfo=created.tzinfo)
                 delta = resolved - created
                 total_secs = int(delta.total_seconds())
                 if total_secs < 0:
@@ -130,18 +135,28 @@ def _get_recent_trades(limit: int = 30) -> list[dict]:
             except Exception:
                 pass
 
-        # --- Resolution Duration (time from trade creation to market close) ---
+        # --- Resolution Duration (time from trade creation to resolution/close) ---
+        # Priority: end_date_iso > resolved_at (from outcomes) > time_to_resolve fallback
         r["resolution_duration"] = ""
         end_iso = r.get("end_date_iso")
+        resolved_at = r.get("resolved_at")
         created_at = r.get("created_at")
-        if end_iso and created_at:
+        duration_source = end_iso or resolved_at  # use whichever is available
+        if duration_source and created_at:
             try:
-                close_dt = datetime.fromisoformat(end_iso.replace("Z", "+00:00"))
+                close_dt = datetime.fromisoformat(duration_source.replace("Z", "+00:00"))
                 create_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                # Normalize both to aware or both to naive
+                if close_dt.tzinfo and not create_dt.tzinfo:
+                    create_dt = create_dt.replace(tzinfo=close_dt.tzinfo)
+                elif create_dt.tzinfo and not close_dt.tzinfo:
+                    close_dt = close_dt.replace(tzinfo=create_dt.tzinfo)
                 delta = close_dt - create_dt
                 total_secs = int(delta.total_seconds())
                 if total_secs < 0:
                     r["resolution_duration"] = "closed"
+                elif total_secs < 60:
+                    r["resolution_duration"] = f"{total_secs}s"
                 elif total_secs < 3600:
                     r["resolution_duration"] = f"{total_secs // 60}m"
                 elif total_secs < 86400:
@@ -150,8 +165,8 @@ def _get_recent_trades(limit: int = 30) -> list[dict]:
                     r["resolution_duration"] = f"{total_secs // 86400}d {(total_secs % 86400) // 3600}h"
             except Exception:
                 pass
-        elif r.get("result"):  # resolved but no end_date_iso
-            r["resolution_duration"] = r.get("time_to_resolve", "")
+        elif r.get("result") and r.get("time_to_resolve"):
+            r["resolution_duration"] = r["time_to_resolve"]
 
         # --- Expected Profit (EV calculation) ---
         # EV = true_prob * potential_profit - (1 - true_prob) * loss
@@ -162,14 +177,28 @@ def _get_recent_trades(limit: int = 30) -> list[dict]:
         score = r.get("claude_score", 0.5)
         amount = r.get("amount_usd", 1.0)
         side = r.get("side", "YES")
-        if price and price > 0 and price < 1 and score and amount:
+        edge = r.get("edge", 0.0) or 0.0
+        if amount:
             try:
-                if side == "YES":
-                    potential_profit = amount * (1.0 / price - 1.0)
-                else:
-                    potential_profit = amount * (1.0 / (1.0 - price) - 1.0)
-                ev = score * potential_profit - (1.0 - score) * amount
-                r["expected_profit"] = round(ev, 2)
+                # If price is resolved (0 or 1), reconstruct from edge
+                # edge = claude_score - market_price_at_entry
+                # So entry_price = claude_score - edge
+                entry_price = None
+                if price and price > 0.01 and price < 0.99:
+                    entry_price = price
+                elif edge and score:
+                    entry_price = max(0.01, min(0.99, score - edge))
+
+                if entry_price and entry_price > 0.01 and entry_price < 0.99:
+                    if side == "YES":
+                        potential_profit = amount * (1.0 / entry_price - 1.0)
+                    else:
+                        potential_profit = amount * (1.0 / (1.0 - entry_price) - 1.0)
+                    ev = score * potential_profit - (1.0 - score) * amount
+                    r["expected_profit"] = round(ev, 2)
+                elif edge:
+                    # Fallback: simple EV from edge
+                    r["expected_profit"] = round(edge * amount, 2)
             except Exception:
                 r["expected_profit"] = 0.0
     return rows
