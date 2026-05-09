@@ -29,8 +29,11 @@ from pathlib import Path
 from difflib import SequenceMatcher
 
 import httpx
-import urllib3
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+try:
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+except ImportError:
+    urllib3 = None
 
 log = logging.getLogger(__name__)
 
