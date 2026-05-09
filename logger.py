@@ -108,6 +108,7 @@ def _migrate_v2_columns(conn):
         ("token_id", "TEXT"),   # YES-token id for CLOB-based resolution
         ("signals", "TEXT"),    # JSON: {pf:"bullish:0.82", ai:"bearish:0.45", ...}
         ("strategy", "TEXT"),   # which signal combo fired this trade (2-day trial)
+        ("end_date_iso", "TEXT"),  # market end date from Gamma API
     ]
     for col_name, col_type in new_cols:
         if col_name not in columns:

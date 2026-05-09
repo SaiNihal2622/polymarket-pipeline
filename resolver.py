@@ -149,6 +149,23 @@ def _resolve_via_gamma_slug(trade: dict) -> float | None:
     """
     question = trade.get("market_question", "")
     market_id = trade.get("market_id", "")
+    token_id = trade.get("token_id", "")
+    # End-date guard: skip if market hasn't ended yet (with 30-min buffer)
+    end_str = trade.get("end_date_iso") or trade.get("market_end_date") or ""
+    if end_str:
+        try:
+            from datetime import datetime as _dt2, timezone as _tz2
+            end_dt = _dt2.fromisoformat(end_str.replace("Z", "+00:00"))
+            if end_dt.tzinfo is None:
+                end_dt = end_dt.replace(tzinfo=_tz2.utc)
+            now = _dt2.now(_tz2.utc)
+            if now < end_dt:
+                remaining_hours = (end_dt - now).total_seconds() / 3600
+                log.info(f"[resolver] Skipping trade — market ends in {remaining_hours:.1f}h: {question[:50]}")
+                return None
+        except Exception:
+            pass
+
     if not market_id and not question:
         return None
     
@@ -187,7 +204,23 @@ def _resolve_via_gamma_slug(trade: dict) -> float | None:
             except Exception:
                 pass
 
-    # Try 3: Search by question text (closed=true)
+    # Try 2.5: Look up by clob_token_ids (our stored token_id)
+    if token_id and len(str(token_id)) > 50:
+        try:
+            r = httpx.get(f"{GAMMA_API}/markets",
+                params={"clob_token_ids": f'["{token_id}"]', "limit": 5},
+                timeout=10, verify=False)
+            if r.status_code == 200:
+                data = r.json()
+                items = data if isinstance(data, list) else data.get("data", [])
+                for m in items:
+                    result = _parse_outcome(m)
+                    if result is not None:
+                        return result
+        except Exception:
+            pass
+
+    # Try 3: Search by question text (closed=true) — lower threshold to 0.60
     if question:
         try:
             r = httpx.get(f"{GAMMA_API}/markets",
@@ -198,14 +231,14 @@ def _resolve_via_gamma_slug(trade: dict) -> float | None:
                 items = data if isinstance(data, list) else data.get("data", [])
                 for m in items:
                     mq = (m.get("question") or "").strip()
-                    if _fuzzy_match(mq, question, threshold=0.85):
+                    if _fuzzy_match(mq, question, threshold=0.60):
                         result = _parse_outcome(m)
                         if result is not None:
                             return result
         except Exception:
             pass
 
-    # Try 4: Search by question text (all markets)
+    # Try 4: Search by question text (all markets) — lower threshold
     if question:
         try:
             r = httpx.get(f"{GAMMA_API}/markets",
@@ -216,7 +249,7 @@ def _resolve_via_gamma_slug(trade: dict) -> float | None:
                 items = data if isinstance(data, list) else data.get("data", [])
                 for m in items:
                     mq = (m.get("question") or "").strip()
-                    if _fuzzy_match(mq, question, threshold=0.85):
+                    if _fuzzy_match(mq, question, threshold=0.60):
                         result = _parse_outcome(m)
                         if result is not None:
                             return result
@@ -250,11 +283,39 @@ def _resolve_via_gamma_slug(trade: dict) -> float | None:
                             if sim > best_sim:
                                 best_sim = sim
                                 best_match = m
-                        if best_match and best_sim >= 0.55:
+                        if best_match and best_sim >= 0.45:
                             log.info(f"[resolver] Gamma keyword match sim={best_sim:.2f}: {best_match.get('question','')[:60]}")
                             result = _parse_outcome(best_match)
                             if result is not None:
                                 return result
+        except Exception:
+            pass
+
+    # Try 6: Search by individual key words from question
+    if question:
+        try:
+            words = re.findall(r'[A-Z][a-zA-Z]+', question)  # proper nouns / capitalized
+            if len(words) >= 2:
+                search_q = " ".join(words[:3])
+                r = httpx.get(f"{GAMMA_API}/markets",
+                    params={"question": search_q, "limit": 10, "closed": "true"},
+                    timeout=10, verify=False)
+                if r.status_code == 200:
+                    data = r.json()
+                    items = data if isinstance(data, list) else data.get("data", [])
+                    best_match = None
+                    best_sim = 0.0
+                    for m in items:
+                        mq = (m.get("question") or "").strip()
+                        sim = SequenceMatcher(None, _normalize_q(question, 120), _normalize_q(mq, 120)).ratio()
+                        if sim > best_sim:
+                            best_sim = sim
+                            best_match = m
+                    if best_match and best_sim >= 0.40:
+                        log.info(f"[resolver] Gamma proper-noun match sim={best_sim:.2f}: {best_match.get('question','')[:60]}")
+                        result = _parse_outcome(best_match)
+                        if result is not None:
+                            return result
         except Exception:
             pass
 
@@ -410,7 +471,7 @@ def _refresh_bulk_cache(pending_trades: list[dict]) -> None:
                 if not matched_cid:
                     for t in pending_trades:
                         pq = t.get("market_question", "")
-                        if _fuzzy_match(gq_full, pq, threshold=0.80):
+                        if _fuzzy_match(gq_full, pq, threshold=0.55):
                             matched_cid = t["market_id"]
                             break
                 if matched_cid and result is not None:
