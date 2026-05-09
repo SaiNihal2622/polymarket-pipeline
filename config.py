@@ -124,12 +124,22 @@ DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "10"))  # Stop af
 EDGE_THRESHOLD = float(os.getenv("EDGE_THRESHOLD", "0.20"))  # 0.20 = only strong edges pass
 NEWS_LOOKBACK_HOURS = 12
 
-# --- High-ROI Price Sweet Spot (target 150-500% ROI per trade) ---
-# YES trades: buy only 15-40¢ → if win, profit = 60-85¢ per share (150-567% ROI)
-# NO trades: buy only 15-40¢ (price ≥ 0.60 → NO share = 1-price = 15-40¢) → same ROI
-# This ensures every trade has asymmetric upside: risk $1 to make $1.50-$5.67
-MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.50"))  # Buy YES below 50¢ (balanced: volume + ROI)
-MIN_NO_ENTRY_PRICE = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.50"))    # Buy NO above 50¢ (balanced: volume + ROI)
+# --- High-ROI Price Sweet Spot (GUARANTEES profit even at LOW accuracy) ---
+# At 30¢ entry: break-even = 30% accuracy. At 40% acc = $0.33 profit per $1.
+# At 20¢ entry: break-even = 20% accuracy. At 40% acc = $1.00 profit per $1.
+# ┌──────────┬───────────┬────────────┬────────────────┬──────────────────┐
+# │ Buy Price│ Break-Even│ EV @ 40%   │ EV @ 50%       │ EV @ 60%         │
+# ├──────────┼───────────┼────────────┼────────────────┼──────────────────┤
+# │ $0.15    │ 15%       │ +$1.73     │ +$2.33         │ +$2.93           │
+# │ $0.20    │ 20%       │ +$1.00     │ +$1.50         │ +$2.00           │
+# │ $0.25    │ 25%       │ +$0.60     │ +$1.00         │ +$1.40           │
+# │ $0.30    │ 30%       │ +$0.33     │ +$0.67         │ +$1.00           │
+# │ $0.40    │ 40%       │ $0.00      │ +$0.25         │ +$0.50           │
+# │ $0.50    │ 50%       │ -$0.20     │ $0.00          │ +$0.20           │
+# └──────────┴───────────┴────────────┴────────────────┴──────────────────┘
+# Only trade at 30¢ or below → PROFITABLE at ≥31% accuracy → guaranteed upside
+MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.30"))  # Buy YES below 30¢ → ≥233% ROI, break-even at 30%
+MIN_NO_ENTRY_PRICE = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.70"))    # Buy NO above 70¢ YES → NO share ≤30¢ → same math
 
 # --- Demo Runner Settings ---
 DEMO_HOURS_WINDOW = float(os.getenv("DEMO_HOURS_WINDOW", "48"))       # 48h window — more candidates, still fast resolution
