@@ -631,6 +631,34 @@ def health():
     return "ok", 200
 
 
+@app.route("/debug/duration")
+def debug_duration():
+    """Debug endpoint to trace duration calculation"""
+    rows = _q(
+        "SELECT t.id, t.created_at, t.end_date_iso, o.resolved_at, o.result "
+        "FROM trades t LEFT JOIN outcomes o ON o.trade_id = t.id "
+        "ORDER BY t.id DESC LIMIT 5"
+    )
+    results = []
+    for r in rows:
+        info = dict(r)
+        ds = info.get("end_date_iso") or info.get("resolved_at")
+        ca = info.get("created_at")
+        if ds and ca:
+            try:
+                cd = datetime.fromisoformat(ds.replace("Z", "+00:00"))
+                ct = datetime.fromisoformat(ca.replace("Z", "+00:00"))
+                cd = cd.replace(tzinfo=None)
+                ct = ct.replace(tzinfo=None)
+                info["_secs"] = int((cd - ct).total_seconds())
+            except Exception as e:
+                info["_error"] = str(e)
+        info["_has_ds"] = bool(ds)
+        info["_has_ca"] = bool(ca)
+        results.append(info)
+    return jsonify(results)
+
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8081"))
     print(f"Dashboard running on http://0.0.0.0:{port}")
