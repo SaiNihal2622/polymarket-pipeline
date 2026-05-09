@@ -11,10 +11,10 @@ from markets import get_token_id
 def execute_trade(signal: Signal) -> dict:
     """Execute a trade on Polymarket or log a dry-run. Synchronous."""
     daily_spent = abs(logger.get_daily_pnl())
+    token_id = get_token_id(signal.market, signal.side)
+    
     if daily_spent + signal.bet_amount > config.DAILY_LOSS_LIMIT_USD:
         return _log_and_return(signal, status="rejected_daily_limit", order_id=None, token_id=token_id)
-
-    token_id = get_token_id(signal.market, signal.side)
 
     if config.DRY_RUN:
         return _log_and_return(signal, status="dry_run", order_id=None, token_id=token_id)

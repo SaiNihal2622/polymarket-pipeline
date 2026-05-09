@@ -584,9 +584,9 @@ def scan_and_trade() -> dict:
         if hours_left > 30 or price < 0.10 or price > 0.90:
             continue
 
-        # Skip "uncertain zone" prices (0.47-0.53) — crowd says 50/50, no edge
-        # Narrowed to 0.47-0.53 to capture more markets
-        if 0.47 <= price <= 0.53:
+        # Skip "uncertain zone" prices (0.45-0.55) — crowd says 50/50, no edge
+        # Widened to 0.45-0.55 for stricter filtering
+        if 0.45 <= price <= 0.55:
             log.debug(f"[skip:uncertain] price={price:.2f} in dead zone: {q_lower[:50]}")
             continue
 
@@ -660,18 +660,29 @@ def scan_and_trade() -> dict:
                 from classifier import _build_analyst_prompt, _parse_json_response
                 
                 # Passes start from index 1 (Skeptic, Reflector, etc.)
+                from classifier import PROMPTS as _PROMPTS, _call_llm_async
+                from classifier import SKEPTIC_PROMPT, REFLECTOR_PROMPT
+                
                 for p_idx in range(1, config.CONSENSUS_PASSES):
                     if ai_calls_left <= 0: break
                     
-                    # Use Gemini if available, else Groq
-                    use_gemini = (config.LLM_PROVIDER == "gemini" and not gemini_down)
-                    p_prompt = _build_analyst_prompt(market, matched_headlines) # Simplified for now
+                    # Use the CORRECT skeptic/reflector prompt for each pass
+                    prompt_tmpl = _PROMPTS[p_idx % len(_PROMPTS)]
+                    p_prompt = prompt_tmpl.format(
+                        question=market.question,
+                        yes_price=market.yes_price,
+                        headline=matched_headlines[0] if matched_headlines else market.question,
+                        source="consensus_pass",
+                    )
                     
                     try:
-                        p_text = _call_llm(p_prompt) # respects provider + fallback
+                        p_text = asyncio.run(_call_llm_async(p_prompt, temperature=0.15))
                         p_res  = _parse_json_response(p_text)
                         p_dir  = p_res.get("direction", "neutral")
                         p_mat  = max(0.0, min(1.0, float(p_res.get("materiality", 0))))
+                        
+                        if p_dir not in ("bullish", "bearish", "neutral"):
+                            p_dir = "neutral"
                         
                         if p_dir != gem_dir:
                             consensus_agreed = False
@@ -816,11 +827,11 @@ def scan_and_trade() -> dict:
                 continue
 
             bet_price    = price if strat_side == "YES" else (1.0 - price)
-            # ── ROI FILTER: ≥100% ROI (same as detect_edge_v2 Gate 4b) ──
-            # Buy only if bet_price ≤ 0.50 → payout ratio ≥ 2:1
-            if bet_price > 0.50:
+            # ── ROI FILTER: ≥233% ROI — MAX entry price 30¢ ──
+            # Only buy at ≤30¢ for guaranteed profit even at low accuracy
+            if bet_price > config.MAX_BUY_PRICE:
                 roi_pct = (1.0 / bet_price - 1.0) * 100
-                log.debug(f"[strategy] SKIP {strat_name} {strat_side} bet_price={bet_price:.2f} — ROI={roi_pct:.0f}% < 100%")
+                log.debug(f"[strategy] SKIP {strat_name} {strat_side} bet_price={bet_price:.2f} — ROI={roi_pct:.0f}% < 233% (max_buy={config.MAX_BUY_PRICE})")
                 continue
             payout_ratio = (1.0 - bet_price) / bet_price
             ev           = strat_score * payout_ratio - (1.0 - strat_score)
