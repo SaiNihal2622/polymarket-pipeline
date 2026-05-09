@@ -18,14 +18,30 @@ from pathlib import Path
 
 from flask import Flask, jsonify, render_template_string
 
-import logger as _logger  # ensures init_db ran
-from resolver import (
-    get_accuracy_stats,
-    get_signal_accuracies,
-    get_strategy_accuracies,
-)
-from logger import DB_PATH
-from bankroll import get_current_bankroll, todays_pnl, can_trade_today
+# Resilient imports — dashboard must start even if heavy modules fail
+try:
+    import logger as _logger  # ensures init_db ran
+    from logger import DB_PATH
+except Exception:
+    DB_PATH = "polymarket.db"
+
+try:
+    from resolver import (
+        get_accuracy_stats,
+        get_signal_accuracies,
+        get_strategy_accuracies,
+    )
+except Exception:
+    def get_accuracy_stats(): return {"accuracy_pct": 0, "wins": 0, "losses": 0}
+    def get_signal_accuracies(): return []
+    def get_strategy_accuracies(): return []
+
+try:
+    from bankroll import get_current_bankroll, todays_pnl, can_trade_today
+except Exception:
+    def get_current_bankroll(): return 0.0
+    def todays_pnl(): return 0.0
+    def can_trade_today(): return (True, "ok")
 
 app = Flask(__name__)
 
