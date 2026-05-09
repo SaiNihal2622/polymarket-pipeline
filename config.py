@@ -138,8 +138,8 @@ NEWS_LOOKBACK_HOURS = 12
 # │ $0.50    │ 50%       │ -$0.20     │ $0.00          │ +$0.20           │
 # └──────────┴───────────┴────────────┴────────────────┴──────────────────┘
 # Only trade at 30¢ or below → PROFITABLE at ≥31% accuracy → guaranteed upside
-MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.30"))  # Buy YES below 30¢ → ≥233% ROI, break-even at 30%
-MIN_NO_ENTRY_PRICE = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.70"))    # Buy NO above 70¢ YES → NO share ≤30¢ → same math
+MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.50"))  # Buy YES below 50¢ → reasonable ROI, allows more trades
+MIN_NO_ENTRY_PRICE = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.50"))    # Buy NO above 50¢ YES → NO share ≤50¢
 
 # --- Demo Runner Settings ---
 DEMO_HOURS_WINDOW = float(os.getenv("DEMO_HOURS_WINDOW", "48"))       # 48h window — more candidates, still fast resolution
