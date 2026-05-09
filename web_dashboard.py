@@ -95,13 +95,14 @@ def _get_recent_trades(limit: int = 30) -> list[dict]:
         """SELECT t.id, t.created_at, t.market_question, t.side,
                   t.market_price, t.claude_score, t.edge, t.amount_usd,
                   t.status, t.strategy, t.signals, t.classification,
-                  t.materiality, t.news_source,
+                  t.materiality, t.news_source, t.end_date_iso,
                   o.result, o.pnl, o.resolved_at
            FROM trades t
            LEFT JOIN outcomes o ON o.trade_id = t.id
            ORDER BY t.id DESC LIMIT ?""",
         (limit,),
     )
+    now = datetime.utcnow()
     for r in rows:
         if r.get("signals"):
             try:
@@ -128,6 +129,49 @@ def _get_recent_trades(limit: int = 30) -> list[dict]:
                     r["time_to_resolve"] = f"{total_secs // 86400}d {(total_secs % 86400) // 3600}h"
             except Exception:
                 pass
+
+        # --- Resolution Duration (time from trade creation to market close) ---
+        r["resolution_duration"] = ""
+        end_iso = r.get("end_date_iso")
+        created_at = r.get("created_at")
+        if end_iso and created_at:
+            try:
+                close_dt = datetime.fromisoformat(end_iso.replace("Z", "+00:00"))
+                create_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                delta = close_dt - create_dt
+                total_secs = int(delta.total_seconds())
+                if total_secs < 0:
+                    r["resolution_duration"] = "closed"
+                elif total_secs < 3600:
+                    r["resolution_duration"] = f"{total_secs // 60}m"
+                elif total_secs < 86400:
+                    r["resolution_duration"] = f"{total_secs // 3600}h {(total_secs % 3600) // 60}m"
+                else:
+                    r["resolution_duration"] = f"{total_secs // 86400}d {(total_secs % 86400) // 3600}h"
+            except Exception:
+                pass
+        elif r.get("result"):  # resolved but no end_date_iso
+            r["resolution_duration"] = r.get("time_to_resolve", "")
+
+        # --- Expected Profit (EV calculation) ---
+        # EV = true_prob * potential_profit - (1 - true_prob) * loss
+        # For YES: profit_per_dollar = (1/price - 1), loss = $1
+        # For NO:  profit_per_dollar = (1/(1-price) - 1), loss = $1
+        r["expected_profit"] = 0.0
+        price = r.get("market_price", 0.5)
+        score = r.get("claude_score", 0.5)
+        amount = r.get("amount_usd", 1.0)
+        side = r.get("side", "YES")
+        if price and price > 0 and price < 1 and score and amount:
+            try:
+                if side == "YES":
+                    potential_profit = amount * (1.0 / price - 1.0)
+                else:
+                    potential_profit = amount * (1.0 / (1.0 - price) - 1.0)
+                ev = score * potential_profit - (1.0 - score) * amount
+                r["expected_profit"] = round(ev, 2)
+            except Exception:
+                r["expected_profit"] = 0.0
     return rows
 
 
@@ -481,7 +525,7 @@ HTML = r"""
       <table>
         <thead>
           <tr>
-            <th>Time</th><th>Market Question</th><th>Side</th><th>Edge</th><th>Amount</th><th>Status</th><th>Result</th><th>TTR</th>
+            <th>Time</th><th>Market Question</th><th>Side</th><th>Edge</th><th>Amount</th><th>Status</th><th>Exp. Profit</th><th>Res. Duration</th><th>Result</th><th>TTR</th>
           </tr>
         </thead>
         <tbody>
@@ -493,6 +537,8 @@ HTML = r"""
             <td class="{{ 'win' if t.edge > 0 else 'loss' }}">{{ "%+.1f"|format(t.edge * 100) }}%</td>
             <td>${{ "%.2f"|format(t.amount_usd) }}</td>
             <td><span class="signal-badge">{{ t.status }}</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: {{ '#34d399' if t.expected_profit >= 0 else '#f87171' }};">${{ "%+.2f"|format(t.expected_profit) }}</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">{{ t.resolution_duration }}</td>
             <td>
               {% if t.result == 'win' %}
                 <span class="win" style="font-weight: 700;">WIN <span style="font-size: 11px; font-weight: 400; color: var(--muted);">${{ "%.2f"|format(t.pnl) }}</span></span>
