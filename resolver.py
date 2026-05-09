@@ -448,7 +448,7 @@ def _refresh_bulk_cache(pending_trades: list[dict]) -> None:
     matched = 0
     fetched_total = 0
 
-    for offset in range(0, 500, 100):
+    for offset in range(0, 2000, 100):
         try:
             r = httpx.get(f"{GAMMA_API}/markets",
                 params={"closed": "true", "limit": 100, "offset": offset,
@@ -488,8 +488,32 @@ def _refresh_bulk_cache(pending_trades: list[dict]) -> None:
     _cache_fetched_at = now
     print(f"[resolver] bulk: {fetched_total} closed markets scanned, {matched} text-matched")
 
+    # Try Gamma search by clob_token_ids for each pending trade
+    for t in pending_trades[:30]:
+        mid = t["market_id"]
+        if mid in _resolution_cache:
+            continue
+        tid = t.get("token_id") or _get_token_id_for_trade(mid)
+        if tid and len(str(tid)) > 50:
+            try:
+                r = httpx.get(f"{GAMMA_API}/markets",
+                    params={"clob_token_ids": f'["{tid}"]', "limit": 3},
+                    timeout=8, verify=False)
+                if r.status_code == 200:
+                    data = r.json()
+                    items = data if isinstance(data, list) else data.get("data", [])
+                    for m in items:
+                        result = _parse_outcome(m)
+                        if result is not None:
+                            _resolution_cache[mid] = result
+                            print(f"[resolver:token_bulk] #{t['id']} matched via token_id → {result}")
+                            matched += 1
+                            break
+            except Exception:
+                pass
+
     # Direct question-text search for each pending trade
-    for t in pending_trades[:20]:
+    for t in pending_trades[:30]:
         q = t.get("market_question", "")
         mid = t["market_id"]
         if mid in _resolution_cache:
@@ -502,11 +526,12 @@ def _refresh_bulk_cache(pending_trades: list[dict]) -> None:
                 items = data if isinstance(data, list) else data.get("data", [])
                 for m in items:
                     mq = (m.get("question") or "").strip()
-                    if _normalize_q(mq, 60) == _normalize_q(q, 60):
+                    sim = SequenceMatcher(None, _normalize_q(q, 120), _normalize_q(mq, 120)).ratio()
+                    if sim >= 0.55:
                         result = _parse_outcome(m)
                         if result is not None:
                             _resolution_cache[mid] = result
-                            print(f"[resolver:qsearch] #{t['id']} matched! → {result}")
+                            print(f"[resolver:qsearch] #{t['id']} sim={sim:.2f} matched! → {result}")
                             matched += 1
                             break
         except Exception:
@@ -565,25 +590,37 @@ def _resolve_via_price_expiry(trade: dict) -> float | None:
         if (now - end_dt).total_seconds() < 7200:
             return None
 
-        # Fetch current market price from Gamma
+        # Fetch current market price from Gamma (use query params, NOT /markets/{id} which 422s)
         market_id = trade.get("market_id", "")
+        token_id = trade.get("token_id", "")
         try:
-            r = httpx.get(f"{GAMMA_API}/markets/{market_id}", timeout=8, verify=False)
+            r = httpx.get(f"{GAMMA_API}/markets",
+                params={"conditionId": market_id, "limit": 1},
+                timeout=8, verify=False)
             if r.status_code == 200:
-                m = r.json()
-                outcome_prices = m.get("outcomePrices")
-                if outcome_prices:
-                    prices = json.loads(outcome_prices) if isinstance(outcome_prices, str) else outcome_prices
-                    yes_price = float(prices[0]) if prices else 0.5
-                else:
-                    yes_price = float(m.get("bestAsk", 0.5) or 0.5)
-                # If price is extreme, market is effectively resolved
-                if yes_price >= 0.96:
-                    print(f"[resolver:price_expiry] #{trade['id']} YES (price={yes_price}, past end_date)")
-                    return 1.0
-                elif yes_price <= 0.04:
-                    print(f"[resolver:price_expiry] #{trade['id']} NO (price={yes_price}, past end_date)")
-                    return 0.0
+                data = r.json()
+                items = data if isinstance(data, list) else data.get("data", [])
+                if not items and token_id and len(str(token_id)) > 50:
+                    r = httpx.get(f"{GAMMA_API}/markets",
+                        params={"clob_token_ids": f'["{token_id}"]', "limit": 1},
+                        timeout=8, verify=False)
+                    if r.status_code == 200:
+                        data = r.json()
+                        items = data if isinstance(data, list) else data.get("data", [])
+                for m in items:
+                    outcome_prices = m.get("outcomePrices")
+                    if outcome_prices:
+                        prices = json.loads(outcome_prices) if isinstance(outcome_prices, str) else outcome_prices
+                        yes_price = float(prices[0]) if prices else 0.5
+                    else:
+                        yes_price = float(m.get("bestAsk", 0.5) or 0.5)
+                    # If price is extreme, market is effectively resolved
+                    if yes_price >= 0.96:
+                        print(f"[resolver:price_expiry] #{trade['id']} YES (price={yes_price}, past end_date)")
+                        return 1.0
+                    elif yes_price <= 0.04:
+                        print(f"[resolver:price_expiry] #{trade['id']} NO (price={yes_price}, past end_date)")
+                        return 0.0
         except Exception:
             pass
     except Exception:

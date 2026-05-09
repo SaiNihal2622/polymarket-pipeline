@@ -133,10 +133,10 @@ MIN_NO_ENTRY_PRICE = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.50"))    # Buy NO 
 
 # --- Demo Runner Settings ---
 DEMO_HOURS_WINDOW = float(os.getenv("DEMO_HOURS_WINDOW", "48"))       # 48h window — more candidates, still fast resolution
-SCAN_INTERVAL_MIN = int(os.getenv("SCAN_INTERVAL_MIN", "5"))          # 5min scan = catch 5/15min crypto windows
-RESOLVE_INTERVAL_MIN = int(os.getenv("RESOLVE_INTERVAL_MIN", "6"))     # Check resolutions every 6min
+SCAN_INTERVAL_MIN = int(os.getenv("SCAN_INTERVAL_MIN", "3"))          # 3min scan = more trades, catch fast-moving markets
+RESOLVE_INTERVAL_MIN = int(os.getenv("RESOLVE_INTERVAL_MIN", "4"))     # Check resolutions every 4min = fast settlement
 ACCURACY_THRESHOLD = float(os.getenv("ACCURACY_THRESHOLD", "80.0"))   # Target: 80% accuracy
-MIN_RESOLVED_TRADES = int(os.getenv("MIN_RESOLVED_TRADES", "30"))      # Need 30 resolved before going live
+MIN_RESOLVED_TRADES = int(os.getenv("MIN_RESOLVED_TRADES", "20"))      # Need 20 resolved before going live
 
 # --- V2 Settings ---
 MAX_RESOLVE_HOURS = float(os.getenv("MAX_RESOLVE_HOURS", "72"))  # 3 days max

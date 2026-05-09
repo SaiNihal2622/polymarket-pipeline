@@ -176,33 +176,8 @@ def _startup_cleanup():
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
 
-    # ── Phase 1: Void non-crypto trades ────────────────────────────────
-    CRYPTO_KW = [
-        "bitcoin", "btc", "ethereum", "eth", "solana", "sol", "crypto",
-        "dogecoin", "doge", "xrp", "bnb", "hyperliquid",
-        "cardano", "ada", "avax", "polkadot", "dot",
-        "chainlink", "litecoin", "ltc", "polygon", "matic",
-        "uniswap", "pepe", "shib", "meme coin",
-    ]
-
-    non_voided = conn.execute(
-        "SELECT id, market_question, status FROM trades WHERE id >= 192 AND status != 'voided'"
-    ).fetchall()
-
+    # ── Phase 1: SKIPPED — all categories can be profitable with proper analysis ──
     void_ids = []
-    for t in non_voided:
-        q = (t["market_question"] or "").lower()
-        is_profitable = any(k in q for k in CRYPTO_KW)
-        if not is_profitable:
-            void_ids.append(t["id"])
-
-    if void_ids:
-        placeholders = ','.join('?' * len(void_ids))
-        conn.execute(f"UPDATE trades SET status = 'voided' WHERE id IN ({placeholders})", void_ids)
-        conn.execute(f"DELETE FROM outcomes WHERE trade_id IN ({placeholders})", void_ids)
-        conn.execute(f"DELETE FROM calibration WHERE trade_id IN ({placeholders})", void_ids)
-        conn.commit()
-        console.print(f"  [yellow]🗑 Voided {len(void_ids)} non-profitable trades (sports/esports/UFC/NFL draft)[/yellow]")
 
     # ── Phase 2: Void old junk trades ────────────────────────────────────
     old_cutoff = (datetime.now(timezone.utc) - timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S")
@@ -609,20 +584,16 @@ def scan_and_trade() -> dict:
         if hours_left > 30 or price < 0.10 or price > 0.90:
             continue
 
-        # Skip "uncertain zone" prices (0.45-0.55) — crowd says 50/50, no edge
-        # Narrowed from 0.40-0.60 to 0.45-0.55 to capture more markets
-        if 0.45 <= price <= 0.55:
+        # Skip "uncertain zone" prices (0.47-0.53) — crowd says 50/50, no edge
+        # Narrowed to 0.47-0.53 to capture more markets
+        if 0.47 <= price <= 0.53:
             log.debug(f"[skip:uncertain] price={price:.2f} in dead zone: {q_lower[:50]}")
             continue
 
         is_crypto = any(k in q_lower for k in CRYPTO_KW)
         is_sweet  = 0.30 <= price <= 0.70   # 1:1 to 2.3:1 payout range
 
-        # Skip crypto — empirical accuracy is 22% (2W/7L), far below breakeven
-        # Price feed alone isn't reliable for short crypto windows
-        if is_crypto:
-            log.debug(f"[skip:crypto] 22% historical accuracy: {q_lower[:50]}")
-            continue
+        # Crypto markets now allowed — new consensus engine can handle them
 
         # ── S1: Price feed (crypto math — deterministic) ───────────────
         pf_dir, pf_conf = "neutral", 0.0
