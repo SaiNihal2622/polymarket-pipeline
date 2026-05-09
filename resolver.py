@@ -485,10 +485,55 @@ Return ONLY one word: YES, NO, or UNCLEAR."""
 
 # ── Main resolution logic ────────────────────────────────────────────────────
 
+def _resolve_via_price_expiry(trade: dict) -> float | None:
+    """
+    Strategy 0: If market is past its end_date and current price is extreme,
+    resolve based on price. This catches markets that Polymarket closed but
+    our other strategies missed.
+    """
+    try:
+        end_str = trade.get("end_date_iso") or trade.get("market_end_date")
+        if not end_str:
+            return None
+        from datetime import datetime as _dt, timezone as _tz
+        end_dt = _dt.fromisoformat(end_str.replace("Z", "+00:00"))
+        if end_dt.tzinfo is None:
+            end_dt = end_dt.replace(tzinfo=_tz.utc)
+        now = _dt.now(_tz.utc)
+        # Only apply if market ended at least 2 hours ago
+        if (now - end_dt).total_seconds() < 7200:
+            return None
+
+        # Fetch current market price from Gamma
+        market_id = trade.get("market_id", "")
+        try:
+            r = httpx.get(f"{GAMMA_API}/markets/{market_id}", timeout=8, verify=False)
+            if r.status_code == 200:
+                m = r.json()
+                outcome_prices = m.get("outcomePrices")
+                if outcome_prices:
+                    prices = json.loads(outcome_prices) if isinstance(outcome_prices, str) else outcome_prices
+                    yes_price = float(prices[0]) if prices else 0.5
+                else:
+                    yes_price = float(m.get("bestAsk", 0.5) or 0.5)
+                # If price is extreme, market is effectively resolved
+                if yes_price >= 0.96:
+                    print(f"[resolver:price_expiry] #{trade['id']} YES (price={yes_price}, past end_date)")
+                    return 1.0
+                elif yes_price <= 0.04:
+                    print(f"[resolver:price_expiry] #{trade['id']} NO (price={yes_price}, past end_date)")
+                    return 0.0
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return None
+
+
 def check_market_resolution(trade: dict) -> float | None:
     """
     Try all resolution strategies for a trade.
-    Order: Bulk cache → Gamma slug → CLOB → AI search.
+    Order: Price-expiry → Bulk cache → Gamma slug → CLOB → AI search.
     Returns 1.0/0.0 or None if still unresolved.
     """
     market_id = trade.get("market_id", "")
@@ -496,6 +541,11 @@ def check_market_resolution(trade: dict) -> float | None:
 
     if not tid:
         tid = _get_token_id_for_trade(market_id)
+
+    # Strategy 0: Price-based expiry resolution (fastest for expired markets)
+    result = _resolve_via_price_expiry(trade)
+    if result is not None:
+        return result
 
     # Strategy 1: Bulk cache hit
     cached = _resolution_cache.get(market_id)
@@ -641,6 +691,7 @@ def get_accuracy_stats() -> dict:
     logged_row = conn.execute(
         "SELECT COUNT(*) as total FROM trades WHERE status IN ('demo','dry_run')"
     ).fetchone()
+    # Exclude voided trades from accuracy — they were never resolved fairly
     row = conn.execute("""
         SELECT
             COUNT(*) as total,
@@ -651,6 +702,7 @@ def get_accuracy_stats() -> dict:
         FROM trades t
         JOIN outcomes o ON t.id = o.trade_id
         WHERE t.status IN ('demo', 'dry_run')
+          AND t.status != 'voided'
     """).fetchone()
 
     ttr_row = conn.execute("""
