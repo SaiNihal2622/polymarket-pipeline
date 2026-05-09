@@ -117,11 +117,9 @@ def _get_recent_trades(limit: int = 30) -> list[dict]:
             try:
                 created = datetime.fromisoformat(r["created_at"].replace("Z", "+00:00"))
                 resolved = datetime.fromisoformat(r["resolved_at"].replace("Z", "+00:00"))
-                # Normalize both to aware or both to naive
-                if resolved.tzinfo and not created.tzinfo:
-                    created = created.replace(tzinfo=resolved.tzinfo)
-                elif created.tzinfo and not resolved.tzinfo:
-                    resolved = resolved.replace(tzinfo=created.tzinfo)
+                # Strip tzinfo from both to avoid naive/aware mismatch
+                resolved = resolved.replace(tzinfo=None)
+                created = created.replace(tzinfo=None)
                 delta = resolved - created
                 total_secs = int(delta.total_seconds())
                 if total_secs < 0:
@@ -146,11 +144,9 @@ def _get_recent_trades(limit: int = 30) -> list[dict]:
             try:
                 close_dt = datetime.fromisoformat(duration_source.replace("Z", "+00:00"))
                 create_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                # Normalize both to aware or both to naive
-                if close_dt.tzinfo and not create_dt.tzinfo:
-                    create_dt = create_dt.replace(tzinfo=close_dt.tzinfo)
-                elif create_dt.tzinfo and not close_dt.tzinfo:
-                    close_dt = close_dt.replace(tzinfo=create_dt.tzinfo)
+                # Strip tzinfo from both to avoid naive/aware mismatch
+                close_dt = close_dt.replace(tzinfo=None)
+                create_dt = create_dt.replace(tzinfo=None)
                 delta = close_dt - create_dt
                 total_secs = int(delta.total_seconds())
                 if total_secs < 0:
