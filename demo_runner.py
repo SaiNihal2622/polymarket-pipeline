@@ -606,12 +606,12 @@ def scan_and_trade() -> dict:
         price      = market.yes_price
         tok        = token_map.get(market.condition_id)
 
-        if hours_left > 30 or price < 0.15 or price > 0.85:
+        if hours_left > 30 or price < 0.10 or price > 0.90:
             continue
 
-        # Skip "uncertain zone" prices (0.40-0.60) — crowd says 50/50, no edge
-        # These are coin-flip markets where AI has no informational advantage
-        if 0.40 <= price <= 0.60:
+        # Skip "uncertain zone" prices (0.45-0.55) — crowd says 50/50, no edge
+        # Narrowed from 0.40-0.60 to 0.45-0.55 to capture more markets
+        if 0.45 <= price <= 0.55:
             log.debug(f"[skip:uncertain] price={price:.2f} in dead zone: {q_lower[:50]}")
             continue
 
@@ -780,20 +780,20 @@ def scan_and_trade() -> dict:
         # We allow S8 only when RRF is EXTREMELY high (≥0.70) AND consensus agrees.
 
         # ★★ S8: HIGH RRF + consensus required
-        # Relaxed from 0.70 → 0.50 to generate trades while maintaining quality
-        if (gem_dir != "neutral" and rrf_score >= 0.50 and consensus_agreed):
+        # Lowered from 0.50 → 0.35 to generate more trades
+        if (gem_dir != "neutral" and rrf_score >= 0.35 and consensus_agreed):
             strategies_to_try.append(("S8_rrf_highconv", _dir(gem_dir), rrf_score + 0.05))
 
         # ★★ S5: CONSENSUS-FIRST — balanced thresholds
-        # Requires consensus + reasonable materiality + RRF
-        if (gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.40
-                and rrf_score >= 0.40 and gem_mat >= 0.35):
+        # Lowered: consensus_score≥0.30, rrf≥0.30, gem_mat≥0.25
+        if (gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.30
+                and rrf_score >= 0.30 and gem_mat >= 0.25):
             strategies_to_try.append(("S5_consensus", _dir(gem_dir), consensus_score))
 
         # ★★ S9: SURESHOT — high-confidence AI signal
-        # Requires strong materiality + confidence + RRF
-        if (gem_dir != "neutral" and gem_mat >= 0.55 and gem_conf >= 0.60
-                and rrf_score >= 0.45 and consensus_agreed):
+        # Lowered: gem_mat≥0.45, gem_conf≥0.50, rrf≥0.35
+        if (gem_dir != "neutral" and gem_mat >= 0.45 and gem_conf >= 0.50
+                and rrf_score >= 0.35 and consensus_agreed):
             strategies_to_try.append(("S9_sureshot", _dir(gem_dir), gem_conf))
 
         # ★★ S10: MULTI-SIGNAL — copy-trade + AI agree
@@ -802,8 +802,8 @@ def scan_and_trade() -> dict:
             strategies_to_try.append(("S10_multi_signal", _dir(gem_dir), best_score))
 
         # ★★ S11: AI-ONLY — strong AI signal without requiring RRF
-        # For markets where RRF computation fails but AI is confident
-        if (gem_dir != "neutral" and gem_mat >= 0.60 and gem_conf >= 0.65
+        # Lowered: gem_mat≥0.50, gem_conf≥0.55
+        if (gem_dir != "neutral" and gem_mat >= 0.50 and gem_conf >= 0.55
                 and consensus_agreed and rrf_score < 0.40):
             strategies_to_try.append(("S11_ai_only", _dir(gem_dir), gem_conf))
 
@@ -1034,19 +1034,28 @@ def run_loop():
 
         # Resolution check (runs more often)
         if now - last_resolve >= RESOLVE_INTERVAL_MIN * 60:
-            console.print(f"\n[dim]── Resolution check @ {datetime.now().strftime('%H:%M:%S')} ──[/dim]")
-            res = run_resolution_check(verbose=True)
-            last_resolve = now
-            # Always print accuracy after resolution check
-            _print_accuracy_oneliner()
-            if res["resolved"] > 0:
-                stats = print_accuracy_report()
-                maybe_go_live(stats)
+            try:
+                console.print(f"\n[dim]── Resolution check @ {datetime.now().strftime('%H:%M:%S')} ──[/dim]")
+                res = run_resolution_check(verbose=True)
+                last_resolve = now
+                # Always print accuracy after resolution check
+                _print_accuracy_oneliner()
+                if res["resolved"] > 0:
+                    stats = print_accuracy_report()
+                    maybe_go_live(stats)
+            except Exception as e:
+                log.error(f"[loop] resolution check failed: {e}", exc_info=True)
+                last_resolve = now  # don't retry immediately
 
         # Full scan (less often)
         if now - last_scan >= SCAN_INTERVAL_MIN * 60:
-            scan_and_trade()
-            last_scan = now
+            try:
+                scan_and_trade()
+            except Exception as e:
+                log.error(f"[loop] scan failed: {e}", exc_info=True)
+                console.print(f"  [red]Scan error: {e}[/red]")
+            finally:
+                last_scan = now  # don't retry immediately
 
         time.sleep(30)  # check every 30s whether it's time to run again
 
