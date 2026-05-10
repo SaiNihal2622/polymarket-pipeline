@@ -203,12 +203,20 @@ def _infer_category(question: str, tags: list) -> str:
         "tennis", "ufc", "mma", "f1", "formula", "olympics", "world cup",
         "champions league", "premier league", "playoffs", "super bowl",
         "match", "tournament", "championship", "season", "batting", "bowling",
+        # Fight/MMA/sports props (critical - these were passing as "other")
+        "fight", "ko", "tko", "knockout", "goalscorer", "goal scorer",
+        "anytime goalscorer", "round", "distance", "go the distance",
+        "win by", "decision", "submission", "striker", "pitcher",
+        "batter", "touchdown", "home run", "assist", "rebounds",
+        "points scored", "passing yards", "rushing yards",
     ]):
         return "sports"
     if any(kw in combined for kw in [
         "oscars", "grammy", "emmy", "box office", "movie", "film", "album",
         "netflix", "disney", "spotify", "streaming", "celebrity", "award",
-        "concert", "tour", "entertainment",
+        "concert", "tour", "entertainment", "american idol", "bachelor",
+        "dancing with", "reality tv", "talent show", "season finale",
+        "elimination", "voted off",
     ]):
         return "entertainment"
     if any(kw in combined for kw in [

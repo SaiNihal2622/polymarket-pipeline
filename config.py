@@ -121,7 +121,7 @@ BANKROLL_USD = float(os.getenv("BANKROLL_USD", "100"))
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 MAX_BET_USD = float(os.getenv("MAX_BET_USD", "1"))          # $1 flat bet per signal
 DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "10"))  # Stop after $10 loss/day
-EDGE_THRESHOLD = float(os.getenv("EDGE_THRESHOLD", "0.20"))  # 0.20 = only strong edges pass
+EDGE_THRESHOLD = float(os.getenv("EDGE_THRESHOLD", "0.30"))  # 0.30 = only very strong edges
 NEWS_LOOKBACK_HOURS = 12
 
 # --- High-ROI Price Sweet Spot (GUARANTEES profit even at LOW accuracy) ---
@@ -138,8 +138,8 @@ NEWS_LOOKBACK_HOURS = 12
 # │ $0.50    │ 50%       │ -$0.20     │ $0.00          │ +$0.20           │
 # └──────────┴───────────┴────────────┴────────────────┴──────────────────┘
 # Only trade at 30¢ or below → PROFITABLE at ≥31% accuracy → guaranteed upside
-MAX_BUY_PRICE = float(os.getenv("MAX_BUY_PRICE", "0.50"))  # Alias: max price to buy YES shares
-MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.50"))  # Buy YES below 50¢ → reasonable ROI, allows more trades
+MAX_BUY_PRICE = float(os.getenv("MAX_BUY_PRICE", "0.30"))  # Only buy ≤30¢ → break-even at 30%, profit at 40%+
+MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.30"))  # Buy YES below 30¢ → guaranteed high ROI
 MIN_NO_ENTRY_PRICE = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.50"))    # Buy NO above 50¢ YES → NO share ≤50¢
 
 # --- Demo Runner Settings ---
@@ -153,7 +153,7 @@ MIN_RESOLVED_TRADES = int(os.getenv("MIN_RESOLVED_TRADES", "20"))      # Need 20
 MAX_RESOLVE_HOURS = float(os.getenv("MAX_RESOLVE_HOURS", "72"))  # 3 days max
 MAX_VOLUME_USD = float(os.getenv("MAX_VOLUME_USD", "500000"))
 MIN_VOLUME_USD = float(os.getenv("MIN_VOLUME_USD", "50"))    # Low: catch 5/15-min crypto windows ($100-$1000 vol)
-MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.80")) # Increased to 0.80 for 80% accuracy target
+MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.50")) # 0.50 = moderate+ materiality
 
 # --- Market Quality Filters (maximise signal accuracy) ---
 MIN_CLOSE_HOURS  = float(os.getenv("MIN_CLOSE_HOURS",  "0.25"))  # Skip markets closing in < 15min (priced in)

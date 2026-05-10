@@ -476,7 +476,6 @@ def scan_and_trade() -> dict:
         "total kills", "games total", "map total",
         "any player", "up or down", "opens up or down",
         # Random sports game results — AI has NO edge, pure coin flip
-        # "Will [team] win?" = crowd already priced in all info, 0% edge
         "will cf ", "will ca ", "will sc ", "will ec ", "will se ", "will cd ",
         "will fc ", "will ac ", "will rc ", "will dc ", "will fk ", "will nk ",
         "will sk ", "will hk ", "will bk ", "will ok ", "will as ",
@@ -486,9 +485,34 @@ def scan_and_trade() -> dict:
         "justin bieber", "taylor swift", "box office", "posts from",
         "end in a draw", "art ross", "clutch player", "coach of the year",
         "top goal scorer", "most assists",
-        # Player/team season awards
         "win the 2025", "win the 2026", "win the 2027",
         "finish in the top", "relegated",
+        # ═══ NEW: Block all player props (0% accuracy, 0W/5L) ═══
+        "anytime goalscorer", "anytime scorer", "first goalscorer",
+        "to score", "to assist", "to win by ko", "to win by tko",
+        "to win by submission", "to win by decision",
+        "win by ko", "win by tko", "win by submission", "win by decision",
+        "knockdown", "knock out", "ko or tko",
+        # ═══ NEW: Block fight/match outcome props ═══
+        "fight to go the distance", "go the distance",
+        "round betting", "method of victory",
+        "will .* win",  # "Will X win?" = pure coin flip
+        # ═══ NEW: Block crypto price ranges (AI can't predict exact ranges) ═══
+        "be between $", "be above $", "be below $",
+        "price of bitcoin", "price of ethereum", "price of solana",
+        "btc be", "eth be", "sol be",
+        # ═══ NEW: Block entertainment/awards (pure luck) ═══
+        "american idol", "bachelor", "bachelorette", "dancing with",
+        "survivor", "big brother", "the voice", "mask singer",
+        "win * season", "eliminated", "voted off",
+        # ═══ NEW: Block social media/truth social (unpredictable) ═══
+        "truth social", "post on twitter", "tweet", "post on x",
+        "photographed every day", "golf this week",
+        # ═══ NEW: Block NYT/media headline markets ═══
+        "nyt front-page", "front-page headlines", "nyt headlines",
+        # ═══ NEW: Block NFL draft / player draft ═══
+        "draft pick", "drafted by", "nfl draft", "nba draft",
+        "first round pick", "second round pick",
     ]
 
     from price_feeds import verify_crypto_market, get_all_crypto_prices
@@ -575,6 +599,10 @@ def scan_and_trade() -> dict:
         q_lower   = market.question.lower()
 
         if any(pat in q_lower for pat in HARD_SKIP):
+            continue
+        # Regex blocklist patterns (can't use simple `in`)
+        _REGEX_SKIP = [r"will\s+\w+\s+win\b"]
+        if any(re.search(pat, q_lower) for pat in _REGEX_SKIP):
             continue
 
         hours_left = _hours_left(market)
