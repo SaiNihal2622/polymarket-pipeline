@@ -276,9 +276,14 @@ Rate MATERIALITY (impact on probability):
 Respond with ONLY valid JSON. 
 CRICKET/IPL NOTE: A toss result, a major injury to a key player (e.g. Kohli, Dhoni, Bumrah), or a change in the playing XI is often a HIGH materiality (0.8+) event for match-winner markets.
 
+IMPORTANT: Include a "probability" field — your BEST ESTIMATE of the actual chance the market resolves YES (0.0 to 1.0).
+This should NOT be the same as materiality. Materiality = how important the news is. Probability = actual chance of YES.
+Examples: If market is "Will India win?" and India just won the toss, probability might be 0.55 (slight edge). If India scored 250/3 chasing 200, probability might be 0.95.
+
 {{
   "direction": "bullish" | "bearish" | "neutral",
   "materiality": <float 0.0 to 1.0>,
+  "probability": <float 0.0 to 1.0 — your actual YES probability estimate>,
   "reasoning": "<1 concise sentence explaining the direct causal link or lack thereof>"
 }}"""
 
@@ -305,9 +310,12 @@ If there is ANY doubt about relevance or impact, you MUST return "neutral".
 Respond with ONLY valid JSON.
 SKEPTIC TIP: If the news is just a "preview" or "speculation" about a toss/injury that hasn't happened yet, it is likely "neutral" or already priced in.
 
+Include a "probability" field — your actual estimate of YES chance (NOT materiality).
+
 {{
   "direction": "bullish" | "bearish" | "neutral",
   "materiality": <float 0.0 to 1.0>,
+  "probability": <float 0.0 to 1.0 — your actual YES probability estimate>,
   "reasoning": "<1 sentence explaining why this might be noise or priced-in>"
 }}"""
 
@@ -335,6 +343,7 @@ Respond with ONLY valid JSON:
 {{
   "direction": "bullish" | "bearish" | "neutral",
   "materiality": <float 0.0 to 1.0>,
+  "probability": <float 0.0 to 1.0 — your actual YES probability estimate>,
   "reasoning": "<1 sentence final verdict>"
 }}"""
 
@@ -347,13 +356,14 @@ PROMPTS = [CLASSIFICATION_PROMPT, SKEPTIC_PROMPT, REFLECTOR_PROMPT]
 
 @dataclass
 class Classification:
-    direction: str  # "bullish", "bearish", "neutral"
-    materiality: float  # 0.0-1.0
+    direction: str  # "bullish", "bearish", or "neutral"
+    materiality: float  # 0.0 - 1.0
     reasoning: str
-    latency_ms: int
-    model: str
+    latency_ms: int = 0
+    model: str = ""
     consensus_passes: int = 1
     consensus_agreed: bool = True
+    probability: float | None = None  # model's actual probability estimate for YES outcome (0.0-1.0)
 
 
 def _parse_json_response(text: str) -> dict:
@@ -391,11 +401,13 @@ def _parse_json_response(text: str) -> dict:
         materiality_match = re.search(r'"materiality"\s*:\s*([0-9.]+)', text)
         reasoning_match = re.search(r'"reasoning"\s*:\s*"([^"]*)"', text)
 
+        probability_match = re.search(r'"probability"\s*:\s*([0-9.]+)', text)
         if direction_match:
             return {
                 "direction": direction_match.group(1).lower(),
                 "materiality": float(materiality_match.group(1)) if materiality_match else 0.0,
                 "reasoning": reasoning_match.group(1) if reasoning_match else "parsed via regex",
+                "probability": float(probability_match.group(1)) if probability_match else None,
             }
         raise  # re-raise if we can't extract anything useful
 
@@ -440,11 +452,20 @@ async def _single_classify_with_provider_async(prompt_template: str, headline: s
         materiality = 0.0
     materiality = max(0.0, min(1.0, materiality))
 
+    # Extract probability if provided (model's actual YES probability estimate)
+    prob = result.get("probability")
+    if prob is not None:
+        try:
+            prob = max(0.0, min(1.0, float(prob)))
+        except (TypeError, ValueError):
+            prob = None
+
     return {
         "direction": direction,
         "materiality": materiality,
         "reasoning": result.get("reasoning", ""),
         "provider": force_provider or config.LLM_PROVIDER,
+        "probability": prob,
     }
 
 
@@ -568,6 +589,14 @@ async def classify_async(headline: str, market: Market, source: str = "unknown",
         dominant_mats = [m for m, d in zip(materialities, directions) if d == dominant_direction]
         avg_materiality = (sum(dominant_mats) / len(dominant_mats)) if (agreed and dominant_mats) else 0.0
 
+        # Aggregate probability from dominant direction passes
+        dominant_probs = [r.get("probability") for r in results
+                          if r["direction"] == dominant_direction and r.get("probability") is not None]
+        avg_probability = (sum(dominant_probs) / len(dominant_probs)) if dominant_probs else None
+        if avg_probability is not None:
+            avg_probability = round(avg_probability, 3)
+            log.info(f"[consensus] Aggregated probability={avg_probability:.3f} from {len(dominant_probs)} passes")
+
         return Classification(
             direction=dominant_direction,
             materiality=avg_materiality,
@@ -576,6 +605,7 @@ async def classify_async(headline: str, market: Market, source: str = "unknown",
             model=model_name,
             consensus_passes=total_passes,
             consensus_agreed=agreed,
+            probability=avg_probability,
         )
 
     except Exception as e:

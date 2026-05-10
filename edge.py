@@ -123,14 +123,27 @@ def detect_edge_v2(
         if market_price > 0.90:
             log.debug(f"[edge] REJECTED bullish but price={market_price:.2f} > 0.90 — already priced in")
             return None  # already near-certain YES
-        raw_edge = classification.materiality * (1.0 - market_price)
+        # Use probability estimate for edge (NOT materiality — that measures importance, not likelihood)
+        model_prob = getattr(classification, 'probability', None)
+        if model_prob and 0 < model_prob < 1:
+            raw_edge = model_prob - market_price
+        else:
+            # Fallback: conservative estimate using materiality as directional confidence
+            # Materiality 0.9 doesn't mean 90% prob — cap the boost at 15% over market
+            raw_edge = min(classification.materiality * 0.15, 0.20) * (1.0 - market_price) * 3
+            raw_edge = min(raw_edge, 0.30)  # cap fallback edge at 30%
         price_room = 1.0 - market_price
     else:  # bearish
         side = "NO"
         if market_price < 0.10:
             log.debug(f"[edge] REJECTED bearish but price={market_price:.2f} < 0.10 — already priced in")
             return None  # already near-certain NO
-        raw_edge = classification.materiality * market_price
+        model_prob = getattr(classification, 'probability', None)
+        if model_prob and 0 < model_prob < 1:
+            raw_edge = (1.0 - model_prob) - (1.0 - market_price)
+        else:
+            raw_edge = min(classification.materiality * 0.15, 0.20) * market_price * 3
+            raw_edge = min(raw_edge, 0.30)
         price_room = market_price
 
     # ── GATE 4b: Minimum ROI filter (ensures ≥100% ROI per trade) ─────────
@@ -220,7 +233,7 @@ def detect_edge_v2(
 
     return Signal(
         market=market,
-        claude_score=classification.materiality,
+        claude_score=classification.probability if classification.probability else classification.materiality,
         market_price=market_price,
         edge=raw_edge,
         side=side,
