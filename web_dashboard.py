@@ -70,7 +70,7 @@ def _get_summary() -> dict:
         "AND id NOT IN (SELECT trade_id FROM outcomes)"
     )[0]["c"]
 
-    total_trades = _q("SELECT COUNT(*) as c FROM trades")[0]["c"]
+    total_trades = _q("SELECT COUNT(*) as c FROM trades WHERE status != 'voided'")[0]["c"]
     total_resolved = _q("SELECT COUNT(*) as c FROM outcomes")[0]["c"]
     total_pnl = _q("SELECT COALESCE(SUM(pnl),0) as p FROM outcomes")[0]["p"]
 
@@ -99,6 +99,7 @@ def _get_recent_trades(limit: int = 30) -> list[dict]:
                   o.result, o.pnl, o.resolved_at
            FROM trades t
            LEFT JOIN outcomes o ON o.trade_id = t.id
+           WHERE t.status != 'voided'
            ORDER BY t.id DESC LIMIT ?""",
         (limit,),
     )
