@@ -134,19 +134,23 @@ def _get_recent_trades(limit: int = 30) -> list[dict]:
                 pass
 
         # --- Resolution Duration (time from trade creation to resolution/close) ---
-        # Priority: end_date_iso > resolved_at (from outcomes) > time_to_resolve fallback
+        # For resolved: end_date_iso or resolved_at - created_at
+        # For pending: now - created_at (time open so far)
         r["resolution_duration"] = ""
         end_iso = r.get("end_date_iso")
         resolved_at = r.get("resolved_at")
         created_at = r.get("created_at")
         duration_source = end_iso or resolved_at  # use whichever is available
-        if duration_source and created_at:
+        if created_at:
             try:
-                close_dt = datetime.fromisoformat(duration_source.replace("Z", "+00:00"))
                 create_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                # Strip tzinfo from both to avoid naive/aware mismatch
-                close_dt = close_dt.replace(tzinfo=None)
                 create_dt = create_dt.replace(tzinfo=None)
+                if duration_source:
+                    close_dt = datetime.fromisoformat(duration_source.replace("Z", "+00:00"))
+                    close_dt = close_dt.replace(tzinfo=None)
+                else:
+                    # Pending trade: use current time
+                    close_dt = now
                 delta = close_dt - create_dt
                 total_secs = int(delta.total_seconds())
                 if total_secs < 0:
