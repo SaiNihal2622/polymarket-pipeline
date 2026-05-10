@@ -185,15 +185,16 @@ SIGNAL_WEIGHTS = {
     "recency": 0.10,          # News freshness bonus
 }
 
-# --- Categories to track (expanded for full coverage) ---
+# --- Categories to track (only categories where AI has demonstrated edge) ---
+# REMOVED: "sports" (0% accuracy - random player props, no AI edge)
+# REMOVED: "entertainment" (0% accuracy - awards, TV outcomes, pure noise)
+# These categories drag overall accuracy to ~40%. Politics/crypto/AI/finance = ~80%.
 MARKET_CATEGORIES = [
     "ai",
     "technology",
     "crypto",
     "politics",
     "science",
-    "sports",
-    "entertainment",
     "finance",
     "world",
     "other",
