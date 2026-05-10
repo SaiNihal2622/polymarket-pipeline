@@ -138,6 +138,7 @@ NEWS_LOOKBACK_HOURS = 12
 # │ $0.50    │ 50%       │ -$0.20     │ $0.00          │ +$0.20           │
 # └──────────┴───────────┴────────────┴────────────────┴──────────────────┘
 # Only trade at 30¢ or below → PROFITABLE at ≥31% accuracy → guaranteed upside
+MAX_BUY_PRICE = float(os.getenv("MAX_BUY_PRICE", "0.50"))  # Alias: max price to buy YES shares
 MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.50"))  # Buy YES below 50¢ → reasonable ROI, allows more trades
 MIN_NO_ENTRY_PRICE = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.50"))    # Buy NO above 50¢ YES → NO share ≤50¢
 
