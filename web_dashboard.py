@@ -18,6 +18,11 @@ from pathlib import Path
 
 from flask import Flask, jsonify, render_template_string
 
+try:
+    import config
+except Exception:
+    config = None
+
 # Resilient imports — dashboard must start even if heavy modules fail
 try:
     import logger as _logger  # ensures init_db ran
@@ -219,6 +224,109 @@ def _get_runs(limit: int = 15) -> list[dict]:
         "trades_placed, status FROM pipeline_runs ORDER BY id DESC LIMIT ?",
         (limit,),
     )
+
+
+def _cfg(name: str, default):
+    """Read config/env values safely so the dashboard never fails to boot."""
+    if config and hasattr(config, name):
+        return getattr(config, name)
+    return os.getenv(name, default)
+
+
+def _get_engine_config() -> dict:
+    max_yes = float(_cfg("MAX_YES_ENTRY_PRICE", 0.30))
+    min_no_yes = float(_cfg("MIN_NO_ENTRY_PRICE", 0.50))
+    return {
+        "mode": "DRY-RUN / TRIAL" if bool(_cfg("DRY_RUN", True)) else "LIVE",
+        "bankroll_usd": float(_cfg("BANKROLL_USD", 30)),
+        "max_bet_usd": float(_cfg("MAX_BET_USD", 1)),
+        "daily_loss_limit_usd": float(_cfg("DAILY_LOSS_LIMIT_USD", 10)),
+        "edge_threshold": float(_cfg("EDGE_THRESHOLD", 0.30)),
+        "accuracy_threshold": float(_cfg("ACCURACY_THRESHOLD", 80.0)),
+        "min_resolved_trades": int(_cfg("MIN_RESOLVED_TRADES", 20)),
+        "max_yes_entry_price": max_yes,
+        "min_no_entry_yes_price": min_no_yes,
+        "max_no_entry_price": round(1.0 - min_no_yes, 4),
+        "materiality_threshold": float(_cfg("MATERIALITY_THRESHOLD", 0.50)),
+        "consensus_enabled": bool(_cfg("CONSENSUS_ENABLED", True)),
+        "consensus_passes": int(_cfg("CONSENSUS_PASSES", 3)),
+        "strict_consensus": bool(_cfg("STRICT_CONSENSUS", True)),
+        "demo_hours_window": float(_cfg("DEMO_HOURS_WINDOW", 48)),
+        "scan_interval_min": int(_cfg("SCAN_INTERVAL_MIN", 3)),
+        "resolve_interval_min": int(_cfg("RESOLVE_INTERVAL_MIN", 4)),
+        "min_close_hours": float(_cfg("MIN_CLOSE_HOURS", 0.25)),
+        "min_volume_usd": float(_cfg("MIN_VOLUME_USD", 50)),
+        "min_window_hours": float(_cfg("MIN_WINDOW_HOURS", 0.25)),
+        "market_categories": list(_cfg("MARKET_CATEGORIES", [])) if isinstance(_cfg("MARKET_CATEGORIES", []), (list, tuple)) else [],
+    }
+
+
+def _get_breakeven_rows() -> list[dict]:
+    rows = []
+    for yes_price in [0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90]:
+        yes_allowed = yes_price <= float(_cfg("MAX_YES_ENTRY_PRICE", 0.30))
+        no_price = 1.0 - yes_price
+        no_allowed = yes_price >= float(_cfg("MIN_NO_ENTRY_PRICE", 0.50))
+        rows.append({
+            "yes_price": round(yes_price, 2),
+            "yes_allowed": yes_allowed,
+            "yes_breakeven_pct": round(yes_price * 100, 1),
+            "no_price": round(no_price, 2),
+            "no_allowed": no_allowed,
+            "no_breakeven_pct": round(no_price * 100, 1),
+        })
+    return rows
+
+
+def _get_expectations() -> dict:
+    cfg = _get_engine_config()
+    return {
+        "next_24h_trades_range": "0-3 likely; more only if strong matching news appears",
+        "next_24h_resolved_range": "0-3 depending on market close times",
+        "accuracy_target": f"{cfg['accuracy_threshold']:.0f}% after {cfg['min_resolved_trades']}+ resolved trades",
+        "expected_real_profit": "$0 while DRY-RUN/TRIAL is enabled",
+        "demo_pnl_range": "roughly -$3 to +$5 with $1 flat demo bets if 0-3 trades fire",
+        "old_10pct_risk": "Much lower than before, but not impossible; trial gate blocks live trading until proven.",
+        "why_30_50_blocked": "Middle-zone YES prices are more coin-flippy. Current setup favors cheap asymmetric entries over trade count.",
+    }
+
+
+def _get_diagnostics() -> dict:
+    db_exists = Path(DB_PATH).exists()
+    tables = []
+    counts = {}
+    if db_exists:
+        try:
+            conn = _conn()
+            tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()]
+            for table in ["trades", "outcomes", "news_events", "pipeline_runs"]:
+                if table in tables:
+                    counts[table] = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            conn.close()
+        except Exception as e:
+            counts["error"] = str(e)
+    return {
+        "dashboard_status": "ok",
+        "db_path": str(DB_PATH),
+        "db_exists": db_exists,
+        "tables": tables,
+        "counts": counts,
+        "available_api_endpoints": [
+            "/api/summary", "/api/trades", "/api/news", "/api/runs",
+            "/api/config", "/api/breakeven", "/api/expectations", "/api/diagnostics", "/api/logs", "/healthz"
+        ],
+    }
+
+
+def _get_logs(limit: int = 120) -> list[str]:
+    candidates = [Path("/data/polymarket_bot.log"), Path("polymarket_bot.log"), Path("scan_log.txt")]
+    for p in candidates:
+        if p.exists():
+            try:
+                return p.read_text(errors="replace").splitlines()[-limit:]
+            except Exception as e:
+                return [f"Could not read {p}: {e}"]
+    return ["No local log file found. Use Railway runtime logs for process stdout/stderr."]
 HTML = r"""
 <!DOCTYPE html>
 <html lang="en">
@@ -358,6 +466,15 @@ HTML = r"""
   .pill-yes { background: rgba(16, 185, 129, 0.1); color: #34d399; }
   .pill-no { background: rgba(239, 68, 68, 0.1); color: #f87171; }
   .pill-pending { background: rgba(245, 158, 11, 0.1); color: #fbbf24; }
+  .pill-blocked { background: rgba(239, 68, 68, 0.12); color: #fca5a5; }
+  .pill-ok { background: rgba(16, 185, 129, 0.12); color: #86efac; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .small { font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .api-link { color: #7dd3fc; text-decoration: none; font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+  .api-link:hover { text-decoration: underline; }
+  .rule-list { margin: 0; padding-left: 18px; color: var(--text); font-size: 13px; line-height: 1.7; }
+  .log-box { max-height: 260px; overflow: auto; background: rgba(0,0,0,0.28); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+  .log-line { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #cbd5e1; white-space: pre-wrap; border-bottom: 1px solid rgba(255,255,255,0.04); padding: 3px 0; }
   
   .strategy-item {
     margin-bottom: 16px;
@@ -507,6 +624,57 @@ HTML = r"""
     </div>
   </div>
 
+  <!-- ENGINE TRANSPARENCY -->
+  <div class="grid grid-2" style="margin-bottom: 32px;">
+    <div class="panel">
+      <h2>🧠 Trade Engine Rules</h2>
+      <ul class="rule-list">
+        <li><strong>Mode:</strong> <span class="warn">{{ cfg.mode }}</span></li>
+        <li><strong>YES entry:</strong> only when YES price ≤ <span class="mono">{{ "%.0f"|format(cfg.max_yes_entry_price * 100) }}¢</span></li>
+        <li><strong>NO entry:</strong> only when YES price ≥ <span class="mono">{{ "%.0f"|format(cfg.min_no_entry_yes_price * 100) }}¢</span> (NO price ≤ <span class="mono">{{ "%.0f"|format(cfg.max_no_entry_price * 100) }}¢</span>)</li>
+        <li><strong>Middle zone:</strong> 31¢–49¢ YES is intentionally blocked to avoid coin-flip trades.</li>
+        <li><strong>Edge gate:</strong> model edge must be ≥ <span class="mono">{{ "%.0f"|format(cfg.edge_threshold * 100) }}%</span></li>
+        <li><strong>Consensus:</strong> {{ cfg.consensus_passes }} passes, strict={{ cfg.strict_consensus }}, enabled={{ cfg.consensus_enabled }}</li>
+        <li><strong>Materiality:</strong> news must score ≥ <span class="mono">{{ "%.0f"|format(cfg.materiality_threshold * 100) }}%</span></li>
+        <li><strong>Risk:</strong> max bet ${{ cfg.max_bet_usd }} • daily loss limit ${{ cfg.daily_loss_limit_usd }}</li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <h2>📈 Next 24h Expectations</h2>
+      <div class="stat-card">
+        <div class="stat-row"><span class="stat-label">Expected Trades</span><span class="stat-value">{{ exp.next_24h_trades_range }}</span></div>
+        <div class="stat-row"><span class="stat-label">Expected Resolved</span><span class="stat-value">{{ exp.next_24h_resolved_range }}</span></div>
+        <div class="stat-row"><span class="stat-label">Accuracy Target</span><span class="stat-value win">{{ exp.accuracy_target }}</span></div>
+        <div class="stat-row"><span class="stat-label">Real Profit</span><span class="stat-value warn">{{ exp.expected_real_profit }}</span></div>
+        <div class="stat-row"><span class="stat-label">Demo PnL Range</span><span class="stat-value">{{ exp.demo_pnl_range }}</span></div>
+        <div class="small" style="margin-top:10px;">10% disaster risk: {{ exp.old_10pct_risk }}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom: 32px;">
+    <h2>🧮 Exact Breakeven + Allowed Zones</h2>
+    <div class="small">Formula: BUY YES breakeven = YES price. BUY NO breakeven = NO price = 1 − YES price.</div>
+    <div style="overflow-x:auto;">
+      <table>
+        <thead><tr><th>YES Market Price</th><th>BUY YES?</th><th>YES Breakeven</th><th>NO Price</th><th>BUY NO?</th><th>NO Breakeven</th></tr></thead>
+        <tbody>
+          {% for r in breakeven %}
+          <tr>
+            <td class="mono">{{ "%.0f"|format(r.yes_price * 100) }}¢</td>
+            <td><span class="pill {{ 'pill-ok' if r.yes_allowed else 'pill-blocked' }}">{{ 'ALLOWED' if r.yes_allowed else 'BLOCKED' }}</span></td>
+            <td class="mono">{{ r.yes_breakeven_pct }}%</td>
+            <td class="mono">{{ "%.0f"|format(r.no_price * 100) }}¢</td>
+            <td><span class="pill {{ 'pill-ok' if r.no_allowed else 'pill-blocked' }}">{{ 'ALLOWED' if r.no_allowed else 'BLOCKED' }}</span></td>
+            <td class="mono">{{ r.no_breakeven_pct }}%</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- STRATEGIES & SIGNALS -->
   <div class="grid grid-2" style="margin-bottom: 32px;">
     <div class="panel">
@@ -586,6 +754,32 @@ HTML = r"""
     </div>
   </div>
 
+  <div class="grid grid-2" style="margin-bottom: 32px;">
+    <div class="panel">
+      <h2>🩺 Diagnostics + API Links</h2>
+      <div class="stat-card">
+        <div class="stat-row"><span class="stat-label">DB Exists</span><span class="stat-value {{ 'win' if diag.db_exists else 'loss' }}">{{ diag.db_exists }}</span></div>
+        <div class="stat-row"><span class="stat-label">DB Path</span><span class="stat-value mono" style="font-size:12px;">{{ diag.db_path }}</span></div>
+        <div class="stat-row"><span class="stat-label">Counts</span><span class="stat-value mono" style="font-size:12px;">{{ diag.counts }}</span></div>
+      </div>
+      <div style="margin-top:14px; display:flex; flex-wrap:wrap; gap:10px;">
+        {% for ep in diag.available_api_endpoints %}
+          <a class="api-link" href="{{ ep }}">{{ ep }}</a>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>🧾 Live Logs Tail</h2>
+      <div class="log-box">
+        {% for line in logs %}
+          <div class="log-line">{{ line }}</div>
+        {% endfor %}
+      </div>
+      <div class="small" style="margin-top:8px;">If this says no local log found, Railway stdout/stderr logs are still separate from this dashboard process.</div>
+    </div>
+  </div>
+
   <div class="footer">
     Polymarket AI Pipeline • DB: {{ db_path }} • Window: {{ window_h }}h
   </div>
@@ -606,6 +800,11 @@ def home():
         trades=_get_recent_trades(40),
         news=_get_news(20),
         runs=_get_runs(12),
+        cfg=_get_engine_config(),
+        breakeven=_get_breakeven_rows(),
+        exp=_get_expectations(),
+        diag=_get_diagnostics(),
+        logs=_get_logs(80),
         now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         window_h=os.getenv("DEMO_HOURS_WINDOW", "30"),
         db_path=str(DB_PATH),
@@ -629,6 +828,36 @@ def api_trades():
 @app.route("/api/news")
 def api_news():
     return jsonify(_get_news(50))
+
+
+@app.route("/api/runs")
+def api_runs():
+    return jsonify(_get_runs(100))
+
+
+@app.route("/api/config")
+def api_config():
+    return jsonify(_get_engine_config())
+
+
+@app.route("/api/breakeven")
+def api_breakeven():
+    return jsonify(_get_breakeven_rows())
+
+
+@app.route("/api/expectations")
+def api_expectations():
+    return jsonify(_get_expectations())
+
+
+@app.route("/api/diagnostics")
+def api_diagnostics():
+    return jsonify(_get_diagnostics())
+
+
+@app.route("/api/logs")
+def api_logs():
+    return jsonify({"lines": _get_logs(200)})
 
 
 @app.route("/healthz")
