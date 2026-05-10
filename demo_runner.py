@@ -513,6 +513,15 @@ def scan_and_trade() -> dict:
         # ═══ NEW: Block NFL draft / player draft ═══
         "draft pick", "drafted by", "nfl draft", "nba draft",
         "first round pick", "second round pick",
+        # ═══ NEW: Block all sports player/match outcomes ═══
+        "anytime goalscorer", "anytime scorer", "first goalscorer",
+        "first scorer", "last scorer", "to score first",
+        "fight to go", "go the distance",
+        "win by ko", "win by tko", "win by submission",
+        "ko or tko", "tko or ko",
+        "player props", "player to score",
+        # ═══ NEW: Block low-quality YES-biased markets ═══
+        "be between $", "price of ", "close at",
     ]
 
     from price_feeds import verify_crypto_market, get_all_crypto_prices
@@ -609,7 +618,7 @@ def scan_and_trade() -> dict:
         price      = market.yes_price
         tok        = token_map.get(market.condition_id)
 
-        if hours_left > 30 or price < 0.10 or price > 0.90:
+        if hours_left > 30 or price < 0.25 or price > 0.90:
             continue
 
         # Skip "uncertain zone" prices (0.45-0.55) — crowd says 50/50, no edge
@@ -789,40 +798,35 @@ def scan_and_trade() -> dict:
         # The ONLY proven path is consensus (AI + Skeptic both agree).
         # We allow S8 only when RRF is EXTREMELY high (≥0.70) AND consensus agrees.
 
-        # ★★ S8: HIGH RRF + consensus required
-        # Lowered from 0.50 → 0.35 to generate more trades
-        if (gem_dir != "neutral" and rrf_score >= 0.35 and consensus_agreed):
+        # ★★ S8: HIGH RRF + consensus required + MULTIPLE SIGNALS
+        # Require rrf≥0.50 AND at least 2 non-neutral signals
+        non_neutral_count = sum(1 for l,d,c in all_sigs if d != "neutral" and c > 0)
+        if (gem_dir != "neutral" and rrf_score >= 0.50 and consensus_agreed
+                and non_neutral_count >= 2):
             strategies_to_try.append(("S8_rrf_highconv", _dir(gem_dir), rrf_score + 0.05))
 
-        # ★★ S5: CONSENSUS-FIRST — balanced thresholds
-        # Lowered: consensus_score≥0.30, rrf≥0.30, gem_mat≥0.25
-        if (gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.30
-                and rrf_score >= 0.30 and gem_mat >= 0.25):
+        # ★★ S5: CONSENSUS-FIRST — strict thresholds + multi-signal
+        if (gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.50
+                and rrf_score >= 0.45 and gem_mat >= 0.40 and non_neutral_count >= 2):
             strategies_to_try.append(("S5_consensus", _dir(gem_dir), consensus_score))
 
-        # ★★ S9: SURESHOT — high-confidence AI signal
-        # Lowered: gem_mat≥0.45, gem_conf≥0.50, rrf≥0.35
-        if (gem_dir != "neutral" and gem_mat >= 0.45 and gem_conf >= 0.50
-                and rrf_score >= 0.35 and consensus_agreed):
+        # ★★ S9: SURESHOT — VERY high-confidence AI + multi-signal
+        if (gem_dir != "neutral" and gem_mat >= 0.65 and gem_conf >= 0.70
+                and rrf_score >= 0.50 and consensus_agreed and non_neutral_count >= 2):
             strategies_to_try.append(("S9_sureshot", _dir(gem_dir), gem_conf))
 
-        # ★★ S10: MULTI-SIGNAL — copy-trade + AI agree
-        # Combines whale/copy-trade signal with AI direction
-        if (gem_dir != "neutral" and n_agree >= 2 and consensus_agreed):
+        # ★★ S10: MULTI-SIGNAL — copy-trade + AI agree + high RRF
+        if (gem_dir != "neutral" and n_agree >= 2 and consensus_agreed
+                and rrf_score >= 0.45):
             strategies_to_try.append(("S10_multi_signal", _dir(gem_dir), best_score))
 
-        # ★★ S11: AI-ONLY — strong AI signal without requiring RRF
-        # Lowered: gem_mat≥0.50, gem_conf≥0.55
-        if (gem_dir != "neutral" and gem_mat >= 0.50 and gem_conf >= 0.55
-                and consensus_agreed and rrf_score < 0.40):
+        # ★★ S11: AI-ONLY — very strong AI + consensus + multi-signal
+        if (gem_dir != "neutral" and gem_mat >= 0.70 and gem_conf >= 0.75
+                and consensus_agreed and non_neutral_count >= 2):
             strategies_to_try.append(("S11_ai_only", _dir(gem_dir), gem_conf))
 
-        # ★★ S12: AI-SOLO — VERY strong AI signal, NO consensus required
-        # Fallback when consensus fails but AI is highly confident
-        # This prevents the pipeline from producing 0 trades when Skeptic disagrees
-        if (gem_dir != "neutral" and gem_mat >= 0.60 and gem_conf >= 0.65
-                and not consensus_agreed):
-            strategies_to_try.append(("S12_ai_solo", _dir(gem_dir), gem_conf * 0.85))
+        # ★★ S12: AI-SOLO — REMOVED (10% accuracy, unreliable single-signal)
+        # AI-only signals without consensus or multi-signal confirmation are too noisy
 
         if not strategies_to_try:
             continue
