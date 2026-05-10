@@ -664,6 +664,29 @@ def debug_duration():
     return jsonify(results)
 
 
+@app.route("/reset_db", methods=["POST", "GET"])
+def reset_db():
+    """Reset the database — delete all trades and outcomes for a fresh start."""
+    try:
+        if not Path(DB_PATH).exists():
+            return jsonify({"status": "no_db", "message": "Database not found"}), 404
+        conn = sqlite3.connect(DB_PATH)
+        trades_before = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+        outcomes_before = conn.execute("SELECT COUNT(*) FROM outcomes").fetchone()[0]
+        conn.execute("DELETE FROM outcomes")
+        conn.execute("DELETE FROM trades")
+        conn.commit()
+        conn.close()
+        return jsonify({
+            "status": "ok",
+            "message": f"Deleted {trades_before} trades + {outcomes_before} outcomes. Fresh start.",
+            "trades_deleted": trades_before,
+            "outcomes_deleted": outcomes_before,
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8081"))
     print(f"Dashboard running on http://0.0.0.0:{port}")

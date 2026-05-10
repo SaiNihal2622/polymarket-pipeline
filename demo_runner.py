@@ -817,6 +817,13 @@ def scan_and_trade() -> dict:
                 and consensus_agreed and rrf_score < 0.40):
             strategies_to_try.append(("S11_ai_only", _dir(gem_dir), gem_conf))
 
+        # ★★ S12: AI-SOLO — VERY strong AI signal, NO consensus required
+        # Fallback when consensus fails but AI is highly confident
+        # This prevents the pipeline from producing 0 trades when Skeptic disagrees
+        if (gem_dir != "neutral" and gem_mat >= 0.60 and gem_conf >= 0.65
+                and not consensus_agreed):
+            strategies_to_try.append(("S12_ai_solo", _dir(gem_dir), gem_conf * 0.85))
+
         if not strategies_to_try:
             continue
 
@@ -830,6 +837,7 @@ def scan_and_trade() -> dict:
             "S10_multi_signal":  130,  # Multi-signal: n_agree≥2 + consensus
             "S5_consensus":       90,  # Consensus-first: mat≥0.35 + rrf≥0.40
             "S11_ai_only":        70,  # AI-only: strong AI without RRF
+            "S12_ai_solo":        65,  # AI solo — no consensus, high confidence only
             "S7_rrf_composite":   60,  # RRF composite (legacy)
             "S6_hi_materiality":  50,  # High materiality (legacy)
         }
