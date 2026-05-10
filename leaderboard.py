@@ -14,12 +14,14 @@ Fallback: Hardcoded known top-performing wallets from Polymarket leaderboard.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 
 import httpx
 
 log = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 GAMMA_API = "https://gamma-api.polymarket.com"
 DATA_API  = "https://data-api.polymarket.com"
@@ -33,13 +35,14 @@ KNOWN_TOP_WALLETS = [
     "0x4bD2d6E1D5Fc62D4d4b59F8F84cf5C5F66C0F90",
     "0x7f2Ed34a04b72Ed8c22F22456Ac8b64d61e01C6E",
     "0xA3aB10e79e3B6bd94d5a96E04E7Ca13D5E0C6E42",
-    # Additional known active traders
-    "0x2E0dC6DBb8dCE3D7e77CC776B6cE2c50C3E7Af4",
-    "0x9B3458D6D3e5c5E0Af8e6F1b5C9a7D6E4A2B1C8",
-    "0xF4A8B2C5D9E1F6A3B7C4D8E2F5A9B3C6D7E8F1A",
-    "0x3C7E9F1A2B4D6E8C5F7A9B3D5E7F2A4C6B8D1E3",
-    "0x8D2F4A6B9C1E3F5A7B8D2E4F6A8C1D3E5F7A9B2",
 ]
+
+_EVM_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
+
+
+def _is_valid_wallet(wallet: str) -> bool:
+    """Reject placeholders/invalid wallets before calling Polymarket APIs."""
+    return bool(wallet and _EVM_RE.fullmatch(wallet))
 
 _wallet_cache:    list[str] = []
 _wallet_cache_at: float = 0.0
@@ -81,7 +84,7 @@ def fetch_top_wallets(limit: int = 50) -> list[str]:
             for it in items[:limit]:
                 w = (it.get("proxyWallet") or it.get("address") or
                      it.get("wallet")      or it.get("user") or "")
-                if w and w.startswith("0x") and w not in wallets:
+                if _is_valid_wallet(w) and w not in wallets:
                     wallets.append(w)
             if len(wallets) >= 10:
                 log.info(f"[lb] {len(wallets)} wallets from {url.split('//')[1].split('/')[0]}")
@@ -91,7 +94,7 @@ def fetch_top_wallets(limit: int = 50) -> list[str]:
 
     # Always include hardcoded known whales
     for w in KNOWN_TOP_WALLETS:
-        if w not in wallets:
+        if _is_valid_wallet(w) and w not in wallets:
             wallets.append(w)
 
     if wallets:
@@ -103,10 +106,16 @@ def fetch_top_wallets(limit: int = 50) -> list[str]:
 
 def fetch_wallet_positions(wallet: str, timeout: int = 8) -> list[dict]:
     """Fetch current open positions for a wallet. Returns list of position dicts."""
+    if not _is_valid_wallet(wallet):
+        log.debug(f"[lb] skipped invalid wallet: {wallet}")
+        return []
+
+    # Gamma has no /positions route; using it creates noisy 404s. Data API is the
+    # supported public positions endpoint, but it returns 400 for invalid wallets,
+    # which are filtered above.
     endpoints = [
         f"{DATA_API}/positions?user={wallet}&sizeThreshold=50",
         f"{DATA_API}/positions?user={wallet}",
-        f"{GAMMA_API}/positions?user={wallet}&limit=50",
     ]
     for url in endpoints:
         try:
