@@ -207,9 +207,14 @@ def _get_recent_trades(limit: int = 30) -> list[dict]:
         r["expected_profit"] = 0.0
         price = r.get("market_price", 0.5)
         score = r.get("claude_score", 0.5)
+        # Clamp score to [0, 1] — unbounded materiality can exceed 1.0
+        if score is not None:
+            score = max(0.0, min(1.0, float(score)))
         amount = r.get("amount_usd", 1.0)
         side = r.get("side", "YES")
         edge = r.get("edge", 0.0) or 0.0
+        # Clamp edge to sane range
+        edge = max(-1.0, min(1.0, float(edge)))
         if amount:
             try:
                 # If price is resolved (0 or 1), reconstruct from edge
@@ -267,12 +272,34 @@ def _cfg(name: str, default):
     return default
 
 
+def _cfg_bool(name: str, default: bool) -> bool:
+    """Parse boolean config value correctly. bool('false') == True in Python,
+    so we need explicit string parsing."""
+    val = _cfg(name, default)
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        return val.lower() in ("true", "1", "yes", "on")
+    return bool(val)
+
+
+def _cfg_list(name: str, default: list) -> list:
+    """Parse list config value. Handles both Python lists and comma-separated strings."""
+    val = _cfg(name, default)
+    if isinstance(val, (list, tuple)):
+        return list(val)
+    if isinstance(val, str):
+        # Comma-separated string from env var
+        return [x.strip() for x in val.split(",") if x.strip()]
+    return default
+
+
 def _get_engine_config() -> dict:
     max_yes = float(_cfg("MAX_YES_ENTRY_PRICE", 0.30))
     min_no_yes = float(_cfg("MIN_NO_ENTRY_PRICE", 0.50))
     # Defaults below must match config.py values exactly
     # Mode is dynamic: DRY_RUN=true → DRY-RUN, else LIVE
-    _dry_run = str(_cfg("DRY_RUN", "true")).lower() == "true"
+    _dry_run = _cfg_bool("DRY_RUN", True)
     return {
         "mode": "DRY-RUN" if _dry_run else "LIVE",
         "bankroll_usd": float(_cfg("BANKROLL_USD", 100)),
@@ -285,16 +312,18 @@ def _get_engine_config() -> dict:
         "min_no_entry_yes_price": min_no_yes,
         "max_no_entry_price": round(1.0 - min_no_yes, 4),
         "materiality_threshold": float(_cfg("MATERIALITY_THRESHOLD", 0.50)),
-        "consensus_enabled": bool(_cfg("CONSENSUS_ENABLED", True)),
+        "consensus_enabled": _cfg_bool("CONSENSUS_ENABLED", True),
         "consensus_passes": int(_cfg("CONSENSUS_PASSES", 3)),
-        "strict_consensus": bool(_cfg("STRICT_CONSENSUS", True)),
+        "strict_consensus": _cfg_bool("STRICT_CONSENSUS", True),
         "demo_hours_window": float(_cfg("DEMO_HOURS_WINDOW", 48)),
         "scan_interval_min": int(_cfg("SCAN_INTERVAL_MIN", 3)),
         "resolve_interval_min": int(_cfg("RESOLVE_INTERVAL_MIN", 4)),
         "min_close_hours": float(_cfg("MIN_CLOSE_HOURS", 0.25)),
         "min_volume_usd": float(_cfg("MIN_VOLUME_USD", 50)),
         "min_window_hours": float(_cfg("MIN_WINDOW_HOURS", 0.25)),
-        "market_categories": list(_cfg("MARKET_CATEGORIES", [])) if isinstance(_cfg("MARKET_CATEGORIES", []), (list, tuple)) else [],
+        "market_categories": _cfg_list("MARKET_CATEGORIES", [
+            "ai", "technology", "crypto", "politics", "science", "finance", "world", "other"
+        ]),
     }
 
 
@@ -659,6 +688,8 @@ HTML = r"""
         <li><strong>Consensus:</strong> {{ cfg.consensus_passes }} passes, strict={{ cfg.strict_consensus }}, enabled={{ cfg.consensus_enabled }}</li>
         <li><strong>Materiality:</strong> news must score ≥ <span class="mono">{{ "%.0f"|format(cfg.materiality_threshold * 100) }}%</span></li>
         <li><strong>Risk:</strong> max bet ${{ cfg.max_bet_usd }} • daily loss limit ${{ cfg.daily_loss_limit_usd }}</li>
+        <li><strong>Categories:</strong> <span class="mono" style="font-size: 11px;">{{ cfg.market_categories|join(', ') }}</span></li>
+        <li><strong>Scan interval:</strong> {{ cfg.scan_interval_min }}min • Resolve check: {{ cfg.resolve_interval_min }}min • Window: {{ cfg.demo_hours_window }}h</li>
       </ul>
     </div>
 
