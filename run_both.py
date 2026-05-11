@@ -7,7 +7,12 @@ import logging
 import os
 import sys
 import threading
+from pathlib import Path
+
 from logger import DB_PATH
+
+# Ensure the parent directory for the DB exists (critical for Railway /data mounts)
+Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 
 
 def _run_pipeline():

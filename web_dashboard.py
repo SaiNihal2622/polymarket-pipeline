@@ -28,7 +28,12 @@ try:
     import logger as _logger  # ensures init_db ran
     from logger import DB_PATH
 except Exception:
-    DB_PATH = "polymarket.db"
+    _db_env = os.getenv("DB_PATH", "")
+    if _db_env:
+        DB_PATH = Path(_db_env).absolute()
+    else:
+        DB_PATH = (Path(__file__).parent / "trades.db").absolute()
+    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 
 try:
     from resolver import (
@@ -38,7 +43,7 @@ try:
     )
 except Exception:
     def get_accuracy_stats(): return {"accuracy_pct": 0, "wins": 0, "losses": 0}
-    def get_signal_accuracies(): return []
+    def get_signal_accuracies(): return {}
     def get_strategy_accuracies(): return []
 
 try:
@@ -66,18 +71,39 @@ def _q(sql: str, args: tuple = ()) -> list[dict]:
 
 def _get_summary() -> dict:
     acc = get_accuracy_stats()
-    bk = get_current_bankroll()
-    pnl = todays_pnl()
-    allowed, reason = can_trade_today()
+    try:
+        bk = get_current_bankroll()
+    except Exception:
+        bk = 0.0
+    try:
+        pnl = todays_pnl()
+    except Exception:
+        pnl = 0.0
+    try:
+        allowed, reason = can_trade_today()
+    except Exception:
+        allowed, reason = True, "ok"
 
-    pending = _q(
-        "SELECT COUNT(*) as c FROM trades WHERE status IN ('demo','dry_run') "
-        "AND id NOT IN (SELECT trade_id FROM outcomes)"
-    )[0]["c"]
+    try:
+        pending = _q(
+            "SELECT COUNT(*) as c FROM trades WHERE status IN ('demo','dry_run') "
+            "AND id NOT IN (SELECT trade_id FROM outcomes)"
+        )[0]["c"]
+    except Exception:
+        pending = 0
 
-    total_trades = _q("SELECT COUNT(*) as c FROM trades WHERE status != 'voided'")[0]["c"]
-    total_resolved = _q("SELECT COUNT(*) as c FROM outcomes")[0]["c"]
-    total_pnl = _q("SELECT COALESCE(SUM(pnl),0) as p FROM outcomes")[0]["p"]
+    try:
+        total_trades = _q("SELECT COUNT(*) as c FROM trades WHERE status != 'voided'")[0]["c"]
+    except Exception:
+        total_trades = 0
+    try:
+        total_resolved = _q("SELECT COUNT(*) as c FROM outcomes")[0]["c"]
+    except Exception:
+        total_resolved = 0
+    try:
+        total_pnl = _q("SELECT COALESCE(SUM(pnl),0) as p FROM outcomes")[0]["p"]
+    except Exception:
+        total_pnl = 0
 
     return {
         "bankroll": round(bk, 2),
@@ -679,6 +705,9 @@ HTML = r"""
   <div class="grid grid-2" style="margin-bottom: 32px;">
     <div class="panel">
       <h2>🏆 Strategy Leaderboard</h2>
+      {% if not strategies %}
+        <div class="small" style="padding: 20px 0; text-align: center; color: var(--muted);">No strategy data yet. Strategies appear after trades are resolved.</div>
+      {% endif %}
       {% for st in strategies %}
         {% set acc = (st.wins / (st.wins + st.losses) * 100) if (st.wins + st.losses) > 0 else 0 %}
         <div class="strategy-item">
@@ -696,6 +725,9 @@ HTML = r"""
 
     <div class="panel">
       <h2>📡 Signal Intelligence</h2>
+      {% if not signals %}
+        <div class="small" style="padding: 20px 0; text-align: center; color: var(--muted);">No signal data yet. Signals are tracked after resolved trades.</div>
+      {% endif %}
       <table>
         <thead>
           <tr><th>Signal</th><th>Acc</th><th>Decisive</th><th>Weight</th></tr>
