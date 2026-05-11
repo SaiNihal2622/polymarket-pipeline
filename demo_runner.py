@@ -563,7 +563,7 @@ def scan_and_trade() -> dict:
         matched_pat = next((pat for pat in HARD_SKIP if pat in q_lower), None)
         if matched_pat:
             _skip("hard_blocklist")
-            log.info(f"  [blocklist] #{market.id} matched '{matched_pat}' → \"{market.question[:60]}\"")
+            log.info(f"  [blocklist] #{market.condition_id[:8]} matched '{matched_pat}' → \"{market.question[:60]}\"")
             continue
         # Regex blocklist patterns — REMOVED "will X win" (too broad, blocks legit markets)
         # The hard blocklist above covers the truly untradeable ones
