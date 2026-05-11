@@ -591,6 +591,9 @@ def scan_and_trade() -> dict:
     demos_logged  = 0
     analyzed      = 0
     ai_calls_left = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "35"))  # rate-limit budget
+    skip_reasons: dict[str, int] = {}  # diagnostic: why markets get skipped
+    def _skip(reason: str):
+        skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
 
     from bankroll import kelly_bet_size, get_current_bankroll, can_trade_today
     from edge import Signal as _Signal
@@ -608,23 +611,27 @@ def scan_and_trade() -> dict:
         q_lower   = market.question.lower()
 
         if any(pat in q_lower for pat in HARD_SKIP):
+            _skip("hard_blocklist")
             continue
         # Regex blocklist patterns (can't use simple `in`)
         _REGEX_SKIP = [r"will\s+\w+\s+win\b"]
         if any(re.search(pat, q_lower) for pat in _REGEX_SKIP):
+            _skip("regex_blocklist")
             continue
 
         hours_left = _hours_left(market)
         price      = market.yes_price
         tok        = token_map.get(market.condition_id)
 
-        if hours_left > 30 or price < 0.25 or price > 0.90:
+        if hours_left > 30:
+            _skip("hours_gt_30")
             continue
-
-        # Skip "uncertain zone" prices (0.45-0.55) — crowd says 50/50, no edge
-        # Widened to 0.45-0.55 for stricter filtering
-        if 0.45 <= price <= 0.55:
-            log.debug(f"[skip:uncertain] price={price:.2f} in dead zone: {q_lower[:50]}")
+        if price < 0.15 or price > 0.95:
+            _skip("price_extreme")
+            continue
+        # Narrower dead zone — 0.46-0.54 instead of 0.45-0.55
+        if 0.46 <= price <= 0.54:
+            _skip("uncertain_zone")
             continue
 
         is_crypto = any(k in q_lower for k in CRYPTO_KW)
@@ -829,6 +836,7 @@ def scan_and_trade() -> dict:
         # AI-only signals without consensus or multi-signal confirmation are too noisy
 
         if not strategies_to_try:
+            _skip("no_strategy_fired")
             continue
 
         # ── PER-MARKET DEDUP: pick the SINGLE best strategy per market ──
@@ -870,12 +878,14 @@ def scan_and_trade() -> dict:
             # ── ROI FILTER: ≥233% ROI — MAX entry price 30¢ ──
             # Only buy at ≤30¢ for guaranteed profit even at low accuracy
             if bet_price > config.MAX_BUY_PRICE:
+                _skip("roi_too_low")
                 roi_pct = (1.0 / bet_price - 1.0) * 100
                 log.debug(f"[strategy] SKIP {strat_name} {strat_side} bet_price={bet_price:.2f} — ROI={roi_pct:.0f}% < 233% (max_buy={config.MAX_BUY_PRICE})")
                 continue
             payout_ratio = (1.0 - bet_price) / bet_price
             ev           = strat_score * payout_ratio - (1.0 - strat_score)
             if ev < 0.01:
+                _skip("negative_ev")
                 continue  # skip negative-EV strategies
 
             edge  = strat_score - bet_price
@@ -912,6 +922,12 @@ def scan_and_trade() -> dict:
         console.print(f"  [yellow]No trades this scan — {analyzed} markets analyzed, {ai_used} AI calls used.[/yellow]")
     else:
         console.print(f"\n  ✅ {demos_logged} trades | {analyzed} analyzed | {ai_used} AI calls used")
+
+    # Diagnostic: print skip reasons so we know why markets are filtered
+    if skip_reasons:
+        parts = [f"{k}:{v}" for k, v in sorted(skip_reasons.items(), key=lambda x: -x[1])]
+        console.print(f"  [dim]Skip reasons → {' | '.join(parts)}[/dim]")
+
     _print_accuracy_oneliner()
 
     return {
