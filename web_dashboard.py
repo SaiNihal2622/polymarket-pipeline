@@ -23,21 +23,17 @@ try:
 except Exception:
     config = None
 
-# Resilient imports — dashboard must start even if heavy modules fail
-try:
-    import logger as _logger  # ensures init_db ran
-    from logger import DB_PATH
-except Exception:
-    _db_env = os.getenv("DB_PATH", "")
-    if _db_env:
-        DB_PATH = Path(_db_env).absolute()
+# Dashboard reads from bot.db (demo_trades table) — the same DB the demo_runner writes to.
+_db_env = os.getenv("DB_PATH", "")
+if _db_env:
+    DB_PATH = Path(_db_env).absolute()
+else:
+    _railway_volume = Path("/data")
+    if _railway_volume.exists():
+        DB_PATH = (_railway_volume / "bot.db").absolute()
     else:
-        _railway_volume = Path("/data")
-        if _railway_volume.exists():
-            DB_PATH = (_railway_volume / "trades.db").absolute()
-        else:
-            DB_PATH = (Path(__file__).parent / "trades.db").absolute()
-    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+        DB_PATH = (Path(__file__).parent / "bot.db").absolute()
+Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 
 try:
     from resolver import (
@@ -74,74 +70,75 @@ def _q(sql: str, args: tuple = ()) -> list[dict]:
 
 
 def _get_summary() -> dict:
-    acc = get_accuracy_stats()
+    """Summary stats from demo_trades table in bot.db."""
     try:
-        bk = get_current_bankroll()
-    except Exception:
-        bk = 0.0
-    try:
-        pnl = todays_pnl()
-    except Exception:
-        pnl = 0.0
-    try:
-        allowed, reason = can_trade_today()
-    except Exception:
-        allowed, reason = True, "ok"
-
-    try:
-        pending = _q(
-            "SELECT COUNT(*) as c FROM trades WHERE status IN ('demo','dry_run') "
-            "AND id NOT IN (SELECT trade_id FROM outcomes)"
-        )[0]["c"]
-    except Exception:
-        pending = 0
-
-    try:
-        total_trades = _q("SELECT COUNT(*) as c FROM trades WHERE status != 'voided'")[0]["c"]
+        total_trades = _q("SELECT COUNT(*) as c FROM demo_trades")[0]["c"]
     except Exception:
         total_trades = 0
     try:
-        total_resolved = _q("SELECT COUNT(*) as c FROM outcomes")[0]["c"]
+        total_resolved = _q("SELECT COUNT(*) as c FROM demo_trades WHERE result IS NOT NULL AND result != ''")[0]["c"]
     except Exception:
         total_resolved = 0
     try:
-        total_pnl = _q("SELECT COALESCE(SUM(pnl),0) as p FROM outcomes")[0]["p"]
+        pending = _q("SELECT COUNT(*) as c FROM demo_trades WHERE result IS NULL OR result = ''")[0]["c"]
     except Exception:
-        total_pnl = 0
+        pending = 0
+    try:
+        wins = _q("SELECT COUNT(*) as c FROM demo_trades WHERE result = 'win'")[0]["c"]
+    except Exception:
+        wins = 0
+    try:
+        losses = _q("SELECT COUNT(*) as c FROM demo_trades WHERE result = 'loss'")[0]["c"]
+    except Exception:
+        losses = 0
+    total_pnl = 0.0
+    accuracy_pct = 0.0
+    if total_resolved > 0:
+        accuracy_pct = round(wins / total_resolved * 100, 1)
+        # PnL: win = +edge*amount, loss = -amount
+        try:
+            win_pnl = _q("SELECT COALESCE(SUM(edge * amount_usd), 0) as p FROM demo_trades WHERE result = 'win'")[0]["p"]
+            loss_pnl = _q("SELECT COALESCE(SUM(-amount_usd), 0) as p FROM demo_trades WHERE result = 'loss'")[0]["p"]
+            total_pnl = round((win_pnl or 0) + (loss_pnl or 0), 2)
+        except Exception:
+            total_pnl = 0.0
+
+    min_resolved = int(_cfg("MIN_RESOLVED_TRADES", 20))
+    acc_threshold = float(_cfg("ACCURACY_THRESHOLD", 80.0))
+    can_go = total_resolved >= min_resolved and accuracy_pct >= acc_threshold
 
     return {
-        "bankroll": round(bk, 2),
-        "todays_pnl": round(pnl, 2),
-        "total_pnl": round(total_pnl, 2),
-        "trades_today_allowed": allowed,
-        "trade_block_reason": reason,
-        "accuracy_pct": acc.get("accuracy_pct", 0),
-        "wins": acc.get("wins", 0),
-        "losses": acc.get("losses", 0),
+        "bankroll": round(float(_cfg("BANKROLL_USD", 30)), 2),
+        "todays_pnl": 0.0,  # computed from demo_trades if needed
+        "total_pnl": total_pnl,
+        "trades_today_allowed": True,
+        "trade_block_reason": "ok",
+        "accuracy_pct": accuracy_pct,
+        "wins": wins,
+        "losses": losses,
         "resolved": total_resolved,
         "pending": pending,
         "total_trades": total_trades,
-        "go_live_remaining": max(0, int(_cfg("MIN_RESOLVED_TRADES", 20)) - total_resolved),
-        "can_go_live": (
-            total_resolved >= int(_cfg("MIN_RESOLVED_TRADES", 20))
-            and acc.get("accuracy_pct", 0) >= float(_cfg("ACCURACY_THRESHOLD", 80.0))
-        ),
+        "go_live_remaining": max(0, min_resolved - total_resolved),
+        "can_go_live": can_go,
     }
 
 
 def _get_recent_trades(limit: int = 30) -> list[dict]:
-    rows = _q(
-        """SELECT t.id, t.created_at, t.market_question, t.side,
-                  t.market_price, t.claude_score, t.edge, t.amount_usd,
-                  t.status, t.strategy, t.signals, t.classification,
-                  t.materiality, t.news_source, t.end_date_iso,
-                  o.result, o.pnl, o.resolved_at
-           FROM trades t
-           LEFT JOIN outcomes o ON o.trade_id = t.id
-           WHERE t.status != 'voided'
-           ORDER BY t.id DESC LIMIT ?""",
-        (limit,),
-    )
+    """Read recent trades from demo_trades table in bot.db."""
+    try:
+        rows = _q(
+            """SELECT id, created_at, market_question, side,
+                      market_price, claude_score, edge, amount_usd,
+                      status, strategy, signals, classification,
+                      materiality, news_source, end_date_iso,
+                      result, resolved_at
+               FROM demo_trades
+               ORDER BY id DESC LIMIT ?""",
+            (limit,),
+        )
+    except Exception:
+        return []
     now = datetime.utcnow()
     for r in rows:
         if r.get("signals"):
@@ -341,40 +338,43 @@ def _get_engine_config() -> dict:
 
 def _get_expectations() -> dict:
     cfg = _get_engine_config()
-    # Dynamic predictions based on current state
+    # Dynamic predictions based on current state from demo_trades
     try:
-        from resolver import get_accuracy_stats
-        acc = get_accuracy_stats()
-        current_acc = acc.get("accuracy_pct", 0)
-        wins = acc.get("wins", 0)
-        losses = acc.get("losses", 0)
-    except Exception:
-        current_acc, wins, losses = 0, 0, 0
-
-    try:
-        total_resolved = _q("SELECT COUNT(*) as c FROM outcomes")[0]["c"]
+        total_resolved = _q(
+            "SELECT COUNT(*) as c FROM demo_trades WHERE result IS NOT NULL AND result != ''"
+        )[0]["c"]
     except Exception:
         total_resolved = 0
 
     try:
-        total_trades = _q("SELECT COUNT(*) as c FROM trades WHERE status != 'voided'")[0]["c"]
+        total_trades = _q("SELECT COUNT(*) as c FROM demo_trades")[0]["c"]
     except Exception:
         total_trades = 0
 
     try:
         pending = _q(
-            "SELECT COUNT(*) as c FROM trades WHERE status IN ('demo','dry_run') "
-            "AND id NOT IN (SELECT trade_id FROM outcomes)"
+            "SELECT COUNT(*) as c FROM demo_trades WHERE result IS NULL OR result = ''"
         )[0]["c"]
     except Exception:
         pending = 0
 
     try:
         recent_24h = _q(
-            "SELECT COUNT(*) as c FROM trades WHERE created_at >= datetime('now', '-24 hours')"
+            "SELECT COUNT(*) as c FROM demo_trades WHERE created_at >= datetime('now', '-24 hours')"
         )[0]["c"]
     except Exception:
         recent_24h = 0
+
+    current_acc = 0
+    wins = 0
+    losses = 0
+    if total_resolved > 0:
+        try:
+            wins = _q("SELECT COUNT(*) as c FROM demo_trades WHERE result = 'win'")[0]["c"]
+            losses = _q("SELECT COUNT(*) as c FROM demo_trades WHERE result = 'loss'")[0]["c"]
+            current_acc = round(wins / total_resolved * 100, 1)
+        except Exception:
+            pass
 
     max_bet = cfg.get("max_bet_usd", 1.0)
     bankroll = cfg.get("bankroll_usd", 30)
@@ -430,9 +430,11 @@ def _get_diagnostics() -> dict:
         try:
             conn = _conn()
             tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()]
-            for table in ["trades", "outcomes", "news_events", "pipeline_runs"]:
-                if table in tables:
-                    counts[table] = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in tables:
+                try:
+                    counts[table] = conn.execute(f"SELECT COUNT(*) FROM [{table}]").fetchone()[0]
+                except Exception:
+                    pass
             conn.close()
         except Exception as e:
             counts["error"] = str(e)
@@ -867,9 +869,9 @@ HTML = r"""
             <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">{{ t.resolution_duration }}</td>
             <td>
               {% if t.result == 'win' %}
-                <span class="win" style="font-weight: 700;">WIN <span style="font-size: 11px; font-weight: 400; color: var(--muted);">${{ "%.2f"|format(t.pnl) }}</span></span>
+                <span class="win" style="font-weight: 700;">WIN <span style="font-size: 11px; font-weight: 400; color: var(--muted);">${{ "%.2f"|format(t.edge * t.amount_usd if t.edge and t.amount_usd else 0) }}</span></span>
               {% elif t.result == 'loss' %}
-                <span class="loss" style="font-weight: 700;">LOSS <span style="font-size: 11px; font-weight: 400; color: var(--muted);">${{ "%.2f"|format(t.pnl) }}</span></span>
+                <span class="loss" style="font-weight: 700;">LOSS <span style="font-size: 11px; font-weight: 400; color: var(--muted);">${{ "%.2f"|format(-t.amount_usd if t.amount_usd else 0) }}</span></span>
               {% else %}
                 <span class="pill pill-pending">PENDING</span>
               {% endif %}
@@ -993,9 +995,9 @@ def health():
 def debug_duration():
     """Debug endpoint to trace duration calculation"""
     rows = _q(
-        "SELECT t.id, t.created_at, t.end_date_iso, o.resolved_at, o.result "
-        "FROM trades t LEFT JOIN outcomes o ON o.trade_id = t.id "
-        "ORDER BY t.id DESC LIMIT 5"
+        "SELECT id, created_at, end_date_iso, resolved_at, result "
+        "FROM demo_trades "
+        "ORDER BY id DESC LIMIT 5"
     )
     results = []
     for r in rows:
@@ -1019,22 +1021,19 @@ def debug_duration():
 
 @app.route("/reset_db", methods=["POST", "GET"])
 def reset_db():
-    """Reset the database — delete all trades and outcomes for a fresh start."""
+    """Reset the database — delete all demo_trades for a fresh start."""
     try:
         if not Path(DB_PATH).exists():
             return jsonify({"status": "no_db", "message": "Database not found"}), 404
         conn = sqlite3.connect(DB_PATH)
-        trades_before = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
-        outcomes_before = conn.execute("SELECT COUNT(*) FROM outcomes").fetchone()[0]
-        conn.execute("DELETE FROM outcomes")
-        conn.execute("DELETE FROM trades")
+        trades_before = conn.execute("SELECT COUNT(*) FROM demo_trades").fetchone()[0]
+        conn.execute("DELETE FROM demo_trades")
         conn.commit()
         conn.close()
         return jsonify({
             "status": "ok",
-            "message": f"Deleted {trades_before} trades + {outcomes_before} outcomes. Fresh start.",
+            "message": f"Deleted {trades_before} demo trades. Fresh start.",
             "trades_deleted": trades_before,
-            "outcomes_deleted": outcomes_before,
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
