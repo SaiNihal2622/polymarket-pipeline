@@ -462,6 +462,11 @@ def scan_and_trade() -> dict:
         "dota 2", "valorant", "counter-strike", "league of legends", " lol:", " lol ",
         "cblol", "lck", "lec", "lcs", "msi",
         "call of duty", "cdl", "overwatch", "rainbow six",
+        # ── Over/Under markets (random coin flips, no informational edge) ──
+        "o/u ", "o/u", "over/under", "over under",
+        # ── Short-window crypto price (15-min Bitcoin windows = coin flip) ──
+        "bitcoin up or down", "ethereum up or down", "sol up or down",
+        "btc up or down", "eth up or down",
         # ── Player props (0% accuracy historically — proven money drain) ──
         "anytime goalscorer", "anytime scorer", "first goalscorer",
         "first scorer", "last scorer", "to score first",
@@ -760,10 +765,12 @@ def scan_and_trade() -> dict:
 
         # ★★ S8: HIGH RRF + consensus required
         # non_neutral_count relaxed to 1 — whale/copy/crowd often empty in demo-runner
+        # NOTE: RRF composite is a SIGNAL QUALITY score, NOT a probability.
+        # We use gem_conf as the probability for EV/edge, and RRF as gating only.
         non_neutral_count = sum(1 for l,d,c in all_sigs if d != "neutral" and c > 0)
-        if (gem_dir != "neutral" and rrf_score >= 0.50 and consensus_agreed
-                and non_neutral_count >= 1):
-            strategies_to_try.append(("S8_rrf_highconv", _dir(gem_dir), rrf_score + 0.05))
+        if (gem_dir != "neutral" and rrf_score >= 0.60 and consensus_agreed
+                and gem_mat >= 0.45 and non_neutral_count >= 1):
+            strategies_to_try.append(("S8_rrf_highconv", _dir(gem_dir), gem_conf))
 
         # ★★ S5: CONSENSUS-FIRST — consensus is enough (non_neutral relaxed)
         if (gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.45
@@ -776,9 +783,10 @@ def scan_and_trade() -> dict:
             strategies_to_try.append(("S9_sureshot", _dir(gem_dir), gem_conf))
 
         # ★★ S10: AI + RRF + consensus (n_agree relaxed — AI-only viable)
+        # Use gem_conf (AI probability) not best_score (signal quality composite)
         if (gem_dir != "neutral" and n_agree >= 1 and consensus_agreed
                 and rrf_score >= 0.40):
-            strategies_to_try.append(("S10_multi_signal", _dir(gem_dir), best_score))
+            strategies_to_try.append(("S10_multi_signal", _dir(gem_dir), gem_conf))
 
         # ★★ S11: AI-ONLY — strong AI + consensus (non_neutral relaxed)
         if (gem_dir != "neutral" and gem_mat >= 0.60 and gem_conf >= 0.65
@@ -842,7 +850,7 @@ def scan_and_trade() -> dict:
                 continue  # skip negative-EV strategies
 
             edge  = strat_score - bet_price
-            bet   = kelly_bet_size(bk, edge, bet_price, materiality=strat_score)
+            bet   = kelly_bet_size(bk, edge, bet_price, materiality=gem_mat)
             bet   = min(bet, bk * 0.05)   # hard 5% cap during trial (conservative)
             bet   = round(max(0.50, bet), 2)
             win_a = round(bet * payout_ratio, 2)
@@ -853,7 +861,7 @@ def scan_and_trade() -> dict:
                 reasoning=f"strategy={strat_name} score={strat_score:.2f} ev={ev:.3f}",
                 headlines="", news_source="strategy_trial",
                 classification=("bullish" if strat_side=="YES" else "bearish"),
-                materiality=strat_score, composite_score=strat_score,
+                materiality=gem_mat, composite_score=rrf_score,
             )
             trade_id = _log_demo_trade(sig, token_id=tok,
                                        signals=signals_record, strategy=strat_name)
