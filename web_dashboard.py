@@ -117,7 +117,7 @@ def _get_summary() -> dict:
         "resolved": total_resolved,
         "pending": pending,
         "total_trades": total_trades,
-        "go_live_remaining": max(0, 30 - total_resolved),
+        "go_live_remaining": max(0, int(_cfg("MIN_RESOLVED_TRADES", 20)) - total_resolved),
     }
 
 
@@ -269,7 +269,7 @@ def _get_engine_config() -> dict:
         "daily_loss_limit_usd": float(_cfg("DAILY_LOSS_LIMIT_USD", 10)),
         "edge_threshold": float(_cfg("EDGE_THRESHOLD", 0.30)),
         "accuracy_threshold": float(_cfg("ACCURACY_THRESHOLD", 80.0)),
-        "min_resolved_trades": int(_cfg("MIN_RESOLVED_TRADES", 20)),
+        "min_resolved_trades": int(_cfg("MIN_RESOLVED_TRADES", 20)),  # used by dashboard for trial target
         "max_yes_entry_price": max_yes,
         "min_no_entry_yes_price": min_no_yes,
         "max_no_entry_price": round(1.0 - min_no_yes, 4),
@@ -632,14 +632,14 @@ HTML = r"""
         <div class="stat-row">
           <span class="stat-label">System Mode</span>
           <span class="stat-value {{ 'win' if s.accuracy_pct >= 80 and s.resolved >= 30 else 'warn' }}">
-            {{ 'PRODUCTION' if s.accuracy_pct >= 80 and s.resolved >= 30 else 'DRY-RUN / TRIAL' }}
+            {{ 'PRODUCTION' if s.accuracy_pct >= 80 and s.resolved >= cfg.min_resolved_trades else 'DRY-RUN / TRIAL' }}
           </span>
         </div>
         <div class="stat-row">
           <span class="stat-label">Trial Progress</span>
-          <span class="stat-value">{{ s.resolved }} / 30</span>
+          <span class="stat-value">{{ s.resolved }} / {{ cfg.min_resolved_trades }}</span>
         </div>
-        <div class="progress-bg"><div class="progress-fill" style="width: {{ (s.resolved/30)*100 }}%"></div></div>
+        <div class="progress-bg"><div class="progress-fill" style="width: {{ (s.resolved / cfg.min_resolved_trades * 100) if cfg.min_resolved_trades > 0 else 0 }}%"></div></div>
         <div class="stat-row" style="margin-top: 4px; border-bottom:0;">
           <span class="stat-label">Gate Status</span>
           <span class="stat-value {{ 'win' if s.trades_today_allowed else 'loss' }}">
