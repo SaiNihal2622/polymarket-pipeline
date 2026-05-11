@@ -443,80 +443,47 @@ def scan_and_trade() -> dict:
 
     # ── HARD BLOCKLIST ──────────────────────────────────────────────────
     HARD_SKIP = [
-        # Finance/stocks — empirical 0% accuracy (0W/2L)
-        "close above", "close below", "(spy)", "(qqq)", "(nvda)", "(tsla)",
-        "(aapl)", "(msft)", "(googl)", "(meta)", "(amzn)", "(nflx)",
-        "s&p 500", "nasdaq", "dow jones", "russell", "vix",
-        "stock close", "stock price", "share price", "earnings", "10-year",
-        # Long-dated futures (can't resolve in 48h)
-        "world series", "super bowl", "stanley cup", "french open", "wimbledon",
-        "nba champion", "nba finals", "nfl afc", "nfl nfc", "nhl playoffs",
-        "lpl 2026", "ipl champion", "tour de france", "rbc heritage", "masters 2026",
-        "governor", "senator", "president", "fed chair", "confirmed as",
-        "2027", "grammy", "oscar", "nobel", "eurovision",
-        # Esports (pure luck/skill markets)
-        "(bo1)", "(bo3)", "(bo5)", "map 1 winner", "map 2 winner", "map 3 winner",
-        "game 1 winner", "game 2 winner", "game 3 winner", "game 4 winner",
-        "first blood", "first tower", "first baron", "quadra kill", "penta kill",
-        "dragon soul", "inhibitor", "total kills",
-        "dota 2", "valorant", "counter-strike", "league of legends", " lol:", " lol ",
-        "cblol", "lck", "lpl", "lec", "lcs", "msi", "worlds 2026",
-        "call of duty", "cdl", "overwatch", "rainbow six",
-        # NOTE: " vs " / "moneyline" removed — AI consensus filters coin flips (87.5% acc)
-        # Stocks / finance — AI has no edge on price targets
-        "finish week", "hit (low)", "hit (high)", "close above $", "close below $",
-        "above $", "below $", "hit $", "(pltr)", "(coin)", "(hood)", "(mstr)",
-        "robinhood", "palantir", "coinbase",
-        # Sports O/U / props (unresearchable — block ALL o/u patterns)
-        " o/u ", "o/u ", ": o/u", "over/under",
-        "both teams to score", "leading at halftime", "half time",
-        "spread:", "correct score", "exact score", "handicap:",
-        "points o/u", "assists o/u", "rebounds o/u", "total corners",
-        "total kills", "games total", "map total",
-        "any player", "up or down", "opens up or down",
-        # Random sports game results — AI has NO edge, pure coin flip
-        "win on 2026-04", "win on 2026-05", "win on 2026-06",
-        # Misc
-        "temperature", "rainfall", "snow",
-        "justin bieber", "taylor swift", "box office", "posts from",
-        "end in a draw", "art ross", "clutch player", "coach of the year",
-        "top goal scorer", "most assists",
-        "relegated",
-        # ═══ NEW: Block all player props (0% accuracy, 0W/5L) ═══
-        "anytime goalscorer", "anytime scorer", "first goalscorer",
-        "to score", "to assist", "to win by ko", "to win by tko",
-        "to win by submission", "to win by decision",
-        "win by ko", "win by tko", "win by submission", "win by decision",
-        "knockdown", "knock out", "ko or tko",
-        # ═══ NEW: Block fight/match outcome props ═══
-        "fight to go the distance", "go the distance",
-        "round betting", "method of victory",
-        "will .* win",  # "Will X win?" = pure coin flip
-        # ═══ NEW: Block crypto price ranges (AI can't predict exact ranges) ═══
+        # ── Finance/stocks (exact tickers only) ──
+        "(spy)", "(qqq)", "(nvda)", "(tsla)", "(aapl)", "(msft)",
+        "(googl)", "(meta)", "(amzn)", "(nflx)", "(pltr)", "(coin)",
+        "(hood)", "(mstr)",
+        "s&p 500", "nasdaq", "dow jones",
+        "stock close", "stock price", "share price", "earnings",
+        # ── Crypto exact price ranges (AI can't predict) ──
         "be between $", "be above $", "be below $",
         "price of bitcoin", "price of ethereum", "price of solana",
         "btc be", "eth be", "sol be",
-        # ═══ NEW: Block entertainment/awards (pure luck) ═══
-        "american idol", "bachelor", "bachelorette", "dancing with",
-        "survivor", "big brother", "the voice", "mask singer",
-        "win * season", "eliminated", "voted off",
-        # ═══ NEW: Block social media/truth social (unpredictable) ═══
-        "truth social", "post on twitter", "tweet", "post on x",
-        "photographed every day", "golf this week",
-        # ═══ NEW: Block NYT/media headline markets ═══
-        "nyt front-page", "front-page headlines", "nyt headlines",
-        # ═══ NEW: Block NFL draft / player draft ═══
-        "draft pick", "drafted by", "nfl draft", "nba draft",
-        "first round pick", "second round pick",
-        # ═══ NEW: Block all sports player/match outcomes ═══
+        "close above $", "close below $",
+        # ── Long-dated futures (can't resolve in 48h) ──
+        "world series", "super bowl", "stanley cup", "wimbledon",
+        "nba champion", "nba finals", "nfl afc", "nfl nfc",
+        "ipl champion", "tour de france",
+        "2027", "2028",
+        # ── Esports (pure luck/skill markets) ──
+        "(bo1)", "(bo3)", "(bo5)", "map 1 winner", "map 2 winner", "map 3 winner",
+        "first blood", "first tower", "first baron", "quadra kill", "penta kill",
+        "dragon soul", "inhibitor",
+        "dota 2", "valorant", "counter-strike", "league of legends", " lol:", " lol ",
+        "cblol", "lck", "lec", "lcs", "msi",
+        "call of duty", "cdl", "overwatch", "rainbow six",
+        # ── Player props (0% accuracy historically) ──
         "anytime goalscorer", "anytime scorer", "first goalscorer",
         "first scorer", "last scorer", "to score first",
-        "fight to go", "go the distance",
-        "win by ko", "win by tko", "win by submission",
-        "ko or tko", "tko or ko",
         "player props", "player to score",
-        # ═══ NEW: Block low-quality YES-biased markets ═══
-        "be between $", "price of ", "close at",
+        "win by ko", "win by tko", "win by submission",
+        "ko or tko", "tko or ko", "knockdown", "knock out",
+        "fight to go the distance", "go the distance",
+        "round betting", "method of victory",
+        # ── Entertainment/awards (pure luck) ──
+        "american idol", "bachelor", "bachelorette", "dancing with",
+        "survivor", "big brother", "the voice", "mask singer",
+        "grammy", "oscar", "nobel", "eurovision",
+        # ── Weather/climate (unpredictable) ──
+        "temperature", "rainfall", "snow",
+        # ── Social media (unpredictable) ──
+        "truth social", "post on twitter", "tweet", "post on x",
+        # ── Exact score props ──
+        "correct score", "exact score",
     ]
 
     from price_feeds import verify_crypto_market, get_all_crypto_prices
@@ -605,8 +572,10 @@ def scan_and_trade() -> dict:
         analyzed += 1
         q_lower   = market.question.lower()
 
-        if any(pat in q_lower for pat in HARD_SKIP):
+        matched_pat = next((pat for pat in HARD_SKIP if pat in q_lower), None)
+        if matched_pat:
             _skip("hard_blocklist")
+            log.info(f"  [blocklist] #{market.id} matched '{matched_pat}' → \"{market.question[:60]}\"")
             continue
         # Regex blocklist patterns (can't use simple `in`)
         _REGEX_SKIP = [r"will\s+\w+\s+win\b"]
