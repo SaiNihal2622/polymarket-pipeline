@@ -14,7 +14,12 @@ from __future__ import annotations
 
 import os
 
-INITIAL_BANKROLL = float(os.getenv("BANKROLL_USD", "20"))
+# Import from config to keep a single source of truth
+try:
+    from config import BANKROLL_USD as _BANKROLL
+    INITIAL_BANKROLL = _BANKROLL
+except Exception:
+    INITIAL_BANKROLL = float(os.getenv("BANKROLL_USD", "30"))
 MAX_BET_FRAC     = 0.07   # 7% max per bet ($2.10 on $30 bankroll) — safer for real money
 MAX_BET_USD      = float(os.getenv("MAX_BET_USD", "1"))  # hard cap from config
 MIN_BET_USD      = 0.50

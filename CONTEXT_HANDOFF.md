@@ -1,102 +1,60 @@
-# Polymarket Pipeline — Context Handoff
+# Context Handoff — Polymarket Pipeline
 
-> **Read this file first when starting a new Cline conversation.**
-> Just say: "Read CONTEXT_HANDOFF.md and continue where we left off."
+## Current State (2026-05-12 ~14:30 IST)
+- **Status**: Running on Railway (Production deployment, ID: `3f90`)
+- **Mode**: DRY_RUN=True (trial/demo mode)
+- **Railway Services**: 
+  - Pipeline: `polymarket-pipeline-production-3f90`
+  - Cron: `polymarket-cron-production-3f90`
 
----
+## CRON JOBS (AUTO-SCHEDULER)
+The cron service runs two jobs automatically:
+1. **demo_runner** — every 5 min (`*/5 * * * *`)
+   - Scans markets → generates signals → places DRY_RUN trades → resolves
+   - Command: `python demo_runner.py scan`
+2. **resolve_trades** — every 6 min (`*/6 * * * *`)
+   - Only resolves pending trades
+   - Command: `python resolve_trades.py`
 
-## Current State (as of 2026-05-11 14:45 IST)
+**DO NOT start long-running processes** — use one-shot commands only.
 
-### Pipeline Performance
-- **Accuracy**: 82.9% (24W / 5L) — exceeds 80% target ✅
-- **Virtual PnL**: $11.43 across 29 resolved trades
-- **Mode**: DRY_RUN (virtual trades only)
-- **Dashboard**: https://demo-runner-production-3f90.up.railway.app/
+## Latest Fixes (Just Deployed)
 
-### Railway Deployment
-- **Service name**: `demo-runner`
-- **Deploy command**: `railway up --service demo-runner`
-- **Git push**: `git push origin main` (triggers auto-deploy if connected)
-- **Procfile**: `web: python3.11 run_both.py` (runs pipeline + dashboard together)
-- **Last commit**: Blocklist fix (relaxed vs/moneyline/cricket/tournament blocks)
+### Dashboard Gate Logic Fix
+- **Problem**: Gate Status showed "OPEN" (green) even at 44.8% accuracy because it only checked `can_trade_today()` (daily loss limit), not accuracy
+- **Fix**: Added `can_go_live` field that checks BOTH accuracy >= 80% AND resolved >= 20 trades
+- Gate now shows "ACCUMULATING" (yellow) when not yet ready, with tooltip showing what's needed
 
-### MiMo API Config (Cline model)
-- **Config file**: `cline-mimo-config.json`
-- **Model**: `mimo-v2.5-pro` (Xiaomi's best)
-- **API base**: `https://token-plan-sgp.xiaomimimo.com/v1`
-- **API key**: `tp-smb26vqnngif8xfg9yumoj1npvc0cr0jjy0csju1rnbc83zz`
-- **maxTokens**: 32768 (increased for better experience, only 1% of quota used)
-- **Token quota**: 700M total, ~1% used
+### Position Sizing Fix
+- **Problem**: Kelly sizing allowed $3.76-$4.05 bets despite `MAX_BET_USD=1` config
+- **Root cause**: `kelly_bet_size()` in bankroll.py only used `MAX_BET_FRAC` (7% of bankroll), not the `MAX_BET_USD` config value
+- **Fix**: Added `MAX_BET_USD` hard cap that caps Kelly output at $1 (or whatever config says)
+- On $95 bankroll: Kelly would bet $6.65 (7%), now capped at $1
 
-### Coding Config (Qwen3)
-- **Config file**: `cline-coding-config.json`
-- **Model**: `qwen/qwen3-coder-480b-a35b-instruct` on NVIDIA
-- **maxTokens**: 32768 (increased)
+### Strategy Leaderboard Fix
+- **Problem**: Showed "•  trades" with blank number
+- **Root cause**: Template used `st.total` but dict returns `st.trades`
+- **Fix**: Changed to `st.trades` in template
 
----
+## Key Rules
+- Use `timeout 120` for ALL Railway commands
+- Always `--no-input -y` on Railway CLI
+- One-shot commands only (never long-running processes)
+- Read-only DB queries on Railway (no writes)
 
-## Recent Changes Made
+## Database Schema
+Tables: trades, outcomes, news_events, pipeline_runs
+- `outcomes`: trade_id, result, pnl, resolved_at, closing_price, source, reason
 
-### 1. Blocklist Fix (`demo_runner.py`)
-Removed over-aggressive keyword blocking in `HARD_SKIP` list:
-- **Removed**: `" vs. "`, `" vs "`, `"moneyline"`, `"1h moneyline"` — AI consensus handles these
-- **Removed**: 18 cricket team patterns (`"will cf "`, `"will ca "`, etc.) — caught legitimate cricket markets
-- **Removed**: `"win the 2025/2026/2027"`, `"finish in the top"` — over-broad tournament blocks
-- **Kept**: Only truly broken/empty question patterns
+## What Was Done This Session
+1. Full accuracy analysis: 28W/34L = 44.8% win rate, $1.49 net profit
+2. Fixed dashboard gate to check accuracy threshold (80%) not just daily loss limit
+3. Fixed Kelly bet sizing to respect MAX_BET_USD hard cap ($1)
+4. Fixed strategy leaderboard trade count display
 
-### 2. Config Changes
-- Both `cline-mimo-config.json` and `cline-coding-config.json` updated with `maxTokens: 32768`
-- MiMo model upgraded from `mimo-v2-omni` → `mimo-v2.5-pro`
-
----
-
-## Known Issues
-
-### Dashboard Shows 0 Stats on Railway
-The Railway deployment has its own SQLite DB (`polymarket.db`) which is empty. The 82.9% accuracy stats are from the LOCAL database. Railway will populate as the pipeline runs live.
-
-### Cricket API Errors
-ESPN (403) and Cricbuzz (404) APIs fail when no IPL matches are live. This is expected — the pipeline falls back to Polymarket's Gamma API for non-cricket markets.
-
-### Blocklist May Still Be Too Aggressive
-If trades aren't appearing after deployment, check Railway logs. The remaining `HARD_SKIP` patterns in `demo_runner.py` may need further loosening. Key patterns to watch:
-- `"world of "` — blocks too many legitimate markets
-- `", the"` — overly broad
-
----
-
-## Architecture Quick Reference
-
-| File | Purpose |
-|------|---------|
-| `demo_runner.py` | Main loop — market discovery, AI consensus, trade execution |
-| `classifier.py` | LLM-based market categorization (uses MiMo/Groq) |
-| `edge.py` | Edge calculation (polymarket vs true probability) |
-| `bankroll.py` | Virtual bankroll, position sizing, PnL tracking |
-| `resolver.py` | Resolves trades when markets closed, tracks accuracy |
-| `web_dashboard.py` | Flask dashboard served on Railway |
-| `run_both.py` | Launches pipeline + dashboard together |
-| `markets.py` | Fetches markets from Polymarket Gamma API |
-| `logger.py` | SQLite DB management (`polymarket.db`) |
-| `config.py` | Configuration constants |
-| `pipeline.py` | Core trade pipeline orchestration |
-
----
-
-## Commands Reference
-
-```bash
-# Deploy to Railway
-railway up --service demo-runner
-
-# Git workflow
-git add .; git commit -m "msg"; git push origin main
-
-# Check local stats
-python scratch/check_stats.py
-
-# Check Railway logs
-railway logs --service demo-runner
-
-# Run locally
-python run_both.py
+## Next Steps
+- Monitor next trades to verify $1 max bet is enforced
+- Track accuracy improvement as more trades resolve
+- Consider relaxing `MAX_NO_ENTRY_PRICE` (0.50) to widen entry zone
+- Consider relaxing `MATERIALITY_THRESHOLD` (0.55) to allow more trades
+- Dashboard: https://demo-runner-production-3f90.up.railway.app

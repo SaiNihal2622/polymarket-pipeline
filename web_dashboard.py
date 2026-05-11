@@ -328,6 +328,8 @@ def _get_engine_config() -> dict:
         "market_categories": _cfg_list("MARKET_CATEGORIES", [
             "ai", "technology", "crypto", "politics", "science", "finance", "world", "other"
         ]),
+        "llm_provider": _cfg("LLM_PROVIDER", "mimo"),
+        "mimo_model": _cfg("MIMO_MODEL", "mimo-v2.5-pro"),
     }
 
 
@@ -691,6 +693,7 @@ HTML = r"""
       <h2>🧠 Trade Engine Rules</h2>
       <ul class="rule-list">
         <li><strong>Mode:</strong> <span class="warn">{{ cfg.mode }}</span></li>
+        <li><strong>LLM:</strong> <span class="mono">{{ cfg.llm_provider }} / {{ cfg.mimo_model }}</span></li>
         <li><strong>YES entry:</strong> only when YES price ≤ <span class="mono">{{ "%.0f"|format(cfg.max_yes_entry_price * 100) }}¢</span></li>
         <li><strong>NO entry:</strong> only when YES price ≥ <span class="mono">{{ "%.0f"|format(cfg.min_no_entry_yes_price * 100) }}¢</span> (NO price ≤ <span class="mono">{{ "%.0f"|format(cfg.max_no_entry_price * 100) }}¢</span>)</li>
         <li><strong>Middle zone:</strong> 31¢–49¢ YES is intentionally blocked to avoid coin-flip trades.</li>
