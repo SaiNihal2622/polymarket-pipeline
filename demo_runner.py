@@ -462,8 +462,7 @@ def scan_and_trade() -> dict:
         "dota 2", "valorant", "counter-strike", "league of legends", " lol:", " lol ",
         "cblol", "lck", "lpl", "lec", "lcs", "msi", "worlds 2026",
         "call of duty", "cdl", "overwatch", "rainbow six",
-        # WNBA / NBA / sports game winners — crowd already priced in, no AI edge
-        " vs. ", " vs ", "moneyline", "1h moneyline",
+        # NOTE: " vs " / "moneyline" removed — AI consensus filters coin flips (87.5% acc)
         # Stocks / finance — AI has no edge on price targets
         "finish week", "hit (low)", "hit (high)", "close above $", "close below $",
         "above $", "below $", "hit $", "(pltr)", "(coin)", "(hood)", "(mstr)",
@@ -476,17 +475,13 @@ def scan_and_trade() -> dict:
         "total kills", "games total", "map total",
         "any player", "up or down", "opens up or down",
         # Random sports game results — AI has NO edge, pure coin flip
-        "will cf ", "will ca ", "will sc ", "will ec ", "will se ", "will cd ",
-        "will fc ", "will ac ", "will rc ", "will dc ", "will fk ", "will nk ",
-        "will sk ", "will hk ", "will bk ", "will ok ", "will as ",
         "win on 2026-04", "win on 2026-05", "win on 2026-06",
         # Misc
         "temperature", "rainfall", "snow",
         "justin bieber", "taylor swift", "box office", "posts from",
         "end in a draw", "art ross", "clutch player", "coach of the year",
         "top goal scorer", "most assists",
-        "win the 2025", "win the 2026", "win the 2027",
-        "finish in the top", "relegated",
+        "relegated",
         # ═══ NEW: Block all player props (0% accuracy, 0W/5L) ═══
         "anytime goalscorer", "anytime scorer", "first goalscorer",
         "to score", "to assist", "to win by ko", "to win by tko",
