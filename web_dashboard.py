@@ -270,19 +270,21 @@ def _cfg(name: str, default):
 def _get_engine_config() -> dict:
     max_yes = float(_cfg("MAX_YES_ENTRY_PRICE", 0.30))
     min_no_yes = float(_cfg("MIN_NO_ENTRY_PRICE", 0.50))
-    # Defaults below match demo_runner.py's actual runtime values
+    # Defaults below must match config.py values exactly
+    # Mode is dynamic: DRY_RUN=true → DRY-RUN, else LIVE
+    _dry_run = str(_cfg("DRY_RUN", "true")).lower() == "true"
     return {
-        "mode": "LIVE",  # demo_runner.py sets DRY_RUN=False
-        "bankroll_usd": float(_cfg("BANKROLL_USD", 60)),  # AI_BANKROLL in demo_runner
+        "mode": "DRY-RUN" if _dry_run else "LIVE",
+        "bankroll_usd": float(_cfg("BANKROLL_USD", 100)),
         "max_bet_usd": float(_cfg("MAX_BET_USD", 1)),
         "daily_loss_limit_usd": float(_cfg("DAILY_LOSS_LIMIT_USD", 10)),
-        "edge_threshold": float(_cfg("EDGE_THRESHOLD", 0.15)),  # demo_runner: 0.15
+        "edge_threshold": float(_cfg("EDGE_THRESHOLD", 0.12)),
         "accuracy_threshold": float(_cfg("ACCURACY_THRESHOLD", 80.0)),
-        "min_resolved_trades": int(_cfg("MIN_RESOLVED_TRADES", 20)),  # used by dashboard for trial target
+        "min_resolved_trades": int(_cfg("MIN_RESOLVED_TRADES", 20)),
         "max_yes_entry_price": max_yes,
         "min_no_entry_yes_price": min_no_yes,
         "max_no_entry_price": round(1.0 - min_no_yes, 4),
-        "materiality_threshold": float(_cfg("MATERIALITY_THRESHOLD", 0.30)),  # demo_runner: 0.30
+        "materiality_threshold": float(_cfg("MATERIALITY_THRESHOLD", 0.50)),
         "consensus_enabled": bool(_cfg("CONSENSUS_ENABLED", True)),
         "consensus_passes": int(_cfg("CONSENSUS_PASSES", 3)),
         "strict_consensus": bool(_cfg("STRICT_CONSENSUS", True)),
@@ -290,7 +292,7 @@ def _get_engine_config() -> dict:
         "scan_interval_min": int(_cfg("SCAN_INTERVAL_MIN", 3)),
         "resolve_interval_min": int(_cfg("RESOLVE_INTERVAL_MIN", 4)),
         "min_close_hours": float(_cfg("MIN_CLOSE_HOURS", 0.25)),
-        "min_volume_usd": float(_cfg("MIN_VOLUME_USD", 30)),  # demo_runner: 30
+        "min_volume_usd": float(_cfg("MIN_VOLUME_USD", 50)),
         "min_window_hours": float(_cfg("MIN_WINDOW_HOURS", 0.25)),
         "market_categories": list(_cfg("MARKET_CATEGORIES", [])) if isinstance(_cfg("MARKET_CATEGORIES", []), (list, tuple)) else [],
     }
@@ -625,8 +627,8 @@ HTML = r"""
       <div class="stat-card">
         <div class="stat-row">
           <span class="stat-label">System Mode</span>
-          <span class="stat-value {{ 'win' if s.accuracy_pct >= 80 and s.resolved >= 30 else 'warn' }}">
-            {{ 'PRODUCTION' if s.accuracy_pct >= 80 and s.resolved >= cfg.min_resolved_trades else 'DRY-RUN / TRIAL' }}
+          <span class="stat-value {{ 'win' if cfg.mode == 'LIVE' and s.accuracy_pct >= 80 and s.resolved >= cfg.min_resolved_trades else 'warn' }}">
+            {{ cfg.mode if cfg.mode == 'LIVE' else 'DRY-RUN / TRIAL' }}
           </span>
         </div>
         <div class="stat-row">
@@ -809,7 +811,7 @@ def home():
         diag=_get_diagnostics(),
         logs=_get_logs(80),
         now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-        window_h=os.getenv("DEMO_HOURS_WINDOW", "30"),
+        window_h=os.getenv("DEMO_HOURS_WINDOW", "48"),
         db_path=str(DB_PATH),
     )
 
