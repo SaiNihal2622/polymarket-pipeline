@@ -540,7 +540,7 @@ def scan_and_trade() -> dict:
     signals_found: list[Signal] = []
     demos_logged  = 0
     analyzed      = 0
-    ai_calls_left = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "35"))  # rate-limit budget
+    ai_calls_left = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "60"))  # increased from 35 — need more for consensus passes
     skip_reasons: dict[str, int] = {}  # diagnostic: why markets get skipped
     def _skip(reason: str):
         skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
@@ -630,10 +630,10 @@ def scan_and_trade() -> dict:
 
         # Research budget: AI runs on virtually all in-window markets.
         # Apify web search invoked inside research_market when Gemini uncertain.
-        # Only skip ultra-low-volume markets (<$80) to save budget.
+        # Lowered volume gate from $80 to $30 to get more candidates researched.
         should_research = (
             ai_calls_left > 0 and hours_left <= 30
-            and market.volume >= 80
+            and market.volume >= 30
         )
         if should_research:
             try:
@@ -758,31 +758,31 @@ def scan_and_trade() -> dict:
         # The ONLY proven path is consensus (AI + Skeptic both agree).
         # We allow S8 only when RRF is EXTREMELY high (≥0.70) AND consensus agrees.
 
-        # ★★ S8: HIGH RRF + consensus required + MULTIPLE SIGNALS
-        # Require rrf≥0.50 AND at least 2 non-neutral signals
+        # ★★ S8: HIGH RRF + consensus required
+        # non_neutral_count relaxed to 1 — whale/copy/crowd often empty in demo-runner
         non_neutral_count = sum(1 for l,d,c in all_sigs if d != "neutral" and c > 0)
         if (gem_dir != "neutral" and rrf_score >= 0.50 and consensus_agreed
-                and non_neutral_count >= 2):
+                and non_neutral_count >= 1):
             strategies_to_try.append(("S8_rrf_highconv", _dir(gem_dir), rrf_score + 0.05))
 
-        # ★★ S5: CONSENSUS-FIRST — strict thresholds + multi-signal
-        if (gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.50
-                and rrf_score >= 0.45 and gem_mat >= 0.40 and non_neutral_count >= 2):
+        # ★★ S5: CONSENSUS-FIRST — consensus is enough (non_neutral relaxed)
+        if (gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.45
+                and rrf_score >= 0.40 and gem_mat >= 0.35 and non_neutral_count >= 1):
             strategies_to_try.append(("S5_consensus", _dir(gem_dir), consensus_score))
 
-        # ★★ S9: SURESHOT — VERY high-confidence AI + multi-signal
-        if (gem_dir != "neutral" and gem_mat >= 0.65 and gem_conf >= 0.70
-                and rrf_score >= 0.50 and consensus_agreed and non_neutral_count >= 2):
+        # ★★ S9: SURESHOT — high-confidence AI + consensus (non_neutral relaxed)
+        if (gem_dir != "neutral" and gem_mat >= 0.55 and gem_conf >= 0.60
+                and rrf_score >= 0.45 and consensus_agreed and non_neutral_count >= 1):
             strategies_to_try.append(("S9_sureshot", _dir(gem_dir), gem_conf))
 
-        # ★★ S10: MULTI-SIGNAL — copy-trade + AI agree + high RRF
-        if (gem_dir != "neutral" and n_agree >= 2 and consensus_agreed
-                and rrf_score >= 0.45):
+        # ★★ S10: AI + RRF + consensus (n_agree relaxed — AI-only viable)
+        if (gem_dir != "neutral" and n_agree >= 1 and consensus_agreed
+                and rrf_score >= 0.40):
             strategies_to_try.append(("S10_multi_signal", _dir(gem_dir), best_score))
 
-        # ★★ S11: AI-ONLY — very strong AI + consensus + multi-signal
-        if (gem_dir != "neutral" and gem_mat >= 0.70 and gem_conf >= 0.75
-                and consensus_agreed and non_neutral_count >= 2):
+        # ★★ S11: AI-ONLY — strong AI + consensus (non_neutral relaxed)
+        if (gem_dir != "neutral" and gem_mat >= 0.60 and gem_conf >= 0.65
+                and consensus_agreed and non_neutral_count >= 1):
             strategies_to_try.append(("S11_ai_only", _dir(gem_dir), gem_conf))
 
         # ★★ S12: AI-SOLO — REMOVED (10% accuracy, unreliable single-signal)
@@ -870,7 +870,7 @@ def scan_and_trade() -> dict:
                 f"     [{', '.join(strat_names)}]"
             )
 
-    ai_used = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "35")) - ai_calls_left
+    ai_used = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "60")) - ai_calls_left
     if not signals_found:
         console.print(f"  [yellow]No trades this scan — {analyzed} markets analyzed, {ai_used} AI calls used.[/yellow]")
     else:
