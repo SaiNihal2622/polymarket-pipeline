@@ -32,7 +32,11 @@ except Exception:
     if _db_env:
         DB_PATH = Path(_db_env).absolute()
     else:
-        DB_PATH = (Path(__file__).parent / "trades.db").absolute()
+        _railway_volume = Path("/data")
+        if _railway_volume.exists():
+            DB_PATH = (_railway_volume / "trades.db").absolute()
+        else:
+            DB_PATH = (Path(__file__).parent / "trades.db").absolute()
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 
 try:
