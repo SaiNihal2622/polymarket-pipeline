@@ -16,6 +16,7 @@ import os
 
 INITIAL_BANKROLL = float(os.getenv("BANKROLL_USD", "20"))
 MAX_BET_FRAC     = 0.07   # 7% max per bet ($2.10 on $30 bankroll) — safer for real money
+MAX_BET_USD      = float(os.getenv("MAX_BET_USD", "1"))  # hard cap from config
 MIN_BET_USD      = 0.50
 DAILY_LOSS_CAP   = 0.12   # stop trading after 12% daily drawdown (~$3.60 on $30)
 
@@ -49,6 +50,8 @@ def kelly_bet_size(bankroll: float, edge: float, market_price: float,
     kelly_frac = min(kelly_frac, MAX_BET_FRAC)
 
     bet = bankroll * kelly_frac
+    # Hard cap from config (default $1)
+    bet = min(bet, MAX_BET_USD)
     if bet < MIN_BET_USD:
         return 0.0
     return round(bet, 2)
@@ -71,6 +74,8 @@ def get_current_bankroll(db_path: str | None = None) -> float:
         return INITIAL_BANKROLL + float(row[0] or 0)
     except Exception:
         return INITIAL_BANKROLL
+
+# trigger redeploy — max bet cap fix
 
 
 def todays_pnl(db_path: str | None = None) -> float:

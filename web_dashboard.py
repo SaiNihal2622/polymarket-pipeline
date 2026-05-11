@@ -118,6 +118,10 @@ def _get_summary() -> dict:
         "pending": pending,
         "total_trades": total_trades,
         "go_live_remaining": max(0, int(_cfg("MIN_RESOLVED_TRADES", 20)) - total_resolved),
+        "can_go_live": (
+            total_resolved >= int(_cfg("MIN_RESOLVED_TRADES", 20))
+            and acc.get("accuracy_pct", 0) >= float(_cfg("ACCURACY_THRESHOLD", 80.0))
+        ),
     }
 
 
@@ -666,11 +670,17 @@ HTML = r"""
         </div>
         <div class="progress-bg"><div class="progress-fill" style="width: {{ (s.resolved / cfg.min_resolved_trades * 100) if cfg.min_resolved_trades > 0 else 0 }}%"></div></div>
         <div class="stat-row" style="margin-top: 4px; border-bottom:0;">
-          <span class="stat-label">Gate Status</span>
-          <span class="stat-value {{ 'win' if s.trades_today_allowed else 'loss' }}">
-             {{ 'OPEN' if s.trades_today_allowed else 'BLOCKED' }}
+          <span class="stat-label">Go-Live Gate</span>
+          <span class="stat-value {{ 'win' if s.can_go_live else ('warn' if s.trades_today_allowed else 'loss') }}">
+             {{ 'OPEN' if s.can_go_live else ('ACCUMULATING' if s.trades_today_allowed else 'BLOCKED') }}
           </span>
         </div>
+        {% if not s.can_go_live %}
+        <div class="small" style="margin-top:4px;">
+          Need: {{ s.accuracy_pct }}% → {{ cfg.accuracy_threshold }}% accuracy,
+          {{ s.resolved }}/{{ cfg.min_resolved_trades }} resolved
+        </div>
+        {% endif %}
       </div>
     </div>
   </div>
@@ -722,7 +732,7 @@ HTML = r"""
           </div>
           <div class="progress-bg"><div class="progress-fill" style="width: {{ acc }}%"></div></div>
           <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">
-            {{ st.wins }}W - {{ st.losses }}L • {{ st.total }} trades • ${{ st.pnl }} PnL
+            {{ st.wins }}W - {{ st.losses }}L • {{ st.trades }} trades • ${{ st.pnl }} PnL
           </div>
         </div>
       {% endfor %}
