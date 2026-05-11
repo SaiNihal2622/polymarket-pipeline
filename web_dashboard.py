@@ -287,21 +287,6 @@ def _get_engine_config() -> dict:
     }
 
 
-def _get_breakeven_rows() -> list[dict]:
-    rows = []
-    for yes_price in [0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90]:
-        yes_allowed = yes_price <= float(_cfg("MAX_YES_ENTRY_PRICE", 0.30))
-        no_price = 1.0 - yes_price
-        no_allowed = yes_price >= float(_cfg("MIN_NO_ENTRY_PRICE", 0.50))
-        rows.append({
-            "yes_price": round(yes_price, 2),
-            "yes_allowed": yes_allowed,
-            "yes_breakeven_pct": round(yes_price * 100, 1),
-            "no_price": round(no_price, 2),
-            "no_allowed": no_allowed,
-            "no_breakeven_pct": round(no_price * 100, 1),
-        })
-    return rows
 
 
 def _get_expectations() -> dict:
@@ -339,7 +324,7 @@ def _get_diagnostics() -> dict:
         "counts": counts,
         "available_api_endpoints": [
             "/api/summary", "/api/trades", "/api/news", "/api/runs",
-            "/api/config", "/api/breakeven", "/api/expectations", "/api/diagnostics", "/api/logs", "/healthz"
+            "/api/config", "/api/expectations", "/api/diagnostics", "/api/logs", "/healthz"
         ],
     }
 
@@ -679,28 +664,6 @@ HTML = r"""
     </div>
   </div>
 
-  <div class="panel" style="margin-bottom: 32px;">
-    <h2>🧮 Exact Breakeven + Allowed Zones</h2>
-    <div class="small">Formula: BUY YES breakeven = YES price. BUY NO breakeven = NO price = 1 − YES price.</div>
-    <div style="overflow-x:auto;">
-      <table>
-        <thead><tr><th>YES Market Price</th><th>BUY YES?</th><th>YES Breakeven</th><th>NO Price</th><th>BUY NO?</th><th>NO Breakeven</th></tr></thead>
-        <tbody>
-          {% for r in breakeven %}
-          <tr>
-            <td class="mono">{{ "%.0f"|format(r.yes_price * 100) }}¢</td>
-            <td><span class="pill {{ 'pill-ok' if r.yes_allowed else 'pill-blocked' }}">{{ 'ALLOWED' if r.yes_allowed else 'BLOCKED' }}</span></td>
-            <td class="mono">{{ r.yes_breakeven_pct }}%</td>
-            <td class="mono">{{ "%.0f"|format(r.no_price * 100) }}¢</td>
-            <td><span class="pill {{ 'pill-ok' if r.no_allowed else 'pill-blocked' }}">{{ 'ALLOWED' if r.no_allowed else 'BLOCKED' }}</span></td>
-            <td class="mono">{{ r.no_breakeven_pct }}%</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
-
   <!-- STRATEGIES & SIGNALS -->
   <div class="grid grid-2" style="margin-bottom: 32px;">
     <div class="panel">
@@ -833,7 +796,6 @@ def home():
         news=_get_news(20),
         runs=_get_runs(12),
         cfg=_get_engine_config(),
-        breakeven=_get_breakeven_rows(),
         exp=_get_expectations(),
         diag=_get_diagnostics(),
         logs=_get_logs(80),
@@ -872,9 +834,6 @@ def api_config():
     return jsonify(_get_engine_config())
 
 
-@app.route("/api/breakeven")
-def api_breakeven():
-    return jsonify(_get_breakeven_rows())
 
 
 @app.route("/api/expectations")
