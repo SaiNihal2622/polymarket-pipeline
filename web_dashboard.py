@@ -253,27 +253,36 @@ def _get_runs(limit: int = 15) -> list[dict]:
 
 
 def _cfg(name: str, default):
-    """Read config/env values safely so the dashboard never fails to boot."""
+    """Read config/env values safely so the dashboard never fails to boot.
+    
+    IMPORTANT: Always check env vars FIRST (same as demo_runner.py) before
+    falling back to config.py module defaults. config.py may have stale
+    defaults that don't match the runtime values demo_runner actually uses.
+    """
+    env_val = os.getenv(name)
+    if env_val is not None:
+        return env_val
     if config and hasattr(config, name):
         return getattr(config, name)
-    return os.getenv(name, default)
+    return default
 
 
 def _get_engine_config() -> dict:
     max_yes = float(_cfg("MAX_YES_ENTRY_PRICE", 0.30))
     min_no_yes = float(_cfg("MIN_NO_ENTRY_PRICE", 0.50))
+    # Defaults below match demo_runner.py's actual runtime values
     return {
-        "mode": "DRY-RUN / TRIAL" if bool(_cfg("DRY_RUN", True)) else "LIVE",
-        "bankroll_usd": float(_cfg("BANKROLL_USD", 30)),
+        "mode": "LIVE",  # demo_runner.py sets DRY_RUN=False
+        "bankroll_usd": float(_cfg("BANKROLL_USD", 60)),  # AI_BANKROLL in demo_runner
         "max_bet_usd": float(_cfg("MAX_BET_USD", 1)),
         "daily_loss_limit_usd": float(_cfg("DAILY_LOSS_LIMIT_USD", 10)),
-        "edge_threshold": float(_cfg("EDGE_THRESHOLD", 0.30)),
+        "edge_threshold": float(_cfg("EDGE_THRESHOLD", 0.15)),  # demo_runner: 0.15
         "accuracy_threshold": float(_cfg("ACCURACY_THRESHOLD", 80.0)),
         "min_resolved_trades": int(_cfg("MIN_RESOLVED_TRADES", 20)),  # used by dashboard for trial target
         "max_yes_entry_price": max_yes,
         "min_no_entry_yes_price": min_no_yes,
         "max_no_entry_price": round(1.0 - min_no_yes, 4),
-        "materiality_threshold": float(_cfg("MATERIALITY_THRESHOLD", 0.50)),
+        "materiality_threshold": float(_cfg("MATERIALITY_THRESHOLD", 0.30)),  # demo_runner: 0.30
         "consensus_enabled": bool(_cfg("CONSENSUS_ENABLED", True)),
         "consensus_passes": int(_cfg("CONSENSUS_PASSES", 3)),
         "strict_consensus": bool(_cfg("STRICT_CONSENSUS", True)),
@@ -281,7 +290,7 @@ def _get_engine_config() -> dict:
         "scan_interval_min": int(_cfg("SCAN_INTERVAL_MIN", 3)),
         "resolve_interval_min": int(_cfg("RESOLVE_INTERVAL_MIN", 4)),
         "min_close_hours": float(_cfg("MIN_CLOSE_HOURS", 0.25)),
-        "min_volume_usd": float(_cfg("MIN_VOLUME_USD", 50)),
+        "min_volume_usd": float(_cfg("MIN_VOLUME_USD", 30)),  # demo_runner: 30
         "min_window_hours": float(_cfg("MIN_WINDOW_HOURS", 0.25)),
         "market_categories": list(_cfg("MARKET_CATEGORIES", [])) if isinstance(_cfg("MARKET_CATEGORIES", []), (list, tuple)) else [],
     }
