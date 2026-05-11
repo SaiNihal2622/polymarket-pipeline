@@ -1,0 +1,56 @@
+# Cline Rules — Mandatory MCP & Skill Usage
+
+## MANDATORY WORKFLOW (Every Project, Every Session)
+
+### 1. Code Review Graph (code-review-graph MCP)
+**ALWAYS run at the START of any coding task:**
+- Call `get_minimal_context_tool` first to get repo overview
+- Use `detect_changes_tool` before making changes to understand impact
+- Use `get_review_context_tool` for code reviews
+- Use `refactor_tool` (mode="dead_code") periodically to find dead code
+- Use `get_architecture_overview_tool` to understand structure
+- Use `list_flows_tool` to trace execution paths when debugging
+
+**ALWAYS run AFTER completing changes:**
+- Call `detect_changes_tool` to review what changed and risk score
+- Call `build_or_update_graph_tool` to keep the graph current
+
+### 2. Knowledge Graph Visualization (graphify skill)
+**Run the `graphify` skill when:**
+- Starting work on a new/complex codebase
+- Needing a visual architecture overview
+- Creating documentation for the project
+- After major refactoring
+
+### 3. Hermes Agent (hermes-agent MCP)
+**Use for cross-platform messaging when:**
+- Sending alerts/notifications about deployments
+- Communicating trade results or status updates
+- Reading messages from connected platforms (Telegram, Discord, Slack)
+- Use `messages_send` to push alerts to appropriate channels
+- Use `conversations_list` and `messages_read` to check incoming messages
+
+### 4. Mythos SEO (mythos-seo MCP)
+**Use when:**
+- Building landing pages or documentation sites
+- Researching competitors or market positioning
+- Generating images for UI/documentation
+- Use `serp_organic_live_advanced` for keyword research
+- Use `generate_image` for creating visual assets
+
+## TASK STARTUP CHECKLIST
+For EVERY new task:
+1. [ ] Run `get_minimal_context_tool` from code-review-graph
+2. [ ] Run `detect_changes_tool` to understand current state
+3. [ ] Identify which MCP tools will be needed
+4. [ ] Use appropriate MCP tools throughout the task
+5. [ ] Run final `detect_changes_tool` review before completion
+6. [ ] Consider if `graphify` skill would add value
+
+## DEFAULT BEHAVIORS
+- Never skip code-review-graph analysis on coding tasks
+- Always check impact radius before making changes
+- Always review changes before committing
+- Use hermes-agent for any cross-platform communication needs
+- Use mythos-seo for any SEO/image generation needs
+- Build knowledge graphs for complex projects with graphify
