@@ -217,11 +217,11 @@ def _startup_cleanup():
 
 
 # ── Settings ─────────────────────────────────────────────────────────────────
-DEMO_HOURS_WINDOW = float(os.getenv("DEMO_HOURS_WINDOW", str(getattr(config, "DEMO_HOURS_WINDOW", 30))))    # 30h window: niche short-resolution markets where AI has real edge
-SCAN_INTERVAL_MIN = int(getattr(config, "SCAN_INTERVAL_MIN", 30))       # re-scan every N minutes
-RESOLVE_INTERVAL_MIN = int(getattr(config, "RESOLVE_INTERVAL_MIN", 10)) # check resolutions every N minutes
-ACCURACY_THRESHOLD = float(getattr(config, "ACCURACY_THRESHOLD", 70.0)) # % to unlock live trading
-MIN_RESOLVED = int(getattr(config, "MIN_RESOLVED_TRADES", 10))          # min trades needed for decision
+DEMO_HOURS_WINDOW = float(os.getenv("DEMO_HOURS_WINDOW", str(getattr(config, "DEMO_HOURS_WINDOW", 48))))    # 48h window — more candidates, still fast resolution
+SCAN_INTERVAL_MIN = int(getattr(config, "SCAN_INTERVAL_MIN", 3))        # re-scan every 3 min (matches config)
+RESOLVE_INTERVAL_MIN = int(getattr(config, "RESOLVE_INTERVAL_MIN", 4))  # check resolutions every 4 min (matches config)
+ACCURACY_THRESHOLD = float(getattr(config, "ACCURACY_THRESHOLD", 80.0)) # % to unlock live trading (matches config)
+MIN_RESOLVED = int(getattr(config, "MIN_RESOLVED_TRADES", 20))          # min trades needed for decision (matches config)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -442,31 +442,27 @@ def scan_and_trade() -> dict:
         return {"markets": len(day_markets), "signals": 0, "demos_logged": 0}
 
     # ── HARD BLOCKLIST ──────────────────────────────────────────────────
+    # Lean list: only patterns that are PROVEN money-drains or fundamentally unpredictable.
+    # Overlap with other filters removed (weather → _is_weather_market, long-dated → filter_closing_soon).
     HARD_SKIP = [
-        # ── Finance/stocks (exact tickers only) ──
+        # ── Finance/stocks (exact tickers only — AI can't predict daily stock closes) ──
         "(spy)", "(qqq)", "(nvda)", "(tsla)", "(aapl)", "(msft)",
         "(googl)", "(meta)", "(amzn)", "(nflx)", "(pltr)", "(coin)",
         "(hood)", "(mstr)",
-        "s&p 500", "nasdaq", "dow jones",
-        "stock close", "stock price", "share price", "earnings",
-        # ── Crypto exact price ranges (AI can't predict) ──
+        "s&p 500 close", "nasdaq close", "dow jones close",
+        "stock close", "stock price", "share price",
+        # ── Crypto exact price ranges (AI can't predict precise price levels) ──
         "be between $", "be above $", "be below $",
         "price of bitcoin", "price of ethereum", "price of solana",
-        "btc be", "eth be", "sol be",
         "close above $", "close below $",
-        # ── Long-dated futures (can't resolve in 48h) ──
-        "world series", "super bowl", "stanley cup", "wimbledon",
-        "nba champion", "nba finals", "nfl afc", "nfl nfc",
-        "ipl champion", "tour de france",
-        "2027", "2028",
-        # ── Esports (pure luck/skill markets) ──
+        # ── Esports (pure luck/skill — 0% AI edge) ──
         "(bo1)", "(bo3)", "(bo5)", "map 1 winner", "map 2 winner", "map 3 winner",
         "first blood", "first tower", "first baron", "quadra kill", "penta kill",
         "dragon soul", "inhibitor",
         "dota 2", "valorant", "counter-strike", "league of legends", " lol:", " lol ",
         "cblol", "lck", "lec", "lcs", "msi",
         "call of duty", "cdl", "overwatch", "rainbow six",
-        # ── Player props (0% accuracy historically) ──
+        # ── Player props (0% accuracy historically — proven money drain) ──
         "anytime goalscorer", "anytime scorer", "first goalscorer",
         "first scorer", "last scorer", "to score first",
         "player props", "player to score",
@@ -474,15 +470,7 @@ def scan_and_trade() -> dict:
         "ko or tko", "tko or ko", "knockdown", "knock out",
         "fight to go the distance", "go the distance",
         "round betting", "method of victory",
-        # ── Entertainment/awards (pure luck) ──
-        "american idol", "bachelor", "bachelorette", "dancing with",
-        "survivor", "big brother", "the voice", "mask singer",
-        "grammy", "oscar", "nobel", "eurovision",
-        # ── Weather/climate (unpredictable) ──
-        "temperature", "rainfall", "snow",
-        # ── Social media (unpredictable) ──
-        "truth social", "post on twitter", "tweet", "post on x",
-        # ── Exact score props ──
+        # ── Exact score props (proven noise) ──
         "correct score", "exact score",
     ]
 
@@ -577,18 +565,15 @@ def scan_and_trade() -> dict:
             _skip("hard_blocklist")
             log.info(f"  [blocklist] #{market.id} matched '{matched_pat}' → \"{market.question[:60]}\"")
             continue
-        # Regex blocklist patterns (can't use simple `in`)
-        _REGEX_SKIP = [r"will\s+\w+\s+win\b"]
-        if any(re.search(pat, q_lower) for pat in _REGEX_SKIP):
-            _skip("regex_blocklist")
-            continue
+        # Regex blocklist patterns — REMOVED "will X win" (too broad, blocks legit markets)
+        # The hard blocklist above covers the truly untradeable ones
 
         hours_left = _hours_left(market)
         price      = market.yes_price
         tok        = token_map.get(market.condition_id)
 
-        if hours_left > 30:
-            _skip("hours_gt_30")
+        if hours_left > DEMO_HOURS_WINDOW:
+            _skip("hours_gt_window")
             continue
         if price < 0.15 or price > 0.95:
             _skip("price_extreme")
