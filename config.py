@@ -117,11 +117,11 @@ RSS_FEEDS = [
 ]
 
 # --- Pipeline Settings (tuned for $1 flat bets, 80% accuracy target) ---
-BANKROLL_USD = float(os.getenv("BANKROLL_USD", "100"))
+BANKROLL_USD = float(os.getenv("BANKROLL_USD", "30"))
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 MAX_BET_USD = float(os.getenv("MAX_BET_USD", "1"))          # $1 flat bet per signal
 DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "10"))  # Stop after $10 loss/day
-EDGE_THRESHOLD = float(os.getenv("EDGE_THRESHOLD", "0.12"))  # 0.12 = profitable at cheap tokens (breakeven 10-30¢)
+EDGE_THRESHOLD = float(os.getenv("EDGE_THRESHOLD", "0.15"))  # 0.15 = conservative edge gate
 NEWS_LOOKBACK_HOURS = 12
 
 # --- High-ROI Price Sweet Spot (GUARANTEES profit even at LOW accuracy) ---
@@ -144,9 +144,9 @@ MIN_NO_ENTRY_PRICE = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.50"))    # Buy NO 
 MAX_NO_BUY_PRICE = float(os.getenv("MAX_NO_BUY_PRICE", "0.50"))       # NO: allow up to 50¢ (breakeven 50%)
 
 # --- Demo Runner Settings ---
-DEMO_HOURS_WINDOW = float(os.getenv("DEMO_HOURS_WINDOW", "48"))       # 48h window — more candidates, still fast resolution
-SCAN_INTERVAL_MIN = int(os.getenv("SCAN_INTERVAL_MIN", "3"))          # 3min scan = more trades, catch fast-moving markets
-RESOLVE_INTERVAL_MIN = int(os.getenv("RESOLVE_INTERVAL_MIN", "4"))     # Check resolutions every 4min = fast settlement
+DEMO_HOURS_WINDOW = float(os.getenv("DEMO_HOURS_WINDOW", "30"))       # 30h window — tighter, avoids stale markets
+SCAN_INTERVAL_MIN = int(os.getenv("SCAN_INTERVAL_MIN", "5"))          # 5min scan interval
+RESOLVE_INTERVAL_MIN = int(os.getenv("RESOLVE_INTERVAL_MIN", "6"))     # Check resolutions every 6min
 ACCURACY_THRESHOLD = float(os.getenv("ACCURACY_THRESHOLD", "80.0"))   # Target: 80% accuracy
 MIN_RESOLVED_TRADES = int(os.getenv("MIN_RESOLVED_TRADES", "20"))      # Need 20 resolved before going live
 
@@ -154,13 +154,13 @@ MIN_RESOLVED_TRADES = int(os.getenv("MIN_RESOLVED_TRADES", "20"))      # Need 20
 MAX_RESOLVE_HOURS = float(os.getenv("MAX_RESOLVE_HOURS", "72"))  # 3 days max
 MAX_VOLUME_USD = float(os.getenv("MAX_VOLUME_USD", "500000"))
 MIN_VOLUME_USD = float(os.getenv("MIN_VOLUME_USD", "50"))    # Low: catch 5/15-min crypto windows ($100-$1000 vol)
-MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.50")) # 0.50 = moderate+ materiality
+MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.55")) # 0.55 = moderate+ materiality
 
 # --- Market Quality Filters (maximise signal accuracy) ---
-MIN_CLOSE_HOURS  = float(os.getenv("MIN_CLOSE_HOURS",  "0.25"))  # Skip markets closing in < 15min (priced in)
+MIN_CLOSE_HOURS  = float(os.getenv("MIN_CLOSE_HOURS",  "0.50"))  # Skip markets closing in < 30min
 MIN_YES_PRICE    = float(os.getenv("MIN_YES_PRICE",   "0.10"))   # Filter near-impossible markets (< 10¢)
 MAX_YES_PRICE    = float(os.getenv("MAX_YES_PRICE",   "0.95"))   # Only filter near-certain markets
-MIN_WINDOW_HOURS = float(os.getenv("MIN_WINDOW_HOURS", "0.25"))  # Skip < 15-min duration markets
+MIN_WINDOW_HOURS = float(os.getenv("MIN_WINDOW_HOURS", "0.25"))  # Skip < 15-min duration markets (already correct)
 SPEED_TARGET_SECONDS = float(os.getenv("SPEED_TARGET_SECONDS", "5"))
 CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "gemma3:4b")
 SCORING_MODEL = os.getenv("SCORING_MODEL", "gemma3:4b")
