@@ -1,16 +1,16 @@
 {
   "apiProvider": "openai-compatible",
   "openAiCompatibleBaseUrl": "https://token-plan-sgp.xiaomimimo.com/v1",
-  "openAiCompatibleApiKey": "tp-svf9i440f463x5kzorbkymjdt0s7fm60ew34belv2tng58i7",
-  "openAiCompatibleModelId": "mimo-v2-omni",
+  "openAiCompatibleApiKey": "tp-smb26vqnngif8xfg9yumoj1npvc0cr0jjy0csju1rnbc83zz",
+  "openAiCompatibleModelId": "mimo-v2.5-pro",
   "openAiCompatibleModelInfo": {
-    "maxTokens": 8192,
+    "maxTokens": 32768,
     "contextWindow": 128000,
     "supportsImages": true,
     "supportsComputerUse": false,
     "supportsPromptCache": false,
     "inputPrice": 0.0,
     "outputPrice": 0.0,
-    "description": "MiMo v2 Omni - Xiaomi's multimodal model with image support (required for Cline)"
+    "description": "MiMo v2.5 Pro - Xiaomi's latest and most capable model (May 2026)"
   }
 }

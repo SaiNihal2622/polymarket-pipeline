@@ -121,7 +121,7 @@ BANKROLL_USD = float(os.getenv("BANKROLL_USD", "100"))
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 MAX_BET_USD = float(os.getenv("MAX_BET_USD", "1"))          # $1 flat bet per signal
 DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "10"))  # Stop after $10 loss/day
-EDGE_THRESHOLD = float(os.getenv("EDGE_THRESHOLD", "0.30"))  # 0.30 = only very strong edges
+EDGE_THRESHOLD = float(os.getenv("EDGE_THRESHOLD", "0.12"))  # 0.12 = profitable at cheap tokens (breakeven 10-30¢)
 NEWS_LOOKBACK_HOURS = 12
 
 # --- High-ROI Price Sweet Spot (GUARANTEES profit even at LOW accuracy) ---
@@ -138,9 +138,10 @@ NEWS_LOOKBACK_HOURS = 12
 # │ $0.50    │ 50%       │ -$0.20     │ $0.00          │ +$0.20           │
 # └──────────┴───────────┴────────────┴────────────────┴──────────────────┘
 # Only trade at 30¢ or below → PROFITABLE at ≥31% accuracy → guaranteed upside
-MAX_BUY_PRICE = float(os.getenv("MAX_BUY_PRICE", "0.30"))  # Only buy ≤30¢ → break-even at 30%, profit at 40%+
-MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.30"))  # Buy YES below 30¢ → guaranteed high ROI
-MIN_NO_ENTRY_PRICE = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.50"))    # Buy NO above 50¢ YES → NO share ≤50¢
+MAX_BUY_PRICE = float(os.getenv("MAX_BUY_PRICE", "0.30"))      # YES: only buy ≤30¢ → break-even at 30%
+MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.30"))  # Buy YES below 30¢
+MIN_NO_ENTRY_PRICE = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.50"))    # Buy NO when YES ≥ 50¢
+MAX_NO_BUY_PRICE = float(os.getenv("MAX_NO_BUY_PRICE", "0.50"))       # NO: allow up to 50¢ (breakeven 50%)
 
 # --- Demo Runner Settings ---
 DEMO_HOURS_WINDOW = float(os.getenv("DEMO_HOURS_WINDOW", "48"))       # 48h window — more candidates, still fast resolution
@@ -157,7 +158,7 @@ MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.50")) # 0.50
 
 # --- Market Quality Filters (maximise signal accuracy) ---
 MIN_CLOSE_HOURS  = float(os.getenv("MIN_CLOSE_HOURS",  "0.25"))  # Skip markets closing in < 15min (priced in)
-MIN_YES_PRICE    = float(os.getenv("MIN_YES_PRICE",   "0.05"))   # Only filter near-impossible markets
+MIN_YES_PRICE    = float(os.getenv("MIN_YES_PRICE",   "0.10"))   # Filter near-impossible markets (< 10¢)
 MAX_YES_PRICE    = float(os.getenv("MAX_YES_PRICE",   "0.95"))   # Only filter near-certain markets
 MIN_WINDOW_HOURS = float(os.getenv("MIN_WINDOW_HOURS", "0.25"))  # Skip < 15-min duration markets
 SPEED_TARGET_SECONDS = float(os.getenv("SPEED_TARGET_SECONDS", "5"))
