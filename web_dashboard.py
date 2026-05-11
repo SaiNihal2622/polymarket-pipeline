@@ -341,14 +341,84 @@ def _get_engine_config() -> dict:
 
 def _get_expectations() -> dict:
     cfg = _get_engine_config()
+    # Dynamic predictions based on current state
+    try:
+        from resolver import get_accuracy_stats
+        acc = get_accuracy_stats()
+        current_acc = acc.get("accuracy_pct", 0)
+        wins = acc.get("wins", 0)
+        losses = acc.get("losses", 0)
+    except Exception:
+        current_acc, wins, losses = 0, 0, 0
+
+    try:
+        total_resolved = _q("SELECT COUNT(*) as c FROM outcomes")[0]["c"]
+    except Exception:
+        total_resolved = 0
+
+    try:
+        total_trades = _q("SELECT COUNT(*) as c FROM trades WHERE status != 'voided'")[0]["c"]
+    except Exception:
+        total_trades = 0
+
+    try:
+        pending = _q(
+            "SELECT COUNT(*) as c FROM trades WHERE status IN ('demo','dry_run') "
+            "AND id NOT IN (SELECT trade_id FROM outcomes)"
+        )[0]["c"]
+    except Exception:
+        pending = 0
+
+    try:
+        recent_24h = _q(
+            "SELECT COUNT(*) as c FROM trades WHERE created_at >= datetime('now', '-24 hours')"
+        )[0]["c"]
+    except Exception:
+        recent_24h = 0
+
+    max_bet = cfg.get("max_bet_usd", 1.0)
+    bankroll = cfg.get("bankroll_usd", 30)
+
+    # Estimate trades in next 24h based on scan rate (every 5min = 288 scans/day)
+    # ~20 candidates/scan, 6 pass hard filters, ~0.5-1 trade per 6 candidates
+    # Realistic: 0-3 trades/day given strict consensus gates
+    est_trades_low = 0
+    est_trades_high = 3
+    if recent_24h > 0:
+        est_trades_high = max(est_trades_high, recent_24h + 2)
+
+    # Expected profit: if trades fire, each is $1 bet, EV depends on edge
+    # Typical edge: 15-25%, so EV per trade ≈ $0.15-$0.25
+    # But accuracy gate means we need to prove ourselves first
+    est_profit_low = round(est_trades_low * max_bet * 0.15, 2)
+    est_profit_high = round(est_trades_high * max_bet * 0.25, 2)
+
+    # Accuracy projection: based on current trajectory
+    accuracy_projection = ""
+    if total_resolved >= 5:
+        if current_acc >= 80:
+            accuracy_projection = f"On track: {current_acc:.0f}% (above {cfg['accuracy_threshold']:.0f}% target)"
+        elif current_acc >= 60:
+            accuracy_projection = f"Building: {current_acc:.0f}% → need {cfg['accuracy_threshold']:.0f}% over {cfg['min_resolved_trades']} trades"
+        else:
+            accuracy_projection = f"Early: {current_acc:.0f}% (small sample, will stabilize)"
+    else:
+        accuracy_projection = f"Insufficient data ({total_resolved} resolved). Need {cfg['min_resolved_trades']}+ to project."
+
     return {
-        "next_24h_trades_range": "0-3 likely; more only if strong matching news appears",
-        "next_24h_resolved_range": "0-3 depending on market close times",
+        "next_24h_trades": f"{est_trades_low}-{est_trades_high}",
+        "next_24h_trades_range": f"{est_trades_low}-{est_trades_high} trades expected (strict consensus gate, ~6 candidates/cycle)",
+        "next_24h_resolved_range": f"0-{max(0, pending)} pending trades may resolve if markets close",
+        "next_24h_profit_range": f"${est_profit_low:.2f} to +${est_profit_high:.2f} (demo bets)" if cfg.get("mode") != "LIVE" else f"${est_profit_low:.2f} to +${est_profit_high:.2f}",
         "accuracy_target": f"{cfg['accuracy_threshold']:.0f}% after {cfg['min_resolved_trades']}+ resolved trades",
-        "expected_real_profit": "$0 while DRY-RUN/TRIAL is enabled",
-        "demo_pnl_range": "roughly -$3 to +$5 with $1 flat demo bets if 0-3 trades fire",
-        "old_10pct_risk": "Much lower than before, but not impossible; trial gate blocks live trading until proven.",
-        "why_30_50_blocked": "Middle-zone YES prices are more coin-flippy. Current setup favors cheap asymmetric entries over trade count.",
+        "accuracy_projection": accuracy_projection,
+        "current_accuracy": f"{current_acc:.1f}%" if total_resolved > 0 else "N/A (no resolved trades)",
+        "expected_real_profit": "$0.00 — DRY-RUN mode, no real money at risk" if cfg.get("mode") != "LIVE" else f"${est_profit_low:.2f} to +${est_profit_high:.2f}",
+        "demo_pnl_range": f"${est_profit_low * 1 - est_trades_high * max_bet:.2f} to +${est_profit_high:.2f} with ${max_bet:.0f} flat demo bets",
+        "trial_progress": f"{total_resolved}/{cfg['min_resolved_trades']} resolved trades ({max(0, cfg['min_resolved_trades'] - total_resolved)} remaining)",
+        "old_10pct_risk": "Much lower than before. Selective consensus gates reject low-confidence signals.",
+        "why_30_50_blocked": "31-49¢ YES prices are coin-flip territory. System favors asymmetric edges only.",
+        "recent_24h_activity": f"{recent_24h} trades placed in last 24h",
     }
 
 
@@ -715,10 +785,14 @@ HTML = r"""
       <div class="stat-card">
         <div class="stat-row"><span class="stat-label">Expected Trades</span><span class="stat-value">{{ exp.next_24h_trades_range }}</span></div>
         <div class="stat-row"><span class="stat-label">Expected Resolved</span><span class="stat-value">{{ exp.next_24h_resolved_range }}</span></div>
+        <div class="stat-row"><span class="stat-label">Expected Profit</span><span class="stat-value">{{ exp.next_24h_profit_range }}</span></div>
+        <div class="stat-row"><span class="stat-label">Current Accuracy</span><span class="stat-value {{ 'win' if 'N/A' not in exp.current_accuracy and '%' in exp.current_accuracy and exp.current_accuracy.replace('%','').replace('.','').replace('N/A','').strip().isdigit() and exp.current_accuracy.replace('%','').replace('.','').replace('N/A','').strip()|int >= 75 else 'warn' }}">{{ exp.current_accuracy }}</span></div>
+        <div class="stat-row"><span class="stat-label">Accuracy Projection</span><span class="stat-value small">{{ exp.accuracy_projection }}</span></div>
         <div class="stat-row"><span class="stat-label">Accuracy Target</span><span class="stat-value win">{{ exp.accuracy_target }}</span></div>
+        <div class="stat-row"><span class="stat-label">Trial Progress</span><span class="stat-value">{{ exp.trial_progress }}</span></div>
         <div class="stat-row"><span class="stat-label">Real Profit</span><span class="stat-value warn">{{ exp.expected_real_profit }}</span></div>
-        <div class="stat-row"><span class="stat-label">Demo PnL Range</span><span class="stat-value">{{ exp.demo_pnl_range }}</span></div>
-        <div class="small" style="margin-top:10px;">10% disaster risk: {{ exp.old_10pct_risk }}</div>
+        <div class="stat-row"><span class="stat-label">Recent Activity</span><span class="stat-value">{{ exp.recent_24h_activity }}</span></div>
+        <div class="small" style="margin-top:10px;">Risk: {{ exp.old_10pct_risk }}</div>
       </div>
     </div>
   </div>
