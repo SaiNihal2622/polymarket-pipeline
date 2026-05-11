@@ -27,8 +27,8 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
 # --- Mimo AI (Premium Backend) ---
 MIMO_API_KEY = os.getenv("MIMO_API_KEY", "")
-MIMO_MODEL = os.getenv("MIMO_MODEL", "mimo-v2.5-pro")  # Xiaomi MiMo v2.5 Pro
-MIMO_BASE_URL = os.getenv("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1")
+MIMO_MODEL = os.getenv("MIMO_MODEL", "MiMo-V2.5-Pro")  # Xiaomi MiMo v2.5 Pro
+MIMO_BASE_URL = os.getenv("MIMO_BASE_URL", "https://token-plan-sgp.xiaomimimo.com/v1")
 
 # --- Polymarket CLOB ---
 POLYMARKET_API_KEY = os.getenv("POLYMARKET_API_KEY", "")
