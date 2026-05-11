@@ -57,4 +57,4 @@ Tables: trades, outcomes, news_events, pipeline_runs
 - Track accuracy improvement as more trades resolve
 - Consider relaxing `MAX_NO_ENTRY_PRICE` (0.50) to widen entry zone
 - Consider relaxing `MATERIALITY_THRESHOLD` (0.55) to allow more trades
-- Dashboard: https://demo-runner-production-3f90.up.railway.app
+- Dashboard: https://industrious-blessing-production-b110.up.railway.app
