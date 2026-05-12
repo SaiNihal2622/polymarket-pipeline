@@ -48,20 +48,29 @@ CLI_ARGS, _ = parser.parse_known_args()
 
 # ── DB path ──────────────────────────────────────────────────────────────────
 def _resolve_db_path() -> str:
-    """Find bot.db (same logic as demo_runner)."""
+    """Find the SQLite DB — matches demo_runner.py logic (bot.db in script dir)."""
+    # 1) Explicit env var
     env = os.getenv("DB_PATH")
     if env and Path(env).is_file():
         return env
-    # Check for bot.db first (demo_runner default)
-    bot_db = Path("bot.db")
+    if env:
+        return str(Path(env).resolve())
+    # 2) Same as demo_runner: bot.db in the script's own directory
+    script_dir = Path(__file__).parent.resolve()
+    bot_db = script_dir / "bot.db"
     if bot_db.exists():
-        return str(bot_db.resolve())
-    # Fall back to trades.db (legacy pipeline)
-    trades_db = Path("trades.db")
-    if trades_db.exists():
-        return str(trades_db.resolve())
-    # Default to bot.db
-    return str(bot_db.resolve())
+        return str(bot_db)
+    # 3) Also try CWD (may differ from script dir in some deployments)
+    cwd_bot = Path.cwd() / "bot.db"
+    if cwd_bot.exists():
+        return str(cwd_bot.resolve())
+    # 4) Legacy trades.db fallback
+    for d in (script_dir, Path.cwd()):
+        tdb = d / "trades.db"
+        if tdb.exists():
+            return str(tdb.resolve())
+    # 5) Default to bot.db next to this script
+    return str(bot_db)
 
 
 DB_PATH = _resolve_db_path()
