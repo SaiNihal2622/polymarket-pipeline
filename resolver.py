@@ -44,7 +44,12 @@ except ImportError:
     mcp = None
 
 _db_env = os.getenv("DB_PATH", "")
-DB_PATH = Path(_db_env) if _db_env else Path(__file__).parent / "trades.db"
+if _db_env:
+    DB_PATH = Path(_db_env)
+elif Path("/data/bot.db").exists():
+    DB_PATH = Path("/data/bot.db")
+else:
+    DB_PATH = Path(__file__).parent / "bot.db"
 GAMMA_API = "https://gamma-api.polymarket.com"
 CLOB_API  = "https://clob.polymarket.com"
 DATA_API  = "https://data-api.polymarket.com"

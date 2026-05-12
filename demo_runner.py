@@ -266,7 +266,7 @@ def _print_accuracy_oneliner():
 
 def run_resolution_check(verbose: bool = False) -> dict:
     """Check pending trades against resolved markets."""
-    from resolver import resolve_market_outcome
+    from resolver import check_market_resolution
 
     con = _db()
     pending = con.execute("""
@@ -278,22 +278,28 @@ def run_resolution_check(verbose: bool = False) -> dict:
     resolved_count = 0
     for trade in pending:
         try:
-            outcome = resolve_market_outcome(trade["market_id"], trade["token_id"])
-            if outcome is None:
+            trade_dict = dict(trade)
+            market_result = check_market_resolution(trade_dict)
+            if market_result is None:
                 continue
 
-            # outcome: "yes", "no", "void", or None
-            if outcome == "void":
-                result = "void"
-                pnl = 0.0
-            elif (outcome == "yes" and trade["side"] == "YES") or \
-                 (outcome == "no" and trade["side"] == "NO"):
+            # market_result: 1.0 (YES), 0.0 (NO)
+            side = trade["side"]
+            entry_price = float(trade["entry_price"])
+            bet_amount = float(trade["bet_amount"])
+
+            if (side == "YES" and market_result == 1.0) or \
+               (side == "NO" and market_result == 0.0):
                 result = "win"
-                win_amount = trade["bet_amount"] * (1.0 / trade["entry_price"] - 1.0)
-                pnl = win_amount
+                bet_price = entry_price if side == "YES" else (1.0 - entry_price)
+                bet_price = max(0.01, min(0.99, bet_price))
+                payout_ratio = (1.0 - bet_price) / bet_price
+                pnl = round(bet_amount * payout_ratio, 4)
+                outcome = "yes" if market_result == 1.0 else "no"
             else:
                 result = "loss"
-                pnl = -trade["bet_amount"]
+                pnl = -bet_amount
+                outcome = "no" if market_result == 1.0 else "yes"
 
             con = _db()
             con.execute("""
@@ -412,7 +418,8 @@ def scan_and_trade() -> dict:
         "first blood", "first tower", "first baron", "quadra kill", "penta kill",
         "dragon soul", "inhibitor",
         "dota 2", "valorant", "counter-strike", "league of legends", " lol:", " lol ",
-        "cblol", "lck", "lec", "lcs", "msi",
+        "league of legends european championship", "lck 2026", "lcs 2026", "msi 2026",
+        "cblol 2026",
         "call of duty", "cdl", "overwatch", "rainbow six",
         # ── Over/Under markets (random coin flips, no informational edge) ──
         "o/u ", "o/u", "over/under", "over under",
