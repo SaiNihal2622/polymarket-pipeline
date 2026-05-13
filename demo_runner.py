@@ -550,12 +550,20 @@ def scan_and_trade() -> dict:
         if hours_left > DEMO_HOURS_WINDOW:
             _skip("hours_gt_window")
             continue
-        # ── USER'S PRICING TABLE ──
-        # YES trades: only at 10-30¢ (breakeven 10-30%, huge upside)
-        # NO trades: only when YES ≥ 50¢ (NO share ≤ 50¢)
-        # ★ TUNED: Dead zone (31-49¢) NOW ALLOWS NO trades when AI says bearish
-        if price < 0.10 or price > 0.95:
+        # ── FAST-RESOLUTION FILTER: only trade markets closing within MAX_HOURS_TO_CLOSE ──
+        if hours_left > config.MAX_HOURS_TO_CLOSE:
+            _skip("too_far_out")
+            continue
+        # ── PRICING TABLE ──
+        # YES trades: entry 0.10–0.40 (buy cheap YES, win $1 = 150-900% ROI)
+        # NO trades:  entry when YES ≥ 0.65 (NO share ≤ 0.35, win $1 = 186-900% ROI)
+        # DEAD ZONE:  YES 0.41–0.64 = low ROI either direction, skip
+        if price < config.MIN_YES_ENTRY_PRICE or price > config.MAX_NO_ENTRY_PRICE:
             _skip("price_extreme")
+            continue
+        # Dead-zone gate: skip markets where YES price is in the middle (low ROI)
+        if price >= config.DEAD_ZONE_LOW and price <= config.DEAD_ZONE_HIGH:
+            _skip("dead_zone")
             continue
 
         is_crypto = any(k in q_lower for k in CRYPTO_KW)
@@ -607,7 +615,7 @@ def scan_and_trade() -> dict:
         if should_research:
             try:
                 gem_res_obj = research_market(market, news_context=matched_headlines)
-                if gem_res_obj.direction in ("bullish","bearish") and gem_res_obj.materiality >= 0.35:
+                if gem_res_obj.direction in ("bullish","bearish") and gem_res_obj.materiality >= 0.50:
                     gem_dir  = gem_res_obj.direction
                     gem_mat  = gem_res_obj.materiality
                     # BUG FIX: materiality ≠ probability!
@@ -743,34 +751,39 @@ def scan_and_trade() -> dict:
 
         # ★ 300% ROI STRATEGY ENGINE — Relaxed thresholds for more S8/S5 trades
         # S8: RRF high + consensus — the workhorse strategy
-        if (gem_dir != "neutral" and rrf_score >= 0.35 and consensus_agreed
-                and gem_mat >= 0.40 and non_neutral_count >= 1):
+        if (gem_dir != "neutral" and rrf_score >= 0.50 and consensus_agreed
+                and gem_mat >= 0.65 and non_neutral_count >= 2
+                and consensus_passes >= 2):
             strategies_to_try.append(("S8_rrf_highconv", _dir(gem_dir), gem_conf))
 
         # S5: CONSENSUS-FIRST — consensus + RRF confirmation
-        if (gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.35
-                and rrf_score >= 0.25 and gem_mat >= 0.35 and non_neutral_count >= 1):
+        if (gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.55
+                and rrf_score >= 0.45 and gem_mat >= 0.60 and non_neutral_count >= 2
+                and consensus_passes >= 3):
             strategies_to_try.append(("S5_consensus", _dir(gem_dir), consensus_score))
 
         # S9: SURESHOT — high confidence AI with consensus
-        if (gem_dir != "neutral" and gem_mat >= 0.45 and gem_conf >= 0.45
-                and rrf_score >= 0.30 and consensus_agreed and non_neutral_count >= 1):
+        if (gem_dir != "neutral" and gem_mat >= 0.70 and gem_conf >= 0.60
+                and rrf_score >= 0.50 and consensus_agreed and non_neutral_count >= 2
+                and consensus_passes >= 2):
             strategies_to_try.append(("S9_sureshot", _dir(gem_dir), gem_conf))
 
         # S10: AI + RRF + consensus — multi-signal confirmation
-        if (gem_dir != "neutral" and n_agree >= 1 and consensus_agreed
-                and rrf_score >= 0.25 and gem_mat >= 0.35):
+        if (gem_dir != "neutral" and n_agree >= 2 and consensus_agreed
+                and rrf_score >= 0.45 and gem_mat >= 0.60
+                and consensus_passes >= 2):
             strategies_to_try.append(("S10_multi_signal", _dir(gem_dir), gem_conf))
 
-        # S11: AI-ONLY — AI signal with consensus
-        if (gem_dir != "neutral" and gem_mat >= 0.45 and gem_conf >= 0.40
-                and consensus_agreed and non_neutral_count >= 1):
+        # S11: AI-ONLY — AI signal with consensus (tightened)
+        if (gem_dir != "neutral" and gem_mat >= 0.65 and gem_conf >= 0.55
+                and consensus_agreed and non_neutral_count >= 2
+                and consensus_passes >= 2):
             strategies_to_try.append(("S11_ai_only", _dir(gem_dir), gem_conf))
 
-        # S13: DEAD ZONE NO — bearish consensus on high-price markets (NO share ≤ 35¢)
-        # YES price ≥ 0.65 means NO share ≤ 0.35 = cheap NO, high ROI
-        if (gem_dir == "bearish" and consensus_agreed and gem_mat >= 0.40
-                and gem_conf >= 0.40 and price >= 0.65):
+        # S13: DEAD ZONE NO — bearish consensus on high-price markets (tightened)
+        if (gem_dir == "bearish" and consensus_agreed and gem_mat >= 0.60
+                and gem_conf >= 0.55 and price >= 0.65
+                and consensus_passes >= 2 and non_neutral_count >= 2):
             strategies_to_try.append(("S13_deadzone_no", "NO", gem_conf))
 
         if not strategies_to_try:

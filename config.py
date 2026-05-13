@@ -54,21 +54,31 @@ DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "10"))
 
 # ─── Edge / Scoring Thresholds (HARDENED) ────────────────────────────────────
 # These are the MINIMUM requirements for a trade to fire
-EDGE_THRESHOLD      = float(os.getenv("EDGE_THRESHOLD", "0.08"))
-MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.45"))
-MIN_COMPOSITE_SCORE = float(os.getenv("MIN_COMPOSITE_SCORE", "0.40"))
+EDGE_THRESHOLD      = float(os.getenv("EDGE_THRESHOLD", "0.12"))
+MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.65"))
+MIN_COMPOSITE_SCORE = float(os.getenv("MIN_COMPOSITE_SCORE", "0.55"))
 
-# Price caps — Target 300% ROI
-# YES ≤ 25¢ (buy 25¢, win 100¢ = 300% ROI)
-# NO ≤ 35¢ (buy 35¢, win 100¢ = 186% ROI minimum, higher ROI at lower prices)
-MAX_BUY_PRICE       = float(os.getenv("MAX_BUY_PRICE", "0.25"))
-MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.25"))
-MIN_NO_ENTRY_PRICE  = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.55"))
+# Price caps — Target high ROI on fast-resolving markets
+# YES: entry 0.10–0.40 (buy cheap YES, win $1 = 150-900% ROI)
+# NO:  entry when YES price ≥ 0.65 (NO share ≤ 0.35, win $1 = 186-900% ROI)
+# SKIP: YES price 0.41–0.64 (middle zone — low ROI either direction)
+MAX_BUY_PRICE       = float(os.getenv("MAX_BUY_PRICE", "0.40"))
+MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.40"))
+MIN_YES_ENTRY_PRICE = float(os.getenv("MIN_YES_ENTRY_PRICE", "0.10"))
+MIN_NO_ENTRY_PRICE  = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.65"))
+MAX_NO_ENTRY_PRICE  = float(os.getenv("MAX_NO_ENTRY_PRICE", "0.90"))
 MAX_NO_BUY_PRICE    = float(os.getenv("MAX_NO_BUY_PRICE", "0.35"))
 
+# Dead-zone: skip markets where YES price is between these values (low ROI)
+DEAD_ZONE_LOW       = float(os.getenv("DEAD_ZONE_LOW", "0.41"))
+DEAD_ZONE_HIGH      = float(os.getenv("DEAD_ZONE_HIGH", "0.64"))
+
+# Fast-resolution filter: only take markets resolving within this window
+MAX_HOURS_TO_CLOSE  = float(os.getenv("MAX_HOURS_TO_CLOSE", "38"))
+
 # ─── Volume Filter ───────────────────────────────────────────────────────────
-MIN_VOLUME_USD      = float(os.getenv("MIN_VOLUME_USD", "50"))
-MAX_VOLUME_USD      = float(os.getenv("MAX_VOLUME_USD", "2000000"))
+MIN_VOLUME_USD      = float(os.getenv("MIN_VOLUME_USD", "100"))
+MAX_VOLUME_USD      = float(os.getenv("MAX_VOLUME_USD", "500000"))
 
 # ─── LLM Settings ────────────────────────────────────────────────────────────
 LLM_PROVIDER        = os.getenv("LLM_PROVIDER", "mimo")
@@ -80,9 +90,9 @@ OPENAI_MODEL        = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 # ─── Consensus Settings ─────────────────────────────────────────────────────
 CONSENSUS_ENABLED   = os.getenv("CONSENSUS_ENABLED", "true").lower() == "true"
-CONSENSUS_PASSES    = int(os.getenv("CONSENSUS_PASSES", "2"))
+CONSENSUS_PASSES    = int(os.getenv("CONSENSUS_PASSES", "3"))
 CONSENSUS_MIN_AGREEMENT = float(os.getenv("CONSENSUS_MIN_AGREEMENT", "1.0"))
-STRICT_CONSENSUS    = os.getenv("STRICT_CONSENSUS", "false").lower() == "true"
+STRICT_CONSENSUS    = os.getenv("STRICT_CONSENSUS", "true").lower() == "true"
 
 # ─── Signal Weights (RRF Composite) ─────────────────────────────────────────
 SIGNAL_WEIGHTS = {
@@ -110,9 +120,9 @@ MAX_MARKETS_PER_SCAN = int(os.getenv("MAX_MARKETS_PER_SCAN", "400"))
 MAX_AI_CALLS_PER_SCAN = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "120"))
 
 # ─── Demo / Go-Live ─────────────────────────────────────────────────────────
-ACCURACY_THRESHOLD  = float(os.getenv("ACCURACY_THRESHOLD", "55"))
+ACCURACY_THRESHOLD  = float(os.getenv("ACCURACY_THRESHOLD", "65"))
 MIN_RESOLVED        = int(os.getenv("MIN_RESOLVED", "30"))
-DEMO_HOURS_WINDOW   = float(os.getenv("DEMO_HOURS_WINDOW", "30"))
+DEMO_HOURS_WINDOW   = float(os.getenv("DEMO_HOURS_WINDOW", "38"))
 
 # ─── Paths ───────────────────────────────────────────────────────────────────
 PROJECT_ROOT        = Path(__file__).parent
