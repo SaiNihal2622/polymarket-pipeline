@@ -38,16 +38,13 @@ console = Console()
 log = logging.getLogger("demo_runner")
 
 # ── Settings ─────────────────────────────────────────────────────────────────
-# Use persistent volume on Railway (/data), otherwise script dir
-if os.path.isdir("/data"):
-    DB_PATH = "/data/bot.db"
-else:
-    DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot.db")
+# Use the SAME DB path as logger.py so all trades go to one database
+from logger import DB_PATH
 DEMO_HOURS_WINDOW  = config.DEMO_HOURS_WINDOW   # 30h — tighter, avoids stale markets
 SCAN_INTERVAL_MIN  = config.SCAN_INTERVAL_MIN   # 5 min
 RESOLVE_INTERVAL_MIN = config.RESOLVE_INTERVAL_MIN  # 6 min
 ACCURACY_THRESHOLD = config.ACCURACY_THRESHOLD  # 80%
-MIN_RESOLVED       = config.MIN_RESOLVED_TRADES # 20 trades before going live
+MIN_RESOLVED       = config.MIN_RESOLVED        # 30 trades before going live
 
 
 # ── Database Setup ───────────────────────────────────────────────────────────
@@ -610,10 +607,22 @@ def scan_and_trade() -> dict:
         if should_research:
             try:
                 gem_res_obj = research_market(market, news_context=matched_headlines)
-                if gem_res_obj.direction in ("bullish","bearish") and gem_res_obj.materiality >= 0.20:
+                if gem_res_obj.direction in ("bullish","bearish") and gem_res_obj.materiality >= 0.50:
                     gem_dir  = gem_res_obj.direction
                     gem_mat  = gem_res_obj.materiality
-                    gem_conf = min(0.88, gem_mat)
+                    # BUG FIX: materiality ≠ probability!
+                    # Use actual model probability if available; otherwise
+                    # conservatively estimate: market_price ± small edge
+                    model_prob = getattr(gem_res_obj, 'probability', None)
+                    if model_prob and 0.05 < model_prob < 0.95:
+                        gem_conf = model_prob
+                    else:
+                        # Conservative fallback: assume 10-15% edge over market
+                        if gem_dir == "bullish":
+                            gem_conf = min(price + 0.12, 0.75)
+                        else:
+                            gem_conf = min((1 - price) + 0.12, 0.75)
+                        gem_conf = max(gem_conf, 0.15)
                 ai_calls_left -= 1
             except Exception as e:
                 log.debug(f"[research] {e}")
@@ -732,38 +741,35 @@ def scan_and_trade() -> dict:
 
         non_neutral_count = sum(1 for l,d,c in all_sigs if d != "neutral" and c > 0)
 
-        # ★ TUNED: Lowered all thresholds for wider coverage
-        # S8: RRF high + consensus (was rrf≥0.60, mat≥0.45)
-        if (gem_dir != "neutral" and rrf_score >= 0.45 and consensus_agreed
-                and gem_mat >= 0.35 and non_neutral_count >= 0):
+        # ★ HARDENED THRESHOLDS — Prioritize accuracy over trade count
+        # S8: RRF high + consensus — requires strong RRF + high materiality
+        if (gem_dir != "neutral" and rrf_score >= 0.55 and consensus_agreed
+                and gem_mat >= 0.60 and non_neutral_count >= 2):
             strategies_to_try.append(("S8_rrf_highconv", _dir(gem_dir), gem_conf))
 
-        # ★ S5: CONSENSUS-FIRST (was consensus_score≥0.45, rrf≥0.40, mat≥0.35)
-        if (gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.35
-                and rrf_score >= 0.30 and gem_mat >= 0.25 and non_neutral_count >= 0):
+        # S5: CONSENSUS-FIRST — requires strong consensus + RRF
+        if (gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.50
+                and rrf_score >= 0.45 and gem_mat >= 0.55 and non_neutral_count >= 2):
             strategies_to_try.append(("S5_consensus", _dir(gem_dir), consensus_score))
 
-        # ★ S9: SURESHOT (was mat≥0.55, conf≥0.60, rrf≥0.45)
-        if (gem_dir != "neutral" and gem_mat >= 0.45 and gem_conf >= 0.50
-                and rrf_score >= 0.35 and consensus_agreed and non_neutral_count >= 0):
+        # S9: SURESHOT — highest confidence required
+        if (gem_dir != "neutral" and gem_mat >= 0.65 and gem_conf >= 0.60
+                and rrf_score >= 0.50 and consensus_agreed and non_neutral_count >= 2):
             strategies_to_try.append(("S9_sureshot", _dir(gem_dir), gem_conf))
 
-        # ★ S10: AI + RRF + consensus (was n_agree≥1, rrf≥0.40)
-        if (gem_dir != "neutral" and n_agree >= 0 and consensus_agreed
-                and rrf_score >= 0.30):
+        # S10: AI + RRF + consensus — multi-signal confirmation
+        if (gem_dir != "neutral" and n_agree >= 2 and consensus_agreed
+                and rrf_score >= 0.45 and gem_mat >= 0.55):
             strategies_to_try.append(("S10_multi_signal", _dir(gem_dir), gem_conf))
 
-        # ★ S11: AI-ONLY (was mat≥0.60, conf≥0.65)
-        if (gem_dir != "neutral" and gem_mat >= 0.50 and gem_conf >= 0.55
-                and consensus_agreed and non_neutral_count >= 0):
+        # S11: AI-ONLY — strong AI signal with consensus
+        if (gem_dir != "neutral" and gem_mat >= 0.65 and gem_conf >= 0.60
+                and consensus_agreed and non_neutral_count >= 2):
             strategies_to_try.append(("S11_ai_only", _dir(gem_dir), gem_conf))
 
-        # ★ NEW S13: DEAD ZONE NO — AI says bearish on 31-49¢ markets = buy NO
-        # Previously dead zone was entirely blocked. Now: if AI says bearish with
-        # consensus on a 31-49¢ market, the NO share is 51-69¢ — decent payout.
-        if (gem_dir == "bearish" and consensus_agreed and gem_mat >= 0.35
-                and 0.31 <= price <= 0.49):
-            no_price = 1.0 - price
+        # S13: DEAD ZONE NO — bearish consensus on mid-price markets
+        if (gem_dir == "bearish" and consensus_agreed and gem_mat >= 0.60
+                and gem_conf >= 0.55 and 0.31 <= price <= 0.49):
             strategies_to_try.append(("S13_deadzone_no", "NO", gem_conf))
 
         if not strategies_to_try:
