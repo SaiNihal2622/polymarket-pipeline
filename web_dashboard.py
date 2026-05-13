@@ -789,7 +789,7 @@ TEMPLATE = r"""<!DOCTYPE html>
         <tr>
           <th>#</th><th>Market</th><th>Side</th><th>Entry</th>
           <th>Edge</th><th>Confidence</th><th>Bet $</th><th>Result</th>
-          <th>PnL</th><th>Strategy</th><th>Duration</th>
+          <th>PnL</th><th>Expected Profit</th><th>Strategy</th><th>Duration</th>
         </tr>
       </thead>
       <tbody>
@@ -820,12 +820,19 @@ TEMPLATE = r"""<!DOCTYPE html>
               <span style="color:var(--muted)">—</span>
             {% endif %}
           </td>
+          <td>
+            {% if t.expected_profit is defined and t.expected_profit %}
+              <span class="{{ 'green' if t.expected_profit >= 0 else 'red' }}">${{ "%.2f"|format(t.expected_profit) }}</span>
+            {% else %}
+              <span style="color:var(--muted)">—</span>
+            {% endif %}
+          </td>
           <td>{{ t.strategy or '—' }}</td>
           <td>{{ t.resolution_duration or t.time_to_resolve or '—' }}</td>
         </tr>
         {% endfor %}
         {% if not trades %}
-        <tr><td colspan="11" style="text-align:center;color:var(--muted);padding:24px">No trades yet — the demo runner will start placing trades soon.</td></tr>
+        <tr><td colspan="12" style="text-align:center;color:var(--muted);padding:24px">No trades yet — the demo runner will start placing trades soon.</td></tr>
         {% endif %}
       </tbody>
     </table>
