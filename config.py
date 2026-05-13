@@ -58,11 +58,13 @@ EDGE_THRESHOLD      = float(os.getenv("EDGE_THRESHOLD", "0.08"))
 MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.45"))
 MIN_COMPOSITE_SCORE = float(os.getenv("MIN_COMPOSITE_SCORE", "0.40"))
 
-# Price caps — YES ≤ 35¢, NO only when YES ≥ 55¢
-MAX_BUY_PRICE       = float(os.getenv("MAX_BUY_PRICE", "0.35"))
-MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.35"))
+# Price caps — Target 300% ROI
+# YES ≤ 25¢ (buy 25¢, win 100¢ = 300% ROI)
+# NO ≤ 35¢ (buy 35¢, win 100¢ = 186% ROI minimum, higher ROI at lower prices)
+MAX_BUY_PRICE       = float(os.getenv("MAX_BUY_PRICE", "0.25"))
+MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.25"))
 MIN_NO_ENTRY_PRICE  = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.55"))
-MAX_NO_BUY_PRICE    = float(os.getenv("MAX_NO_BUY_PRICE", "0.45"))
+MAX_NO_BUY_PRICE    = float(os.getenv("MAX_NO_BUY_PRICE", "0.35"))
 
 # ─── Volume Filter ───────────────────────────────────────────────────────────
 MIN_VOLUME_USD      = float(os.getenv("MIN_VOLUME_USD", "50"))

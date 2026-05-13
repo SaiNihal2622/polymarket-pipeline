@@ -741,35 +741,36 @@ def scan_and_trade() -> dict:
 
         non_neutral_count = sum(1 for l,d,c in all_sigs if d != "neutral" and c > 0)
 
-        # ★ HARDENED THRESHOLDS — Prioritize accuracy over trade count
-        # S8: RRF high + consensus — requires strong RRF + high materiality
-        if (gem_dir != "neutral" and rrf_score >= 0.40 and consensus_agreed
-                and gem_mat >= 0.45 and non_neutral_count >= 1):
+        # ★ 300% ROI STRATEGY ENGINE — Relaxed thresholds for more S8/S5 trades
+        # S8: RRF high + consensus — the workhorse strategy
+        if (gem_dir != "neutral" and rrf_score >= 0.35 and consensus_agreed
+                and gem_mat >= 0.40 and non_neutral_count >= 1):
             strategies_to_try.append(("S8_rrf_highconv", _dir(gem_dir), gem_conf))
 
-        # S5: CONSENSUS-FIRST — requires consensus + RRF
-        if (gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.40
-                and rrf_score >= 0.30 and gem_mat >= 0.40 and non_neutral_count >= 1):
+        # S5: CONSENSUS-FIRST — consensus + RRF confirmation
+        if (gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.35
+                and rrf_score >= 0.25 and gem_mat >= 0.35 and non_neutral_count >= 1):
             strategies_to_try.append(("S5_consensus", _dir(gem_dir), consensus_score))
 
-        # S9: SURESHOT — high confidence
-        if (gem_dir != "neutral" and gem_mat >= 0.50 and gem_conf >= 0.50
-                and rrf_score >= 0.35 and consensus_agreed and non_neutral_count >= 1):
+        # S9: SURESHOT — high confidence AI with consensus
+        if (gem_dir != "neutral" and gem_mat >= 0.45 and gem_conf >= 0.45
+                and rrf_score >= 0.30 and consensus_agreed and non_neutral_count >= 1):
             strategies_to_try.append(("S9_sureshot", _dir(gem_dir), gem_conf))
 
         # S10: AI + RRF + consensus — multi-signal confirmation
         if (gem_dir != "neutral" and n_agree >= 1 and consensus_agreed
-                and rrf_score >= 0.30 and gem_mat >= 0.40):
+                and rrf_score >= 0.25 and gem_mat >= 0.35):
             strategies_to_try.append(("S10_multi_signal", _dir(gem_dir), gem_conf))
 
         # S11: AI-ONLY — AI signal with consensus
-        if (gem_dir != "neutral" and gem_mat >= 0.50 and gem_conf >= 0.45
+        if (gem_dir != "neutral" and gem_mat >= 0.45 and gem_conf >= 0.40
                 and consensus_agreed and non_neutral_count >= 1):
             strategies_to_try.append(("S11_ai_only", _dir(gem_dir), gem_conf))
 
-        # S13: DEAD ZONE NO — bearish consensus on mid-price markets
-        if (gem_dir == "bearish" and consensus_agreed and gem_mat >= 0.45
-                and gem_conf >= 0.40 and 0.31 <= price <= 0.49):
+        # S13: DEAD ZONE NO — bearish consensus on high-price markets (NO share ≤ 35¢)
+        # YES price ≥ 0.65 means NO share ≤ 0.35 = cheap NO, high ROI
+        if (gem_dir == "bearish" and consensus_agreed and gem_mat >= 0.40
+                and gem_conf >= 0.40 and price >= 0.65):
             strategies_to_try.append(("S13_deadzone_no", "NO", gem_conf))
 
         if not strategies_to_try:
@@ -813,11 +814,8 @@ def scan_and_trade() -> dict:
                 continue
 
             bet_price    = price if strat_side == "YES" else (1.0 - price)
-            # ── ROI FILTER: YES ≤30¢, NO ≤50¢ (per user's pricing table) ──
-            max_price = config.MAX_BUY_PRICE if strat_side == "YES" else getattr(config, 'MAX_NO_BUY_PRICE', 0.50)
-            # ★ TUNED: Dead zone NO trades get a wider price cap
-            if strat_name == "S13_deadzone_no":
-                max_price = 0.70  # Allow NO shares up to 69¢ in dead zone
+            # ── ROI FILTER: Target 300% ROI — all strategies use same caps ──
+            max_price = config.MAX_BUY_PRICE if strat_side == "YES" else config.MAX_NO_BUY_PRICE
             if bet_price > max_price:
                 _skip("roi_too_low")
                 roi_pct = (1.0 / bet_price - 1.0) * 100
