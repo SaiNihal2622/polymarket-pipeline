@@ -21,6 +21,15 @@ GROQ_API_KEY        = os.getenv("GROQ_API_KEY", "")
 NVIDIA_API_KEY      = os.getenv("NVIDIA_API_KEY", "")
 OPENAI_API_KEY      = os.getenv("OPENAI_API_KEY", "")
 NEWSAPI_KEY         = os.getenv("NEWSAPI_KEY", "")
+
+# ─── Xiaomi MiMo ────────────────────────────────────────────────────────────
+MIMO_API_KEY        = os.getenv("MIMO_API_KEY", "")
+MIMO_BASE_URL       = os.getenv("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1")
+MIMO_MODEL          = os.getenv("MIMO_MODEL", "MiMo-V2.5-Pro")
+MIMO_WEB_SEARCH     = os.getenv("MIMO_WEB_SEARCH", "true").lower() == "true"
+
+# ─── Anthropic (optional) ───────────────────────────────────────────────────
+ANTHROPIC_API_KEY   = os.getenv("ANTHROPIC_API_KEY", "")
 REDDIT_CLIENT_ID    = os.getenv("REDDIT_CLIENT_ID", "")
 REDDIT_SECRET       = os.getenv("REDDIT_SECRET", "")
 TELEGRAM_API_ID     = os.getenv("TELEGRAM_API_ID", "")
@@ -60,8 +69,8 @@ MIN_VOLUME_USD      = float(os.getenv("MIN_VOLUME_USD", "50"))
 MAX_VOLUME_USD      = float(os.getenv("MAX_VOLUME_USD", "2000000"))
 
 # ─── LLM Settings ────────────────────────────────────────────────────────────
-LLM_PROVIDER        = os.getenv("LLM_PROVIDER", "gemini")
-CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "gemini-2.0-flash")
+LLM_PROVIDER        = os.getenv("LLM_PROVIDER", "mimo")
+CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "MiMo-V2.5-Pro")
 GEMINI_MODEL        = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 GROQ_MODEL          = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 NVIDIA_MODEL        = os.getenv("NVIDIA_MODEL", "nvidia/llama-3.3-nemotron-super-49b-v1")
@@ -70,6 +79,8 @@ OPENAI_MODEL        = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 # ─── Consensus Settings ─────────────────────────────────────────────────────
 CONSENSUS_ENABLED   = os.getenv("CONSENSUS_ENABLED", "true").lower() == "true"
 CONSENSUS_PASSES    = int(os.getenv("CONSENSUS_PASSES", "2"))
+CONSENSUS_MIN_AGREEMENT = float(os.getenv("CONSENSUS_MIN_AGREEMENT", "1.0"))
+STRICT_CONSENSUS    = os.getenv("STRICT_CONSENSUS", "false").lower() == "true"
 
 # ─── Signal Weights (RRF Composite) ─────────────────────────────────────────
 SIGNAL_WEIGHTS = {

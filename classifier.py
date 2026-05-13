@@ -131,11 +131,14 @@ def _call_groq(prompt: str, temperature: float, max_tokens: int) -> str:
 
 
 async def _call_mimo_async(prompt: str, temperature: float, max_tokens: int) -> str:
-    """Async Mimo call."""
+    """Async Xiaomi MiMo call — OpenAI-compatible API with Web Search plugin."""
     import httpx
     api_key = config.MIMO_API_KEY
     if not api_key:
-        return await _call_gemini_async(prompt, temperature, max_tokens)
+        # Fallback chain: NVIDIA → Groq (NOT Gemini to avoid circular loop)
+        if config.NVIDIA_API_KEY:
+            return await _call_nvidia_async(prompt, temperature, max_tokens)
+        return await _call_groq_async(prompt, temperature, max_tokens)
 
     url = f"{config.MIMO_BASE_URL}/chat/completions"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -145,6 +148,9 @@ async def _call_mimo_async(prompt: str, temperature: float, max_tokens: int) -> 
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
+    # Enable Web Search plugin for real-time market context
+    if getattr(config, 'MIMO_WEB_SEARCH', True):
+        payload["tools"] = [{"type": "web_search"}]
 
     async with httpx.AsyncClient(timeout=45) as client:
         for attempt in range(3):
