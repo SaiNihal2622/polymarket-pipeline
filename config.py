@@ -10,6 +10,12 @@ from pathlib import Path
 POLY_API_KEY        = os.getenv("POLY_API_KEY", "")
 POLY_SECRET         = os.getenv("POLY_SECRET", "")
 POLY_PASSPHRASE     = os.getenv("POLY_PASSPHRASE", "")
+
+# Polymarket CLOB client names (executor.py uses these)
+POLYMARKET_API_KEY    = os.getenv("POLYMARKET_API_KEY", os.getenv("POLY_API_KEY", ""))
+POLYMARKET_PRIVATE_KEY = os.getenv("POLYMARKET_PRIVATE_KEY", os.getenv("POLY_PRIVATE_KEY", ""))
+POLYMARKET_API_SECRET = os.getenv("POLYMARKET_API_SECRET", os.getenv("POLY_SECRET", ""))
+POLYMARKET_API_PASSPHRASE = os.getenv("POLYMARKET_API_PASSPHRASE", os.getenv("POLY_PASSPHRASE", ""))
 GEMINI_API_KEY      = os.getenv("GEMINI_API_KEY", "")
 GROQ_API_KEY        = os.getenv("GROQ_API_KEY", "")
 NVIDIA_API_KEY      = os.getenv("NVIDIA_API_KEY", "")
@@ -35,6 +41,7 @@ BANKROLL_USD        = float(os.getenv("BANKROLL_USD", "100"))
 MAX_BET_USD         = float(os.getenv("MAX_BET_USD", "2.0"))
 MIN_BET_USD         = 0.50
 TRADES_PER_DAY      = int(os.getenv("TRADES_PER_DAY", "20"))
+DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "10"))
 
 # ─── Edge / Scoring Thresholds (HARDENED) ────────────────────────────────────
 # These are the MINIMUM requirements for a trade to fire
