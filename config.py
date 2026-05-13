@@ -24,7 +24,7 @@ APIFY_TOKEN         = os.getenv("APIFY_TOKEN", "")
 # ─── Database ────────────────────────────────────────────────────────────────
 # On Railway: /data/bot.db (persistent volume)
 # Locally: ./bot.db
-DB_PATH = os.getenv("DB_PATH", "/data/bot.db" if os.path.exists("/data") else "./bot.db")
+DB_PATH = os.getenv("DB_PATH", "/data/trades.db" if os.path.exists("/data") else "./trades.db")
 
 # ─── Polymarket API ─────────────────────────────────────────────────────────
 POLYMARKET_HOST     = os.getenv("POLYMARKET_HOST", "https://clob.polymarket.com")
@@ -38,9 +38,9 @@ TRADES_PER_DAY      = int(os.getenv("TRADES_PER_DAY", "20"))
 
 # ─── Edge / Scoring Thresholds (HARDENED) ────────────────────────────────────
 # These are the MINIMUM requirements for a trade to fire
-EDGE_THRESHOLD      = float(os.getenv("EDGE_THRESHOLD", "0.10"))
-MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.60"))
-MIN_COMPOSITE_SCORE = float(os.getenv("MIN_COMPOSITE_SCORE", "0.55"))
+EDGE_THRESHOLD      = float(os.getenv("EDGE_THRESHOLD", "0.08"))
+MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.45"))
+MIN_COMPOSITE_SCORE = float(os.getenv("MIN_COMPOSITE_SCORE", "0.40"))
 
 # Price caps — YES ≤ 35¢, NO only when YES ≥ 55¢
 MAX_BUY_PRICE       = float(os.getenv("MAX_BUY_PRICE", "0.35"))
@@ -62,7 +62,7 @@ OPENAI_MODEL        = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 # ─── Consensus Settings ─────────────────────────────────────────────────────
 CONSENSUS_ENABLED   = os.getenv("CONSENSUS_ENABLED", "true").lower() == "true"
-CONSENSUS_PASSES    = int(os.getenv("CONSENSUS_PASSES", "3"))
+CONSENSUS_PASSES    = int(os.getenv("CONSENSUS_PASSES", "2"))
 
 # ─── Signal Weights (RRF Composite) ─────────────────────────────────────────
 SIGNAL_WEIGHTS = {
@@ -86,13 +86,13 @@ DYNAMIC_WEIGHT_RANGES = {
 # ─── Market Filters ──────────────────────────────────────────────────────────
 SCAN_INTERVAL_MIN   = int(os.getenv("SCAN_INTERVAL_MIN", "5"))
 RESOLVE_INTERVAL_MIN = int(os.getenv("RESOLVE_INTERVAL_MIN", "2"))
-MAX_MARKETS_PER_SCAN = int(os.getenv("MAX_MARKETS_PER_SCAN", "300"))
-MAX_AI_CALLS_PER_SCAN = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "100"))
+MAX_MARKETS_PER_SCAN = int(os.getenv("MAX_MARKETS_PER_SCAN", "400"))
+MAX_AI_CALLS_PER_SCAN = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "120"))
 
 # ─── Demo / Go-Live ─────────────────────────────────────────────────────────
 ACCURACY_THRESHOLD  = float(os.getenv("ACCURACY_THRESHOLD", "55"))
 MIN_RESOLVED        = int(os.getenv("MIN_RESOLVED", "30"))
-DEMO_HOURS_WINDOW   = float(os.getenv("DEMO_HOURS_WINDOW", "48"))
+DEMO_HOURS_WINDOW   = float(os.getenv("DEMO_HOURS_WINDOW", "30"))
 
 # ─── Paths ───────────────────────────────────────────────────────────────────
 PROJECT_ROOT        = Path(__file__).parent

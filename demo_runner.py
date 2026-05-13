@@ -607,7 +607,7 @@ def scan_and_trade() -> dict:
         if should_research:
             try:
                 gem_res_obj = research_market(market, news_context=matched_headlines)
-                if gem_res_obj.direction in ("bullish","bearish") and gem_res_obj.materiality >= 0.50:
+                if gem_res_obj.direction in ("bullish","bearish") and gem_res_obj.materiality >= 0.35:
                     gem_dir  = gem_res_obj.direction
                     gem_mat  = gem_res_obj.materiality
                     # BUG FIX: materiality ≠ probability!
@@ -743,33 +743,33 @@ def scan_and_trade() -> dict:
 
         # ★ HARDENED THRESHOLDS — Prioritize accuracy over trade count
         # S8: RRF high + consensus — requires strong RRF + high materiality
-        if (gem_dir != "neutral" and rrf_score >= 0.55 and consensus_agreed
-                and gem_mat >= 0.60 and non_neutral_count >= 2):
+        if (gem_dir != "neutral" and rrf_score >= 0.40 and consensus_agreed
+                and gem_mat >= 0.45 and non_neutral_count >= 1):
             strategies_to_try.append(("S8_rrf_highconv", _dir(gem_dir), gem_conf))
 
-        # S5: CONSENSUS-FIRST — requires strong consensus + RRF
-        if (gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.50
-                and rrf_score >= 0.45 and gem_mat >= 0.55 and non_neutral_count >= 2):
+        # S5: CONSENSUS-FIRST — requires consensus + RRF
+        if (gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.40
+                and rrf_score >= 0.30 and gem_mat >= 0.40 and non_neutral_count >= 1):
             strategies_to_try.append(("S5_consensus", _dir(gem_dir), consensus_score))
 
-        # S9: SURESHOT — highest confidence required
-        if (gem_dir != "neutral" and gem_mat >= 0.65 and gem_conf >= 0.60
-                and rrf_score >= 0.50 and consensus_agreed and non_neutral_count >= 2):
+        # S9: SURESHOT — high confidence
+        if (gem_dir != "neutral" and gem_mat >= 0.50 and gem_conf >= 0.50
+                and rrf_score >= 0.35 and consensus_agreed and non_neutral_count >= 1):
             strategies_to_try.append(("S9_sureshot", _dir(gem_dir), gem_conf))
 
         # S10: AI + RRF + consensus — multi-signal confirmation
-        if (gem_dir != "neutral" and n_agree >= 2 and consensus_agreed
-                and rrf_score >= 0.45 and gem_mat >= 0.55):
+        if (gem_dir != "neutral" and n_agree >= 1 and consensus_agreed
+                and rrf_score >= 0.30 and gem_mat >= 0.40):
             strategies_to_try.append(("S10_multi_signal", _dir(gem_dir), gem_conf))
 
-        # S11: AI-ONLY — strong AI signal with consensus
-        if (gem_dir != "neutral" and gem_mat >= 0.65 and gem_conf >= 0.60
-                and consensus_agreed and non_neutral_count >= 2):
+        # S11: AI-ONLY — AI signal with consensus
+        if (gem_dir != "neutral" and gem_mat >= 0.50 and gem_conf >= 0.45
+                and consensus_agreed and non_neutral_count >= 1):
             strategies_to_try.append(("S11_ai_only", _dir(gem_dir), gem_conf))
 
         # S13: DEAD ZONE NO — bearish consensus on mid-price markets
-        if (gem_dir == "bearish" and consensus_agreed and gem_mat >= 0.60
-                and gem_conf >= 0.55 and 0.31 <= price <= 0.49):
+        if (gem_dir == "bearish" and consensus_agreed and gem_mat >= 0.45
+                and gem_conf >= 0.40 and 0.31 <= price <= 0.49):
             strategies_to_try.append(("S13_deadzone_no", "NO", gem_conf))
 
         if not strategies_to_try:
