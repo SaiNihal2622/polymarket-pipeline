@@ -26,6 +26,9 @@ APIFY_TOKEN         = os.getenv("APIFY_TOKEN", "")
 # Locally: ./bot.db
 DB_PATH = os.getenv("DB_PATH", "/data/bot.db" if os.path.exists("/data") else "./bot.db")
 
+# ─── Polymarket API ─────────────────────────────────────────────────────────
+POLYMARKET_HOST     = os.getenv("POLYMARKET_HOST", "https://clob.polymarket.com")
+
 # ─── Trading Parameters ─────────────────────────────────────────────────────
 DRY_RUN             = os.getenv("DRY_RUN", "true").lower() == "true"
 BANKROLL_USD        = float(os.getenv("BANKROLL_USD", "100"))

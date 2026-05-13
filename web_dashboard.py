@@ -34,6 +34,9 @@ try:
 except Exception:
     cfg = None
 
+# Use the SAME DB as logger.py and demo_runner.py
+from logger import DB_PATH
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser(description="Polymarket pipeline dashboard")
 parser.add_argument("--port", type=int, default=8080)
@@ -45,41 +48,6 @@ parser.add_argument("--setup-token", type=str, default=None,
 parser.add_argument("--delete-token", type=str, default=None,
                     help="Delete a stored Polymarket auth token by 4-char prefix")
 CLI_ARGS, _ = parser.parse_known_args()
-
-# ── DB path ──────────────────────────────────────────────────────────────────
-def _resolve_db_path() -> str:
-    """Find the SQLite DB — matches demo_runner.py logic."""
-    # 1) Explicit env var
-    env = os.getenv("DB_PATH")
-    if env and Path(env).is_file():
-        return env
-    if env:
-        return str(Path(env).resolve())
-    # 1b) Railway persistent volume (/data/bot.db — same as demo_runner)
-    data_bot = Path("/data") / "bot.db"
-    if data_bot.exists():
-        return str(data_bot.resolve())
-    # 2) Same as demo_runner: bot.db in the script's own directory
-    script_dir = Path(__file__).parent.resolve()
-    bot_db = script_dir / "bot.db"
-    if bot_db.exists():
-        return str(bot_db)
-    # 3) Also try CWD (may differ from script dir in some deployments)
-    cwd_bot = Path.cwd() / "bot.db"
-    if cwd_bot.exists():
-        return str(cwd_bot.resolve())
-    # 4) Legacy trades.db fallback
-    for d in (script_dir, Path.cwd()):
-        tdb = d / "trades.db"
-        if tdb.exists():
-            return str(tdb.resolve())
-    # 5) Default: prefer /data on Railway, else script dir
-    if Path("/data").is_dir():
-        return str(data_bot)
-    return str(bot_db)
-
-
-DB_PATH = _resolve_db_path()
 
 if CLI_ARGS.diagnostics:
     print(f"DB_PATH={DB_PATH}")
