@@ -25,7 +25,7 @@ NEWSAPI_KEY         = os.getenv("NEWSAPI_KEY", "")
 # ─── Xiaomi MiMo ────────────────────────────────────────────────────────────
 MIMO_API_KEY        = os.getenv("MIMO_API_KEY", "")
 MIMO_BASE_URL       = os.getenv("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1")
-MIMO_MODEL          = os.getenv("MIMO_MODEL", "MiMo-V2.5-Pro")
+MIMO_MODEL          = os.getenv("MIMO_MODEL", "mimo-v2.5-pro")
 MIMO_WEB_SEARCH     = os.getenv("MIMO_WEB_SEARCH", "true").lower() == "true"
 
 # ─── Anthropic (optional) ───────────────────────────────────────────────────
@@ -70,7 +70,7 @@ MAX_VOLUME_USD      = float(os.getenv("MAX_VOLUME_USD", "2000000"))
 
 # ─── LLM Settings ────────────────────────────────────────────────────────────
 LLM_PROVIDER        = os.getenv("LLM_PROVIDER", "mimo")
-CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "MiMo-V2.5-Pro")
+CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "mimo-v2.5-pro")
 GEMINI_MODEL        = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 GROQ_MODEL          = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 NVIDIA_MODEL        = os.getenv("NVIDIA_MODEL", "nvidia/llama-3.3-nemotron-super-49b-v1")
