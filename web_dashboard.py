@@ -634,6 +634,78 @@ def debug_duration():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/summary")
+def api_summary():
+    """JSON API: summary stats."""
+    return jsonify(_get_summary())
+
+
+@app.route("/api/trades")
+def api_trades():
+    """JSON API: recent trades."""
+    limit = request.args.get("limit", 50, type=int)
+    return jsonify({"trades": _get_recent_trades(limit=limit)})
+
+
+@app.route("/api/news")
+def api_news():
+    """JSON API: recent news events."""
+    limit = request.args.get("limit", 25, type=int)
+    return jsonify({"news": _get_news(limit=limit)})
+
+
+@app.route("/api/runs")
+def api_runs():
+    """JSON API: pipeline runs."""
+    limit = request.args.get("limit", 15, type=int)
+    return jsonify({"runs": _get_runs(limit=limit)})
+
+
+@app.route("/api/config")
+def api_config():
+    """JSON API: current configuration."""
+    return jsonify({
+        "bankroll": round(float(_cfg("BANKROLL_USD", 30)), 2),
+        "max_bet_pct": float(_cfg("MAX_BET_PCT", 0.10)),
+        "strategy": _cfg("BET_STRATEGY", "edge_weighted"),
+        "dry_run": _cfg_bool("DRY_RUN", True),
+        "llm_provider": _cfg("LLM_PROVIDER", "mimo"),
+        "consensus_enabled": _cfg_bool("CONSENSUS_ENABLED", True),
+        "consensus_passes": int(_cfg("CONSENSUS_PASSES", 3)),
+        "accuracy_threshold": float(_cfg("ACCURACY_THRESHOLD", 80.0)),
+        "min_resolved_trades": int(_cfg("MIN_RESOLVED_TRADES", 20)),
+        "scan_interval_min": int(_cfg("SCAN_INTERVAL_MIN", 5)),
+        "resolve_interval_min": int(_cfg("RESOLVE_INTERVAL_MIN", 6)),
+        "max_buy_price": float(_cfg("MAX_BUY_PRICE", 0.30)),
+        "edge_threshold": float(_cfg("EDGE_THRESHOLD", 0.15)),
+        "materiality_threshold": float(_cfg("MATERIALITY_THRESHOLD", 0.55)),
+    })
+
+
+@app.route("/api/logs")
+def api_logs():
+    """JSON API: recent log lines from the log file."""
+    log_path = os.getenv("LOG_FILE", "polymarket_bot.log")
+    lines = []
+    try:
+        if Path(log_path).exists():
+            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                all_lines = f.readlines()
+                lines = [l.rstrip() for l in all_lines[-50:]]
+    except Exception:
+        pass
+    return jsonify({"logs": lines})
+
+
+@app.route("/live")
+def live_dashboard():
+    """Serve the live dashboard HTML file."""
+    live_path = Path(__file__).parent / "dashboard_live.html"
+    if live_path.exists():
+        return live_path.read_text(encoding="utf-8")
+    return "dashboard_live.html not found", 404
+
+
 @app.route("/reset_db", methods=["POST", "GET"])
 def reset_db():
     """Reset the database — delete all demo_trades for a fresh start."""
