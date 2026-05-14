@@ -501,8 +501,8 @@ def scan_and_trade() -> dict:
     signals_found: list[Signal] = []
     demos_logged  = 0
     analyzed      = 0
-    # ★ TUNED: 120 AI calls (up from 60) — covers ~40 markets with 3-pass consensus
-    ai_calls_left = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "120"))
+    # ★ HIGH THROUGHPUT: 200 AI calls per scan — covers ~60+ markets
+    ai_calls_left = config.MAX_AI_CALLS_PER_SCAN
     skip_reasons: dict[str, int] = {}  # diagnostic: why markets get skipped
     def _skip(reason: str):
         skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
@@ -516,8 +516,8 @@ def scan_and_trade() -> dict:
         "chainlink","litecoin","ltc","polygon","matic","uniswap","pepe","shib","crypto",
     ]
 
-    # ★ TUNED: 400 markets per scan (up from 200) — wider net = more opportunities
-    MAX_MARKETS = int(os.getenv("MAX_MARKETS_PER_SCAN", "400"))
+    # ★ HIGH THROUGHPUT: 600 markets per scan — maximum coverage
+    MAX_MARKETS = config.MAX_MARKETS_PER_SCAN
 
     # Get already-logged market IDs to avoid duplicates
     already_logged: set[str] = set()
@@ -607,10 +607,10 @@ def scan_and_trade() -> dict:
         has_news  = len(matched_headlines) >= 1
         has_news2 = len(matched_headlines) >= 2
 
-        # ★ TUNED: volume gate lowered from $30 to $10 for wider coverage
+        # ★ WIDE: analyze any market closing within window with any volume
         should_research = (
-            ai_calls_left > 0 and hours_left <= 30
-            and market.volume >= 10
+            ai_calls_left > 0 and hours_left <= DEMO_HOURS_WINDOW
+            and market.volume >= 5
         )
         if should_research:
             try:
@@ -749,42 +749,50 @@ def scan_and_trade() -> dict:
 
         non_neutral_count = sum(1 for l,d,c in all_sigs if d != "neutral" and c > 0)
 
-        # ★ 300% ROI STRATEGY ENGINE — Relaxed thresholds for more S8/S5 trades
-        # S8: RRF high + consensus — the workhorse strategy
-        if (gem_dir != "neutral" and rrf_score >= 0.50 and consensus_agreed
-                and gem_mat >= 0.65 and non_neutral_count >= 2
+        # ★ HIGH-VOLUME STRATEGY ENGINE — More trades, price-window = safety net
+        # Breakeven at ~25% accuracy (avg entry $0.25), so we can afford volume.
+        # The dead-zone filter + price caps already guarantee high-ROI setups.
+
+        # S8: RRF + consensus — primary workhorse (widened for volume)
+        if (gem_dir != "neutral" and rrf_score >= 0.40 and consensus_agreed
+                and gem_mat >= 0.50
                 and consensus_passes >= 2):
             strategies_to_try.append(("S8_rrf_highconv", _dir(gem_dir), gem_conf))
 
-        # S5: CONSENSUS-FIRST — consensus + RRF confirmation
-        if (gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.55
-                and rrf_score >= 0.45 and gem_mat >= 0.60 and non_neutral_count >= 2
-                and consensus_passes >= 3):
+        # S5: CONSENSUS-FIRST — consensus strong enough alone (widened)
+        if (gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.50
+                and gem_mat >= 0.50
+                and consensus_passes >= 2):
             strategies_to_try.append(("S5_consensus", _dir(gem_dir), consensus_score))
 
-        # S9: SURESHOT — high confidence AI with consensus
-        if (gem_dir != "neutral" and gem_mat >= 0.70 and gem_conf >= 0.60
-                and rrf_score >= 0.50 and consensus_agreed and non_neutral_count >= 2
+        # S9: SURESHOT — high confidence AI (widened)
+        if (gem_dir != "neutral" and gem_mat >= 0.60 and gem_conf >= 0.50
+                and consensus_agreed
                 and consensus_passes >= 2):
             strategies_to_try.append(("S9_sureshot", _dir(gem_dir), gem_conf))
 
-        # S10: AI + RRF + consensus — multi-signal confirmation
+        # S10: MULTI-SIGNAL — multiple signals agree (widened)
         if (gem_dir != "neutral" and n_agree >= 2 and consensus_agreed
-                and rrf_score >= 0.45 and gem_mat >= 0.60
+                and rrf_score >= 0.35 and gem_mat >= 0.45
                 and consensus_passes >= 2):
             strategies_to_try.append(("S10_multi_signal", _dir(gem_dir), gem_conf))
 
-        # S11: AI-ONLY — AI signal with consensus (tightened)
-        if (gem_dir != "neutral" and gem_mat >= 0.65 and gem_conf >= 0.55
-                and consensus_agreed and non_neutral_count >= 2
+        # S11: AI-ONLY — strong AI signal with consensus (widened)
+        if (gem_dir != "neutral" and gem_mat >= 0.55 and gem_conf >= 0.45
+                and consensus_agreed
                 and consensus_passes >= 2):
             strategies_to_try.append(("S11_ai_only", _dir(gem_dir), gem_conf))
 
-        # S13: DEAD ZONE NO — bearish consensus on high-price markets (tightened)
-        if (gem_dir == "bearish" and consensus_agreed and gem_mat >= 0.60
-                and gem_conf >= 0.55 and price >= 0.65
-                and consensus_passes >= 2 and non_neutral_count >= 2):
+        # S13: DEAD ZONE NO — bearish on high-price YES markets (widened)
+        if (gem_dir == "bearish" and consensus_agreed and gem_mat >= 0.50
+                and gem_conf >= 0.45 and price >= 0.60
+                and consensus_passes >= 2):
             strategies_to_try.append(("S13_deadzone_no", "NO", gem_conf))
+
+        # S14: QUICK TRADE — AI confident + any signal agrees (new strategy)
+        if (gem_dir != "neutral" and gem_conf >= 0.55 and gem_mat >= 0.55
+                and n_agree >= 1 and consensus_agreed):
+            strategies_to_try.append(("S14_quick_trade", _dir(gem_dir), gem_conf))
 
         if not strategies_to_try:
             _skip("no_strategy_fired")
@@ -795,13 +803,14 @@ def scan_and_trade() -> dict:
         # Now: each market produces exactly ONE trade under its top strategy.
         # Priority order based on empirical accuracy from the trial:
         STRAT_PRIORITY = {
-            "S8_rrf_highconv":   200,  # RRF ≥0.50 + consensus — top priority
-            "S9_sureshot":       150,  # High-confidence AI: mat≥0.55 + conf≥0.60
+            "S8_rrf_highconv":   200,  # RRF + consensus — primary workhorse
+            "S9_sureshot":       170,  # High-confidence AI
+            "S14_quick_trade":   160,  # Quick trade: AI confident + any signal
             "S10_multi_signal":  130,  # Multi-signal: n_agree≥2 + consensus
-            "S13_deadzone_no":   120,  # Dead zone NO trades — new high-ROI strategy
-            "S5_consensus":       90,  # Consensus-first: mat≥0.35 + rrf≥0.40
-            "S11_ai_only":        70,  # AI-only: strong AI without RRF
-            "S12_ai_solo":        65,  # AI solo — no consensus, high confidence only
+            "S13_deadzone_no":   120,  # Dead zone NO trades
+            "S5_consensus":       90,  # Consensus-first
+            "S11_ai_only":        70,  # AI-only
+            "S12_ai_solo":        65,  # AI solo — no consensus
             "S7_rrf_composite":   60,  # RRF composite (legacy)
             "S6_hi_materiality":  50,  # High materiality (legacy)
         }

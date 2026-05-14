@@ -55,8 +55,8 @@ DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "10"))
 # ─── Edge / Scoring Thresholds (HARDENED) ────────────────────────────────────
 # These are the MINIMUM requirements for a trade to fire
 EDGE_THRESHOLD      = float(os.getenv("EDGE_THRESHOLD", "0.12"))
-MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.65"))
-MIN_COMPOSITE_SCORE = float(os.getenv("MIN_COMPOSITE_SCORE", "0.55"))
+MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.50"))
+MIN_COMPOSITE_SCORE = float(os.getenv("MIN_COMPOSITE_SCORE", "0.45"))
 
 # Price caps — Target high ROI on fast-resolving markets
 # YES: entry 0.10–0.40 (buy cheap YES, win $1 = 150-900% ROI)
@@ -90,7 +90,7 @@ OPENAI_MODEL        = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 # ─── Consensus Settings ─────────────────────────────────────────────────────
 CONSENSUS_ENABLED   = os.getenv("CONSENSUS_ENABLED", "true").lower() == "true"
-CONSENSUS_PASSES    = int(os.getenv("CONSENSUS_PASSES", "3"))
+CONSENSUS_PASSES    = int(os.getenv("CONSENSUS_PASSES", "2"))
 CONSENSUS_MIN_AGREEMENT = float(os.getenv("CONSENSUS_MIN_AGREEMENT", "1.0"))
 STRICT_CONSENSUS    = os.getenv("STRICT_CONSENSUS", "true").lower() == "true"
 
@@ -116,13 +116,13 @@ DYNAMIC_WEIGHT_RANGES = {
 # ─── Market Filters ──────────────────────────────────────────────────────────
 SCAN_INTERVAL_MIN   = int(os.getenv("SCAN_INTERVAL_MIN", "5"))
 RESOLVE_INTERVAL_MIN = int(os.getenv("RESOLVE_INTERVAL_MIN", "2"))
-MAX_MARKETS_PER_SCAN = int(os.getenv("MAX_MARKETS_PER_SCAN", "400"))
-MAX_AI_CALLS_PER_SCAN = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "120"))
+MAX_MARKETS_PER_SCAN = int(os.getenv("MAX_MARKETS_PER_SCAN", "600"))
+MAX_AI_CALLS_PER_SCAN = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "200"))
 
 # ─── Demo / Go-Live ─────────────────────────────────────────────────────────
 ACCURACY_THRESHOLD  = float(os.getenv("ACCURACY_THRESHOLD", "65"))
 MIN_RESOLVED        = int(os.getenv("MIN_RESOLVED", "30"))
-DEMO_HOURS_WINDOW   = float(os.getenv("DEMO_HOURS_WINDOW", "38"))
+DEMO_HOURS_WINDOW   = float(os.getenv("DEMO_HOURS_WINDOW", "48"))
 
 # ─── Paths ───────────────────────────────────────────────────────────────────
 PROJECT_ROOT        = Path(__file__).parent
