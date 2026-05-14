@@ -36,6 +36,38 @@ TELEGRAM_API_ID     = os.getenv("TELEGRAM_API_ID", "")
 TELEGRAM_API_HASH   = os.getenv("TELEGRAM_API_HASH", "")
 APIFY_TOKEN         = os.getenv("APIFY_TOKEN", "")
 
+# ─── Twitter ────────────────────────────────────────────────────────────────
+TWITTER_BEARER_TOKEN = os.getenv("TWITTER_BEARER_TOKEN", "")
+TWITTER_KEYWORDS    = [
+    "polymarket", "prediction market", "betting odds",
+    "crypto regulation", "SEC", "bitcoin ETF", "election",
+    "Fed rate", "inflation", "GDP", "war", "tariff",
+    "AI regulation", "OpenAI", "FDA approval", "IPO",
+]
+
+# ─── Telegram ───────────────────────────────────────────────────────────────
+TELEGRAM_BOT_TOKEN  = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHANNEL_IDS = os.getenv("TELEGRAM_CHANNEL_IDS", "").split(",") if os.getenv("TELEGRAM_CHANNEL_IDS") else []
+
+# ─── RSS Feeds ──────────────────────────────────────────────────────────────
+RSS_FEEDS = [
+    "https://feeds.bbci.co.uk/news/world/rss.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
+    "https://feeds.reuters.com/reuters/topNews",
+    "https://feeds.bbci.co.uk/news/business/rss.xml",
+    "https://feeds.bbci.co.uk/news/technology/rss.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
+    "https://feeds.reuters.com/reuters/businessNews",
+    "https://feeds.reuters.com/reuters/technologyNews",
+    "https://cointelegraph.com/rss",
+    "https://decrypt.co/feed",
+    "https://www.theblock.co/rss.xml",
+    "https://www.coindesk.com/arc/outboundfeeds/rss/",
+    "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml",
+    "https://www.aljazeera.com/xml/rss/all.xml",
+    "https://feeds.nbcnews.com/nbcnews/public/news",
+]
+
 # ─── Database ────────────────────────────────────────────────────────────────
 # On Railway: /data/bot.db (persistent volume)
 # Locally: ./bot.db
@@ -123,6 +155,9 @@ MAX_AI_CALLS_PER_SCAN = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "150"))
 ACCURACY_THRESHOLD  = float(os.getenv("ACCURACY_THRESHOLD", "65"))
 MIN_RESOLVED        = int(os.getenv("MIN_RESOLVED", "30"))
 DEMO_HOURS_WINDOW   = float(os.getenv("DEMO_HOURS_WINDOW", "48"))
+
+# ─── Speed Target ───────────────────────────────────────────────────────────
+SPEED_TARGET_SECONDS = float(os.getenv("SPEED_TARGET_SECONDS", "5"))
 
 # ─── News Settings ───────────────────────────────────────────────────────
 NEWS_LOOKBACK_HOURS = int(os.getenv("NEWS_LOOKBACK_HOURS", "72"))

@@ -6,3 +6,7 @@ dockerfilePath = "Dockerfile"
 startCommand = "python run_both.py"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
+
+[[volumes]]
+mountPath = "/data"
+name = "polymarket-data"

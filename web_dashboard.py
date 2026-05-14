@@ -629,6 +629,39 @@ def api_runs():
     return jsonify({"runs": _get_runs(limit=limit)})
 
 
+@app.route("/api/profits")
+def api_profits():
+    """JSON API: profit summary focused on P&L metrics."""
+    summary = _get_summary()
+    exp = _get_expectations()
+    recent_wins = _q(
+        "SELECT market_question, side, bet_amount, pnl, created_at FROM demo_trades "
+        "WHERE result = 'win' ORDER BY id DESC LIMIT 20"
+    )
+    recent_losses = _q(
+        "SELECT market_question, side, bet_amount, pnl, created_at FROM demo_trades "
+        "WHERE result = 'loss' ORDER BY id DESC LIMIT 20"
+    )
+    total_invested = summary.get("bankroll", 30)
+    total_pnl = summary.get("total_pnl", 0)
+    roi_pct = round(total_pnl / total_invested * 100, 1) if total_invested > 0 else 0
+    return jsonify({
+        "total_pnl": total_pnl,
+        "todays_pnl": summary.get("todays_pnl", 0),
+        "accuracy_pct": summary.get("accuracy_pct", 0),
+        "total_trades": summary.get("total_trades", 0),
+        "total_resolved": summary.get("resolved", 0),
+        "wins": summary.get("wins", 0),
+        "losses": summary.get("losses", 0),
+        "pending": summary.get("pending", 0),
+        "roi_pct": roi_pct,
+        "avg_edge": exp.get("avg_edge", 0),
+        "avg_pnl": exp.get("avg_pnl", 0),
+        "recent_wins": recent_wins,
+        "recent_losses": recent_losses,
+    })
+
+
 @app.route("/api/config")
 def api_config():
     """JSON API: current configuration."""
