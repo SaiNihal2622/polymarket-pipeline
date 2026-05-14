@@ -670,7 +670,10 @@ def scan_and_trade() -> dict:
                         if p_dir not in ("bullish", "bearish", "neutral"):
                             p_dir = "neutral"
                         
-                        if p_dir != gem_dir:
+                        # Only block on OPPOSITE direction (bearish vs bullish).
+                        # "neutral" from skeptic is NOT a disagreement — the skeptic
+                        # just didn't find strong counter-evidence, which is fine.
+                        if p_dir != "neutral" and p_dir != gem_dir:
                             consensus_agreed = False
                             log.info(f"  [yellow]SKIP[/yellow] consensus disagreed on pass {p_idx+1}: {p_dir} vs {gem_dir}")
                             break
@@ -753,39 +756,42 @@ def scan_and_trade() -> dict:
         # Breakeven at ~25% accuracy (avg entry $0.25), so we can afford volume.
         # The dead-zone filter + price caps already guarantee high-ROI setups.
 
-        # S8: RRF + consensus — primary workhorse (widened for volume)
-        if (gem_dir != "neutral" and rrf_score >= 0.40 and consensus_agreed
-                and gem_mat >= 0.50
-                and consensus_passes >= 2):
+        # S8: RRF + consensus — primary workhorse (tightened for accuracy)
+        if (gem_dir != "neutral" and rrf_score >= 0.50 and consensus_agreed
+                and gem_mat >= 0.65
+                and consensus_passes >= 2
+                and non_neutral_count >= 2):
             strategies_to_try.append(("S8_rrf_highconv", _dir(gem_dir), gem_conf))
 
-        # S5: CONSENSUS-FIRST — consensus strong enough alone (widened)
-        if (gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.50
-                and gem_mat >= 0.50
-                and consensus_passes >= 2):
+        # S5: CONSENSUS-FIRST — consensus strong enough alone (tightened)
+        if (gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.55
+                and rrf_score >= 0.45
+                and gem_mat >= 0.60
+                and consensus_passes >= 3):
             strategies_to_try.append(("S5_consensus", _dir(gem_dir), consensus_score))
 
-        # S9: SURESHOT — high confidence AI (widened)
-        if (gem_dir != "neutral" and gem_mat >= 0.60 and gem_conf >= 0.50
+        # S9: SURESHOT — high confidence AI (tightened)
+        if (gem_dir != "neutral" and gem_mat >= 0.70 and gem_conf >= 0.60
+                and rrf_score >= 0.50
                 and consensus_agreed
                 and consensus_passes >= 2):
             strategies_to_try.append(("S9_sureshot", _dir(gem_dir), gem_conf))
 
-        # S10: MULTI-SIGNAL — multiple signals agree (widened)
+        # S10: MULTI-SIGNAL — multiple signals agree (tightened)
         if (gem_dir != "neutral" and n_agree >= 2 and consensus_agreed
-                and rrf_score >= 0.35 and gem_mat >= 0.45
+                and rrf_score >= 0.45 and gem_mat >= 0.60
                 and consensus_passes >= 2):
             strategies_to_try.append(("S10_multi_signal", _dir(gem_dir), gem_conf))
 
-        # S11: AI-ONLY — strong AI signal with consensus (widened)
-        if (gem_dir != "neutral" and gem_mat >= 0.55 and gem_conf >= 0.45
+        # S11: AI-ONLY — strong AI signal with consensus (tightened)
+        if (gem_dir != "neutral" and gem_mat >= 0.65 and gem_conf >= 0.55
                 and consensus_agreed
                 and consensus_passes >= 2):
             strategies_to_try.append(("S11_ai_only", _dir(gem_dir), gem_conf))
 
-        # S13: DEAD ZONE NO — bearish on high-price YES markets (widened)
-        if (gem_dir == "bearish" and consensus_agreed and gem_mat >= 0.50
-                and gem_conf >= 0.45 and price >= 0.60
+        # S13: DEAD ZONE NO — bearish on high-price YES markets (tightened)
+        if (gem_dir == "bearish" and consensus_agreed and gem_mat >= 0.60
+                and gem_conf >= 0.55 and price >= 0.60
                 and consensus_passes >= 2):
             strategies_to_try.append(("S13_deadzone_no", "NO", gem_conf))
 
