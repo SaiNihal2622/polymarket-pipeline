@@ -729,7 +729,7 @@ def scan_and_trade() -> dict:
         signals_record = {lbl: (f"{d}:{c:.3f}" if d != "neutral" and c > 0 else "neutral")
                           for lbl, d, c in all_sigs}
         signals_record["consensus"] = f"{gem_dir}:{consensus_score:.3f}" if consensus_agreed else "neutral"
-        signals_record["rrf"]       = f"{gem_dir}:{rrf_score:.3f}" if rrf_score >= 0.35 else "neutral"
+        signals_record["rrf"]       = f"{gem_dir}:{rrf_score:.3f}" if rrf_score >= 0.45 else "neutral"
 
         # Agreeing signals per direction (crowd EXCLUDED — 29% accuracy poisons signal)
         bull_sigs  = [(l,c) for l,d,c in all_sigs if d == "bullish" and c > 0 and l != "crowd"]
@@ -775,7 +775,8 @@ def scan_and_trade() -> dict:
         # We fire aggressively — AI direction alone is enough to trade.
 
         # S1: AI SIGNAL — any AI direction with decent confidence (PRIMARY DRIVER)
-        if gem_dir != "neutral" and gem_conf >= 0.35:
+        # S1: AI SIGNAL — require 55%+ confidence for high-ROI trades
+        if gem_dir != "neutral" and gem_conf >= 0.55:
             strategies_to_try.append(("S1_ai_signal", _dir(gem_dir), gem_conf))
 
         # S2: AI + NEWS — AI direction + news materiality
@@ -798,11 +799,13 @@ def scan_and_trade() -> dict:
                 strategies_to_try.append(("S5_copy_whale", _dir(sig_dir), max(sig_conf, gem_conf)))
 
         # S6: HIGH-RRF — RRF composite score indicates edge
-        if gem_dir != "neutral" and rrf_score >= 0.30:
+        # S6: HIGH-RRF — require 0.45+ RRF for quality trades
+        if gem_dir != "neutral" and rrf_score >= 0.45:
             strategies_to_try.append(("S6_high_rrf", _dir(gem_dir), max(gem_conf, rrf_score)))
 
         # S7: CONSENSUS — AI + skeptic agree (highest quality)
-        if gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.35:
+        # S7: CONSENSUS — AI + skeptic both agree with 55%+ confidence
+        if gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.55:
             strategies_to_try.append(("S7_consensus", _dir(gem_dir), max(gem_conf, consensus_score)))
 
         # S8: SURESHOT — AI very confident + news + multi-signal (top quality)
@@ -811,7 +814,8 @@ def scan_and_trade() -> dict:
             strategies_to_try.append(("S8_sureshot", _dir(gem_dir), gem_conf))
 
         # S9: DEAD ZONE NO — bearish on high-price YES markets
-        if gem_dir == "bearish" and gem_conf >= 0.35 and price >= 0.65:
+        # S9: DEAD ZONE NO — bearish on high-price YES, need 55%+ confidence
+        if gem_dir == "bearish" and gem_conf >= 0.55 and price >= 0.65:
             strategies_to_try.append(("S9_deadzone_no", "NO", gem_conf))
 
         # S10: PRICE OUTCOME — strongly directional price flow in extreme markets
@@ -875,7 +879,8 @@ def scan_and_trade() -> dict:
                 continue
             payout_ratio = (1.0 - bet_price) / bet_price
             ev           = strat_score * payout_ratio - (1.0 - strat_score)
-            if ev < 0.01:
+            # Require meaningful EV — at high-ROI payouts, need EV > 0.05
+            if ev < 0.05:
                 _skip("negative_ev")
                 continue  # skip negative-EV strategies
 
