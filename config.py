@@ -84,29 +84,28 @@ MIN_BET_USD         = 0.50
 TRADES_PER_DAY      = int(os.getenv("TRADES_PER_DAY", "100"))
 DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "20"))
 
-# ─── Edge / Scoring Thresholds (EXTREME ROI) ────────────────────────────────
-# HIGH thresholds = only trade when AI is very confident vs market
-# At 15-cent entry with 65% confidence: 4.3x expected return
-EDGE_THRESHOLD      = float(os.getenv("EDGE_THRESHOLD", "0.15"))
-MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.40"))
-MIN_COMPOSITE_SCORE = float(os.getenv("MIN_COMPOSITE_SCORE", "0.25"))
+# ─── Edge / Scoring Thresholds (ACCURACY-FOCUSED) ───────────────────────────
+# Per Polymarket strategy guide: minimum 4% edge, high materiality required
+# Conservative thresholds = fewer trades but much higher win rate
+EDGE_THRESHOLD      = float(os.getenv("EDGE_THRESHOLD", "0.08"))
+MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.70"))
+MIN_COMPOSITE_SCORE = float(os.getenv("MIN_COMPOSITE_SCORE", "0.55"))
 
-# Price caps — ULTRA HIGH ROI: 5x-20x payout ONLY
-# YES trades: entry 0.03–0.15 (buy cheap YES, win $1 = 567-3233% ROI)
-# NO trades:  entry when YES ≥ 0.85 (NO share ≤ 0.15, win $1 = 567-3233% ROI)
-# SKIP everything else (low ROI = waste of capital)
-# At 5x payout, breakeven accuracy = 17%. At 65% accuracy = 3.25x profit.
-MAX_BUY_PRICE       = float(os.getenv("MAX_BUY_PRICE", "0.25"))
-MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.30"))
+# Price caps — HIGH ROI with better accuracy
+# YES trades: entry 0.03–0.20 (buy cheap YES, win $1 = 400-3233% ROI)
+# NO trades: entry when YES ≥ 0.80 (NO share ≤ 0.20, win $1 = 400-3233% ROI)
+# Tighter range = more selective = better accuracy
+MAX_BUY_PRICE       = float(os.getenv("MAX_BUY_PRICE", "0.20"))
+MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.20"))
 MIN_YES_ENTRY_PRICE = float(os.getenv("MIN_YES_ENTRY_PRICE", "0.03"))
-MIN_NO_ENTRY_PRICE  = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.70"))
+MIN_NO_ENTRY_PRICE  = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.80"))
 MAX_NO_ENTRY_PRICE  = float(os.getenv("MAX_NO_ENTRY_PRICE", "0.97"))
-MAX_NO_BUY_PRICE    = float(os.getenv("MAX_NO_BUY_PRICE", "0.25"))
+MAX_NO_BUY_PRICE    = float(os.getenv("MAX_NO_BUY_PRICE", "0.20"))
 
 # Dead-zone: skip markets where YES price is between these values (low ROI)
-# WIDE dead zone: anything between 20-80 cents is low ROI
-DEAD_ZONE_LOW       = float(os.getenv("DEAD_ZONE_LOW", "0.30"))
-DEAD_ZONE_HIGH      = float(os.getenv("DEAD_ZONE_HIGH", "0.70"))
+# Wide dead zone: anything between 20-80 cents is low ROI
+DEAD_ZONE_LOW       = float(os.getenv("DEAD_ZONE_LOW", "0.20"))
+DEAD_ZONE_HIGH      = float(os.getenv("DEAD_ZONE_HIGH", "0.80"))
 
 # Fast-resolution filter: only take markets resolving within this window
 # 7 days max - focus on near-term events for faster capital turnover
@@ -124,11 +123,13 @@ GROQ_MODEL          = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 NVIDIA_MODEL        = os.getenv("NVIDIA_MODEL", "nvidia/llama-3.3-nemotron-super-49b-v1")
 OPENAI_MODEL        = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-# ─── Consensus Settings ─────────────────────────────────────────────────────
-CONSENSUS_ENABLED   = os.getenv("CONSENSUS_ENABLED", "false").lower() == "true"
-CONSENSUS_PASSES    = int(os.getenv("CONSENSUS_PASSES", "1"))
-CONSENSUS_MIN_AGREEMENT = float(os.getenv("CONSENSUS_MIN_AGREEMENT", "1.0"))
-STRICT_CONSENSUS    = os.getenv("STRICT_CONSENSUS", "true").lower() == "true"
+# ─── Consensus Settings (Multi-model ensemble per strategy guide) ─────────
+# Use 3 models with different prompts: analyst + skeptic + reflector
+# All must agree on direction (reduces false positives dramatically)
+CONSENSUS_ENABLED   = os.getenv("CONSENSUS_ENABLED", "true").lower() == "true"
+CONSENSUS_PASSES    = int(os.getenv("CONSENSUS_PASSES", "3"))
+CONSENSUS_MIN_AGREEMENT = float(os.getenv("CONSENSUS_MIN_AGREEMENT", "0.67"))
+STRICT_CONSENSUS    = os.getenv("STRICT_CONSENSUS", "false").lower() == "true"
 
 # ─── Signal Weights (RRF Composite) ─────────────────────────────────────────
 SIGNAL_WEIGHTS = {
@@ -153,7 +154,7 @@ DYNAMIC_WEIGHT_RANGES = {
 SCAN_INTERVAL_MIN   = int(os.getenv("SCAN_INTERVAL_MIN", "2"))
 RESOLVE_INTERVAL_MIN = int(os.getenv("RESOLVE_INTERVAL_MIN", "1"))
 MAX_MARKETS_PER_SCAN = int(os.getenv("MAX_MARKETS_PER_SCAN", "1000"))
-MAX_AI_CALLS_PER_SCAN = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "800"))
+MAX_AI_CALLS_PER_SCAN = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "200"))
 
 # ─── Demo / Go-Live ─────────────────────────────────────────────────────────
 ACCURACY_THRESHOLD  = float(os.getenv("ACCURACY_THRESHOLD", "65"))

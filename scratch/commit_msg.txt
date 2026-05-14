@@ -1,1 +1,9 @@
-Aggressive trading config + resolver fixes + DB path consistency
+Accuracy-focused: consensus, higher thresholds, probability-only edge
+
+- Enable 3-pass consensus (analyst + skeptic + reflector)
+- Materiality threshold 0.40 to 0.70 (reject noise signals)
+- Composite score 0.25 to 0.55 (strong signals only)
+- Max YES entry 0.30 to 0.20 (higher ROI trades)
+- Min NO entry 0.70 to 0.80 (higher ROI trades)
+- Dead zone 0.20-0.80 (wider, skip low-ROI middle)
+- Reject trades without LLM probability estimate

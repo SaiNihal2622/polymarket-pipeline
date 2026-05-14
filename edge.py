@@ -122,28 +122,27 @@ def detect_edge_v2(
         side = "YES"
         if market_price > 0.90:
             log.debug(f"[edge] REJECTED bullish but price={market_price:.2f} > 0.90 — already priced in")
-            return None  # already near-certain YES
-        # Use probability estimate for edge (NOT materiality — that measures importance, not likelihood)
+            return None
         model_prob = getattr(classification, 'probability', None)
         if model_prob and 0 < model_prob < 1:
             raw_edge = model_prob - market_price
         else:
-            # Fallback: conservative estimate using materiality as directional confidence
-            # Materiality 0.9 doesn't mean 90% prob — cap the boost at 15% over market
-            raw_edge = min(classification.materiality * 0.15, 0.20) * (1.0 - market_price) * 3
-            raw_edge = min(raw_edge, 0.30)  # cap fallback edge at 30%
+            # REJECT trades without probability estimate — strategy guide says
+            # "only trade when confidence exceeds threshold". No probability = no trade.
+            log.debug(f"[edge] REJECTED bullish — no probability estimate from LLM")
+            return None
         price_room = 1.0 - market_price
     else:  # bearish
         side = "NO"
         if market_price < 0.10:
             log.debug(f"[edge] REJECTED bearish but price={market_price:.2f} < 0.10 — already priced in")
-            return None  # already near-certain NO
+            return None
         model_prob = getattr(classification, 'probability', None)
         if model_prob and 0 < model_prob < 1:
             raw_edge = (1.0 - model_prob) - (1.0 - market_price)
         else:
-            raw_edge = min(classification.materiality * 0.15, 0.20) * market_price * 3
-            raw_edge = min(raw_edge, 0.30)
+            log.debug(f"[edge] REJECTED bearish — no probability estimate from LLM")
+            return None
         price_room = market_price
 
     # ── GATE 4b: Minimum ROI filter (ensures ≥100% ROI per trade) ─────────
