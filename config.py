@@ -90,20 +90,21 @@ EDGE_THRESHOLD      = float(os.getenv("EDGE_THRESHOLD", "0.12"))
 MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.45"))
 MIN_COMPOSITE_SCORE = float(os.getenv("MIN_COMPOSITE_SCORE", "0.45"))
 
-# Price caps — Target high ROI on fast-resolving markets
-# YES: entry 0.10–0.40 (buy cheap YES, win $1 = 150-900% ROI)
-# NO:  entry when YES price ≥ 0.65 (NO share ≤ 0.35, win $1 = 186-900% ROI)
-# SKIP: YES price 0.41–0.64 (middle zone — low ROI either direction)
-MAX_BUY_PRICE       = float(os.getenv("MAX_BUY_PRICE", "0.50"))
-MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.40"))
-MIN_YES_ENTRY_PRICE = float(os.getenv("MIN_YES_ENTRY_PRICE", "0.10"))
-MIN_NO_ENTRY_PRICE  = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.65"))
-MAX_NO_ENTRY_PRICE  = float(os.getenv("MAX_NO_ENTRY_PRICE", "0.90"))
-MAX_NO_BUY_PRICE    = float(os.getenv("MAX_NO_BUY_PRICE", "0.45"))
+# Price caps — EXTREME ROI focus: 4x-20x payout only
+# YES trades: entry 0.03–0.25 (buy cheap YES, win $1 = 300-3200% ROI)
+# NO trades:  entry when YES ≥ 0.75 (NO share ≤ 0.25, win $1 = 300-3200% ROI)
+# SKIP: YES price 0.26–0.74 (low ROI either direction — waste of capital)
+# At 4x payout, breakeven accuracy = 20%. At 70% accuracy = 3.5x profit.
+MAX_BUY_PRICE       = float(os.getenv("MAX_BUY_PRICE", "0.25"))
+MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.25"))
+MIN_YES_ENTRY_PRICE = float(os.getenv("MIN_YES_ENTRY_PRICE", "0.03"))
+MIN_NO_ENTRY_PRICE  = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.75"))
+MAX_NO_ENTRY_PRICE  = float(os.getenv("MAX_NO_ENTRY_PRICE", "0.97"))
+MAX_NO_BUY_PRICE    = float(os.getenv("MAX_NO_BUY_PRICE", "0.25"))
 
 # Dead-zone: skip markets where YES price is between these values (low ROI)
-DEAD_ZONE_LOW       = float(os.getenv("DEAD_ZONE_LOW", "0.41"))
-DEAD_ZONE_HIGH      = float(os.getenv("DEAD_ZONE_HIGH", "0.64"))
+DEAD_ZONE_LOW       = float(os.getenv("DEAD_ZONE_LOW", "0.26"))
+DEAD_ZONE_HIGH      = float(os.getenv("DEAD_ZONE_HIGH", "0.74"))
 
 # Fast-resolution filter: only take markets resolving within this window
 MAX_HOURS_TO_CLOSE  = float(os.getenv("MAX_HOURS_TO_CLOSE", "38"))
