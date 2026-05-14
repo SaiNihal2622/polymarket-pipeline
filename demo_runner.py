@@ -433,6 +433,19 @@ def scan_and_trade() -> dict:
         "round betting", "method of victory",
         # ── Exact score props (proven noise) ──
         "correct score", "exact score",
+        # ── WEATHER MARKETS (coin flips — AI has NO edge on temperature) ──
+        "highest temperature", "lowest temperature", "temperature in",
+        "weather in", "rain in", "snow in", "humidity in",
+        "wind speed", "heat wave", "cold snap",
+        # ── COMMODITY PRICE TARGETS (AI can't predict exact price levels) ──
+        "hit (high)", "hit (low)", "natural gas (ng)", "wti crude oil",
+        "crude oil", "gold (gc)", "silver (si)", "copper (hg)",
+        # ── GAMING SPEEDRUNS (pure skill/luck, no informational edge) ──
+        "speedrun", "xqc", "forsen", "minecraft speedrun",
+        # ── POLITICAL NOMINATIONS (too uncertain, low signal) ──
+        "republican nominee", "democratic nominee",
+        # ── ICEMAN / NICHE SHOW PROPS (no reliable data) ──
+        "iceman", "be said on",
     ]
 
     from price_feeds import verify_crypto_market, get_all_crypto_prices
@@ -519,12 +532,12 @@ def scan_and_trade() -> dict:
     # ★ HIGH THROUGHPUT: 600 markets per scan — maximum coverage
     MAX_MARKETS = config.MAX_MARKETS_PER_SCAN
 
-    # Get already-logged market IDs to avoid duplicates
+    # Get already-logged market IDs to avoid duplicates (ALL trades, not just pending)
     already_logged: set[str] = set()
     try:
         con = _db()
         rows = con.execute(
-            "SELECT DISTINCT market_id FROM demo_trades WHERE result = 'pending'"
+            "SELECT DISTINCT market_id FROM demo_trades"
         ).fetchall()
         con.close()
         already_logged = {r["market_id"] for r in rows}
@@ -765,14 +778,14 @@ def scan_and_trade() -> dict:
         if (gem_dir != "neutral" and gem_mat >= 0.55 and gem_conf >= 0.45
                 and rrf_score >= 0.40
                 and consensus_agreed
-                and consensus_passes >= 2
+                and consensus_passes >= 1
                 and n_agree >= 1):
             strategies_to_try.append(("S9_sureshot", _dir(gem_dir), gem_conf))
 
         # S8: RRF + consensus — primary workhorse (strict)
         if (gem_dir != "neutral" and rrf_score >= 0.45 and consensus_agreed
                 and gem_mat >= 0.50
-                and consensus_passes >= 2
+                and consensus_passes >= 1
                 and non_neutral_count >= 1):
             strategies_to_try.append(("S8_rrf_highconv", _dir(gem_dir), gem_conf))
 
@@ -780,31 +793,42 @@ def scan_and_trade() -> dict:
         if (gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.45
                 and rrf_score >= 0.35
                 and gem_mat >= 0.50
-                and consensus_passes >= 2):
+                and consensus_passes >= 1):
             strategies_to_try.append(("S5_consensus", _dir(gem_dir), consensus_score))
 
         # S10: MULTI-SIGNAL — multiple signals agree + consensus
         if (gem_dir != "neutral" and n_agree >= 2 and consensus_agreed
                 and rrf_score >= 0.35 and gem_mat >= 0.50
-                and consensus_passes >= 2):
+                and consensus_passes >= 1):
             strategies_to_try.append(("S10_multi_signal", _dir(gem_dir), gem_conf))
 
         # S11: AI-ONLY — strong AI signal with consensus
         if (gem_dir != "neutral" and gem_mat >= 0.60 and gem_conf >= 0.50
                 and consensus_agreed
-                and consensus_passes >= 2):
+                and consensus_passes >= 1):
             strategies_to_try.append(("S11_ai_only", _dir(gem_dir), gem_conf))
 
         # S13: DEAD ZONE NO — bearish on high-price YES (YES ≥ 0.75)
         if (gem_dir == "bearish" and consensus_agreed and gem_mat >= 0.55
                 and gem_conf >= 0.45 and price >= 0.75
-                and consensus_passes >= 2):
+                and consensus_passes >= 1):
             strategies_to_try.append(("S13_deadzone_no", "NO", gem_conf))
 
         # S14: QUICK TRADE — AI confident + any signal + consensus
         if (gem_dir != "neutral" and gem_conf >= 0.45 and gem_mat >= 0.50
                 and n_agree >= 1 and consensus_agreed):
             strategies_to_try.append(("S14_quick_trade", _dir(gem_dir), gem_conf))
+
+        # S15: AI SOLO — high materiality, no consensus required (volume driver)
+        if (gem_dir != "neutral" and gem_mat >= 0.50 and gem_conf >= 0.40
+                and rrf_score >= 0.30):
+            strategies_to_try.append(("S15_ai_solo", _dir(gem_dir), gem_conf))
+
+        # S16: COPY-WHALE — copy or whale signal + AI agrees direction
+        if (gem_dir != "neutral" and gem_mat >= 0.40 and gem_conf >= 0.35
+                and n_agree >= 1
+                and (cp_dir != "neutral" or wh_dir != "neutral")):
+            strategies_to_try.append(("S16_copy_whale", _dir(gem_dir), gem_conf))
 
         if not strategies_to_try:
             _skip("no_strategy_fired")
@@ -822,7 +846,7 @@ def scan_and_trade() -> dict:
             "S13_deadzone_no":   120,  # Dead zone NO trades
             "S5_consensus":       90,  # Consensus-first
             "S15_ai_solo":        85,  # AI solo — no consensus needed (high volume)
-            "S16_materiality":    80,  # High materiality play
+            "S16_copy_whale":     80,  # Copy/whale + AI agree direction
             "S11_ai_only":        70,  # AI-only
             "S12_ai_solo":        65,  # AI solo — no consensus
             "S7_rrf_composite":   60,  # RRF composite (legacy)
