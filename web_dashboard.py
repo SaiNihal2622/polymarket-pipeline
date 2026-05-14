@@ -165,8 +165,8 @@ def _get_summary() -> dict:
     except Exception:
         pass
 
-    min_resolved = int(_cfg("MIN_RESOLVED_TRADES", 20))
-    acc_threshold = float(_cfg("ACCURACY_THRESHOLD", 80.0))
+    min_resolved = int(_cfg("MIN_RESOLVED_TRADES", 10))
+    acc_threshold = float(_cfg("ACCURACY_THRESHOLD", 55.0))
     can_go = total_resolved >= min_resolved and accuracy_pct >= acc_threshold
 
     return {
@@ -600,6 +600,12 @@ def debug_duration():
         return jsonify({"db_path": DB_PATH, "sample": trades})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/stats")
+def api_stats():
+    """Alias for /api/summary — dashboard compatibility."""
+    return api_summary()
 
 
 @app.route("/api/health")

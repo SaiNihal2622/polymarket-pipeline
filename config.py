@@ -87,25 +87,24 @@ DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "20"))
 # ─── Edge / Scoring Thresholds (ACCURACY-FOCUSED) ───────────────────────────
 # Per Polymarket strategy guide: minimum 4% edge, high materiality required
 # Conservative thresholds = fewer trades but much higher win rate
-EDGE_THRESHOLD      = float(os.getenv("EDGE_THRESHOLD", "0.08"))
-MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.50"))
-MIN_COMPOSITE_SCORE = float(os.getenv("MIN_COMPOSITE_SCORE", "0.40"))
+EDGE_THRESHOLD      = float(os.getenv("EDGE_THRESHOLD", "0.03"))
+MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.20"))
+MIN_COMPOSITE_SCORE = float(os.getenv("MIN_COMPOSITE_SCORE", "0.20"))
 
-# Price caps — HIGH ROI with better accuracy
-# YES trades: entry 0.03–0.20 (buy cheap YES, win $1 = 400-3233% ROI)
-# NO trades: entry when YES ≥ 0.80 (NO share ≤ 0.20, win $1 = 400-3233% ROI)
-# Tighter range = more selective = better accuracy
-MAX_BUY_PRICE       = float(os.getenv("MAX_BUY_PRICE", "0.20"))
-MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.25"))
+# Price caps — HIGH ROI trades
+# YES trades: entry 0.03–0.30 (buy cheap YES, win $1 = 233-3233% ROI)
+# NO trades: entry when YES ≥ 0.70 (NO share ≤ 0.30, win $1 = 233-3233% ROI)
+MAX_BUY_PRICE       = float(os.getenv("MAX_BUY_PRICE", "0.40"))
+MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.45"))
 MIN_YES_ENTRY_PRICE = float(os.getenv("MIN_YES_ENTRY_PRICE", "0.03"))
-MIN_NO_ENTRY_PRICE  = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.75"))
+MIN_NO_ENTRY_PRICE  = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.55"))
 MAX_NO_ENTRY_PRICE  = float(os.getenv("MAX_NO_ENTRY_PRICE", "0.97"))
-MAX_NO_BUY_PRICE    = float(os.getenv("MAX_NO_BUY_PRICE", "0.20"))
+MAX_NO_BUY_PRICE    = float(os.getenv("MAX_NO_BUY_PRICE", "0.40"))
 
 # Dead-zone: skip markets where YES price is between these values (low ROI)
-# Wide dead zone: anything between 20-80 cents is low ROI
-DEAD_ZONE_LOW       = float(os.getenv("DEAD_ZONE_LOW", "0.25"))
-DEAD_ZONE_HIGH      = float(os.getenv("DEAD_ZONE_HIGH", "0.75"))
+# Narrow dead zone — only skip truly degenerate middle markets
+DEAD_ZONE_LOW       = float(os.getenv("DEAD_ZONE_LOW", "0.48"))
+DEAD_ZONE_HIGH      = float(os.getenv("DEAD_ZONE_HIGH", "0.52"))
 
 # Fast-resolution filter: only take markets resolving within this window
 # 7 days max - focus on near-term events for faster capital turnover
@@ -153,8 +152,8 @@ DYNAMIC_WEIGHT_RANGES = {
 # ─── Market Filters ──────────────────────────────────────────────────────────
 SCAN_INTERVAL_MIN   = int(os.getenv("SCAN_INTERVAL_MIN", "1"))
 RESOLVE_INTERVAL_MIN = int(os.getenv("RESOLVE_INTERVAL_MIN", "1"))
-MAX_MARKETS_PER_SCAN = int(os.getenv("MAX_MARKETS_PER_SCAN", "1000"))
-MAX_AI_CALLS_PER_SCAN = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "200"))
+MAX_MARKETS_PER_SCAN = int(os.getenv("MAX_MARKETS_PER_SCAN", "500"))
+MAX_AI_CALLS_PER_SCAN = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "150"))
 
 # ─── Demo / Go-Live ─────────────────────────────────────────────────────────
 ACCURACY_THRESHOLD  = float(os.getenv("ACCURACY_THRESHOLD", "65"))

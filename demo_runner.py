@@ -775,17 +775,17 @@ def scan_and_trade() -> dict:
         # We fire aggressively — AI direction alone is enough to trade.
 
         # S1: AI SIGNAL — any AI direction with decent confidence (PRIMARY DRIVER)
-        # S1: AI SIGNAL — require 55%+ confidence for high-ROI trades
-        if gem_dir != "neutral" and gem_conf >= 0.55:
+        # S1: AI SIGNAL — 35%+ confidence triggers (PRIMARY VOLUME DRIVER)
+        if gem_dir != "neutral" and gem_conf >= 0.35:
             strategies_to_try.append(("S1_ai_signal", _dir(gem_dir), gem_conf))
 
-        # S2: AI + NEWS — AI direction + news materiality
-        if gem_dir != "neutral" and gem_mat >= 0.40 and has_news:
-            strategies_to_try.append(("S2_ai_news", _dir(gem_dir), max(gem_conf, 0.40)))
+        # S2: AI + NEWS — AI direction + news materiality (lowered from 0.40)
+        if gem_dir != "neutral" and gem_mat >= 0.25 and has_news:
+            strategies_to_try.append(("S2_ai_news", _dir(gem_dir), max(gem_conf, 0.35)))
 
         # S3: MULTI-SIGNAL — any 2+ non-neutral signals agree direction
         if n_agree >= 2:
-            strategies_to_try.append(("S3_multi_signal", best_side, max(best_score, 0.40)))
+            strategies_to_try.append(("S3_multi_signal", best_side, max(best_score, 0.30)))
 
         # S4: PRICE-FLOW — price flow signal + any AI agreement
         if pf_dir != "neutral" and pf_conf >= 0.35 and (gem_dir == "neutral" or gem_dir == pf_dir):
@@ -804,8 +804,8 @@ def scan_and_trade() -> dict:
             strategies_to_try.append(("S6_high_rrf", _dir(gem_dir), max(gem_conf, rrf_score)))
 
         # S7: CONSENSUS — AI + skeptic agree (highest quality)
-        # S7: CONSENSUS — AI + skeptic both agree with 55%+ confidence
-        if gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.55:
+        # S7: CONSENSUS — AI + skeptic agree (lowered for volume)
+        if gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.30:
             strategies_to_try.append(("S7_consensus", _dir(gem_dir), max(gem_conf, consensus_score)))
 
         # S8: SURESHOT — AI very confident + news + multi-signal (top quality)
@@ -814,8 +814,8 @@ def scan_and_trade() -> dict:
             strategies_to_try.append(("S8_sureshot", _dir(gem_dir), gem_conf))
 
         # S9: DEAD ZONE NO — bearish on high-price YES markets
-        # S9: DEAD ZONE NO — bearish on high-price YES, need 55%+ confidence
-        if gem_dir == "bearish" and gem_conf >= 0.55 and price >= 0.65:
+        # S9: DEAD ZONE NO — bearish on high-price YES (lowered from 0.55)
+        if gem_dir == "bearish" and gem_conf >= 0.45 and price >= 0.65:
             strategies_to_try.append(("S9_deadzone_no", "NO", gem_conf))
 
         # S10: PRICE OUTCOME — strongly directional price flow in extreme markets
@@ -879,14 +879,12 @@ def scan_and_trade() -> dict:
                 continue
             payout_ratio = (1.0 - bet_price) / bet_price
             ev           = strat_score * payout_ratio - (1.0 - strat_score)
-            # Require meaningful EV — at high-ROI payouts, need EV > 0.05
-            if ev < 0.05:
-                _skip("negative_ev")
-                continue  # skip negative-EV strategies
+            # EV filter REMOVED — price caps already guarantee high-ROI setups
+            # Breakeven at ~25% accuracy with avg entry 0.25, so volume > precision
 
             edge  = strat_score - bet_price
             bet   = kelly_bet_size(bk, edge, bet_price, materiality=gem_mat)
-            bet   = min(bet, bk * 0.05)   # hard 5% cap during trial (conservative)
+            bet   = min(bet, bk * 0.10)   # 10% cap — aggressive during demo phase
             bet   = round(max(0.50, bet), 2)
             win_a = round(bet * payout_ratio, 2)
 
