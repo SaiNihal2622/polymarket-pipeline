@@ -1015,16 +1015,16 @@ def maybe_go_live(stats: dict, auto: bool = False):
 
 
 def _startup_cleanup():
-    """Remove orphaned pending trades older than 72h (market probably resolved without us)."""
+    """Remove orphaned pending trades older than 168h (market probably resolved without us)."""
     try:
         con = _db()
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=168)).isoformat()
         res = con.execute(
             "DELETE FROM demo_trades WHERE result = 'pending' AND created_at < ?",
             (cutoff,)
         )
         if res.rowcount > 0:
-            console.print(f"  [dim]🧹 Cleaned {res.rowcount} stale pending trades (>72h)[/dim]")
+            console.print(f"  [dim]🧹 Cleaned {res.rowcount} stale pending trades (>168h)[/dim]")
         con.commit()
         con.close()
     except Exception as e:

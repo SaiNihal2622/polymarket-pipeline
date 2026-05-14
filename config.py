@@ -103,15 +103,17 @@ MAX_NO_ENTRY_PRICE  = float(os.getenv("MAX_NO_ENTRY_PRICE", "0.97"))
 MAX_NO_BUY_PRICE    = float(os.getenv("MAX_NO_BUY_PRICE", "0.25"))
 
 # Dead-zone: skip markets where YES price is between these values (low ROI)
-DEAD_ZONE_LOW       = float(os.getenv("DEAD_ZONE_LOW", "0.35"))
-DEAD_ZONE_HIGH      = float(os.getenv("DEAD_ZONE_HIGH", "0.65"))
+# NARROWED: 0.42-0.58 to let more markets through
+DEAD_ZONE_LOW       = float(os.getenv("DEAD_ZONE_LOW", "0.42"))
+DEAD_ZONE_HIGH      = float(os.getenv("DEAD_ZONE_HIGH", "0.58"))
 
 # Fast-resolution filter: only take markets resolving within this window
-MAX_HOURS_TO_CLOSE  = float(os.getenv("MAX_HOURS_TO_CLOSE", "72"))
+# WIDENED to 168h (7 days) — was 72h which filtered 196 markets!
+MAX_HOURS_TO_CLOSE  = float(os.getenv("MAX_HOURS_TO_CLOSE", "168"))
 
 # ─── Volume Filter ───────────────────────────────────────────────────────────
 MIN_VOLUME_USD      = float(os.getenv("MIN_VOLUME_USD", "100"))
-MAX_VOLUME_USD      = float(os.getenv("MAX_VOLUME_USD", "500000"))
+MAX_VOLUME_USD      = float(os.getenv("MAX_VOLUME_USD", "1000000"))
 
 # ─── LLM Settings ────────────────────────────────────────────────────────────
 LLM_PROVIDER        = os.getenv("LLM_PROVIDER", "mimo")
@@ -147,15 +149,15 @@ DYNAMIC_WEIGHT_RANGES = {
 }
 
 # ─── Market Filters ──────────────────────────────────────────────────────────
-SCAN_INTERVAL_MIN   = int(os.getenv("SCAN_INTERVAL_MIN", "5"))
+SCAN_INTERVAL_MIN   = int(os.getenv("SCAN_INTERVAL_MIN", "3"))
 RESOLVE_INTERVAL_MIN = int(os.getenv("RESOLVE_INTERVAL_MIN", "2"))
-MAX_MARKETS_PER_SCAN = int(os.getenv("MAX_MARKETS_PER_SCAN", "300"))
-MAX_AI_CALLS_PER_SCAN = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "200"))
+MAX_MARKETS_PER_SCAN = int(os.getenv("MAX_MARKETS_PER_SCAN", "500"))
+MAX_AI_CALLS_PER_SCAN = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "300"))
 
 # ─── Demo / Go-Live ─────────────────────────────────────────────────────────
 ACCURACY_THRESHOLD  = float(os.getenv("ACCURACY_THRESHOLD", "65"))
 MIN_RESOLVED        = int(os.getenv("MIN_RESOLVED", "30"))
-DEMO_HOURS_WINDOW   = float(os.getenv("DEMO_HOURS_WINDOW", "72"))
+DEMO_HOURS_WINDOW   = float(os.getenv("DEMO_HOURS_WINDOW", "168"))
 
 # ─── Speed Target ───────────────────────────────────────────────────────────
 SPEED_TARGET_SECONDS = float(os.getenv("SPEED_TARGET_SECONDS", "5"))
