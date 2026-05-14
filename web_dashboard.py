@@ -602,6 +602,17 @@ def debug_duration():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/health")
+def api_health():
+    """Health check endpoint."""
+    trades = _q("SELECT COUNT(*) as c FROM demo_trades")
+    return jsonify({
+        "status": "ok",
+        "db_exists": Path(DB_PATH).is_file(),
+        "total_trades": trades[0]["c"] if trades else 0,
+        "uptime": "running",
+    })
+
 @app.route("/api/summary")
 def api_summary():
     """JSON API: summary stats."""
