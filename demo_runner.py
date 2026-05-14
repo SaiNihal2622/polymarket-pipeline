@@ -756,47 +756,47 @@ def scan_and_trade() -> dict:
         # Breakeven at ~25% accuracy (avg entry $0.25), so we can afford volume.
         # The dead-zone filter + price caps already guarantee high-ROI setups.
 
-        # S8: RRF + consensus — primary workhorse (tightened for accuracy)
-        if (gem_dir != "neutral" and rrf_score >= 0.50 and consensus_agreed
-                and gem_mat >= 0.65
+        # S8: RRF + consensus — primary workhorse
+        if (gem_dir != "neutral" and rrf_score >= 0.35 and consensus_agreed
+                and gem_mat >= 0.45
                 and consensus_passes >= 2
-                and non_neutral_count >= 2):
+                and non_neutral_count >= 1):
             strategies_to_try.append(("S8_rrf_highconv", _dir(gem_dir), gem_conf))
 
-        # S5: CONSENSUS-FIRST — consensus strong enough alone (tightened)
-        if (gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.55
-                and rrf_score >= 0.45
-                and gem_mat >= 0.60
-                and consensus_passes >= 3):
+        # S5: CONSENSUS-FIRST — consensus strong enough alone
+        if (gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.40
+                and rrf_score >= 0.30
+                and gem_mat >= 0.45
+                and consensus_passes >= 2):
             strategies_to_try.append(("S5_consensus", _dir(gem_dir), consensus_score))
 
-        # S9: SURESHOT — high confidence AI (tightened)
-        if (gem_dir != "neutral" and gem_mat >= 0.70 and gem_conf >= 0.60
-                and rrf_score >= 0.50
+        # S9: SURESHOT — high confidence AI
+        if (gem_dir != "neutral" and gem_mat >= 0.60 and gem_conf >= 0.50
+                and rrf_score >= 0.35
                 and consensus_agreed
                 and consensus_passes >= 2):
             strategies_to_try.append(("S9_sureshot", _dir(gem_dir), gem_conf))
 
-        # S10: MULTI-SIGNAL — multiple signals agree (tightened)
+        # S10: MULTI-SIGNAL — multiple signals agree
         if (gem_dir != "neutral" and n_agree >= 2 and consensus_agreed
-                and rrf_score >= 0.45 and gem_mat >= 0.60
+                and rrf_score >= 0.30 and gem_mat >= 0.45
                 and consensus_passes >= 2):
             strategies_to_try.append(("S10_multi_signal", _dir(gem_dir), gem_conf))
 
-        # S11: AI-ONLY — strong AI signal with consensus (tightened)
-        if (gem_dir != "neutral" and gem_mat >= 0.65 and gem_conf >= 0.55
+        # S11: AI-ONLY — strong AI signal with consensus
+        if (gem_dir != "neutral" and gem_mat >= 0.55 and gem_conf >= 0.45
                 and consensus_agreed
                 and consensus_passes >= 2):
             strategies_to_try.append(("S11_ai_only", _dir(gem_dir), gem_conf))
 
-        # S13: DEAD ZONE NO — bearish on high-price YES markets (tightened)
-        if (gem_dir == "bearish" and consensus_agreed and gem_mat >= 0.60
-                and gem_conf >= 0.55 and price >= 0.60
+        # S13: DEAD ZONE NO — bearish on high-price YES markets
+        if (gem_dir == "bearish" and consensus_agreed and gem_mat >= 0.50
+                and gem_conf >= 0.45 and price >= 0.60
                 and consensus_passes >= 2):
             strategies_to_try.append(("S13_deadzone_no", "NO", gem_conf))
 
-        # S14: QUICK TRADE — AI confident + any signal agrees (new strategy)
-        if (gem_dir != "neutral" and gem_conf >= 0.55 and gem_mat >= 0.55
+        # S14: QUICK TRADE — AI confident + any signal agrees
+        if (gem_dir != "neutral" and gem_conf >= 0.45 and gem_mat >= 0.45
                 and n_agree >= 1 and consensus_agreed):
             strategies_to_try.append(("S14_quick_trade", _dir(gem_dir), gem_conf))
 
