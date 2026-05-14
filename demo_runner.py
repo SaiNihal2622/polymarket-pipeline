@@ -607,15 +607,15 @@ def scan_and_trade() -> dict:
         has_news  = len(matched_headlines) >= 1
         has_news2 = len(matched_headlines) >= 2
 
-        # ★ WIDE: analyze any market closing within window with any volume
+        # ★ WIDE: analyze any market closing within window
         should_research = (
             ai_calls_left > 0 and hours_left <= DEMO_HOURS_WINDOW
-            and market.volume >= 5
+            and market.volume >= 0
         )
         if should_research:
             try:
                 gem_res_obj = research_market(market, news_context=matched_headlines)
-                if gem_res_obj.direction in ("bullish","bearish") and gem_res_obj.materiality >= 0.50:
+                if gem_res_obj.direction in ("bullish","bearish") and gem_res_obj.materiality >= 0.15:
                     gem_dir  = gem_res_obj.direction
                     gem_mat  = gem_res_obj.materiality
                     # BUG FIX: materiality ≠ probability!
@@ -795,10 +795,19 @@ def scan_and_trade() -> dict:
                 and consensus_passes >= 2):
             strategies_to_try.append(("S13_deadzone_no", "NO", gem_conf))
 
-        # S14: QUICK TRADE — AI confident + any signal agrees
-        if (gem_dir != "neutral" and gem_conf >= 0.45 and gem_mat >= 0.45
-                and n_agree >= 1 and consensus_agreed):
+        # S14: QUICK TRADE — AI confident + any signal agrees (consensus optional)
+        if (gem_dir != "neutral" and gem_conf >= 0.40 and gem_mat >= 0.40
+                and n_agree >= 1):
             strategies_to_try.append(("S14_quick_trade", _dir(gem_dir), gem_conf))
+
+        # S15: AI SOLO — any AI signal, no consensus needed
+        # This is the workhorse for high volume — relies on price safety net
+        if (gem_dir != "neutral" and gem_mat >= 0.20 and gem_conf >= 0.20):
+            strategies_to_try.append(("S15_ai_solo", _dir(gem_dir), gem_conf))
+
+        # S16: MATERIALITY PLAY — high materiality with any AI signal
+        if (gem_dir != "neutral" and gem_mat >= 0.30 and gem_conf >= 0.15):
+            strategies_to_try.append(("S16_materiality", _dir(gem_dir), gem_mat))
 
         if not strategies_to_try:
             _skip("no_strategy_fired")
@@ -815,6 +824,8 @@ def scan_and_trade() -> dict:
             "S10_multi_signal":  130,  # Multi-signal: n_agree≥2 + consensus
             "S13_deadzone_no":   120,  # Dead zone NO trades
             "S5_consensus":       90,  # Consensus-first
+            "S15_ai_solo":        85,  # AI solo — no consensus needed (high volume)
+            "S16_materiality":    80,  # High materiality play
             "S11_ai_only":        70,  # AI-only
             "S12_ai_solo":        65,  # AI solo — no consensus
             "S7_rrf_composite":   60,  # RRF composite (legacy)

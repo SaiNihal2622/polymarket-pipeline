@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Polymarket Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{--bg:#0d1117;--surface:#161b22;--border:#21262d;--fg:#e6edf3;
+    --muted:#8b949e;--accent:#58a6ff;--green:#3fb950;--red:#f85149;
+    --orange:#d29922;--purple:#bc8cff;--font:system-ui,-apple-system,sans-serif}
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:var(--font);background:var(--bg);color:var(--fg);line-height:1.5;font-size:14px}
+    .container{max-width:1600px;margin:0 auto;padding:16px 24px}
+    .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
+    .top h1{font-size:20px;font-weight:600;display:flex;align-items:center;gap:8px}
+    .top h1 .dot{width:10px;height:10px;border-radius:50%;background:var(--green);display:inline-block}
+    .meta{color:var(--muted);font-size:12px;text-align:right}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-bottom:24px}
+    .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 18px}
+    .card h3{font-size:11px;text-transform:uppercase;color:var(--muted);margin-bottom:4px;letter-spacing:.05em}
+    .card .v{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums}
+    .card .sub{font-size:11px;color:var(--muted);margin-top:2px}
+    .green{color:var(--green)}.red{color:var(--red)}.orange{color:var(--orange)}.blue{color:var(--accent)}.purple{color:var(--purple)}
+    .section{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px;margin-bottom:20px;overflow-x:auto}
+    .section h2{font-size:14px;font-weight:600;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);color:var(--muted);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+    td{padding:8px 10px;border-bottom:1px solid var(--border)}
+    tr:last-child td{border-bottom:none}
+    tr:hover td{background:rgba(88,166,255,.04)}
+    .win{color:var(--green);font-weight:600}.loss{color:var(--red);font-weight:600}.pending{color:var(--orange);font-weight:600}
+    .pill{display:inline-block;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:500}
+    .pill.yes{background:rgba(63,185,80,.15);color:var(--green)}.pill.no{background:rgba(248,81,73,.15);color:var(--red)}
+    .pill.pending{background:rgba(210,153,34,.15);color:var(--orange)}
+    .pulse{animation:pulse 2s ease-in-out infinite}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+    a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+    .bar{height:6px;background:var(--border);border-radius:3px;margin-top:4px;overflow:hidden}
+    .bar .fill{height:100%;border-radius:3px;transition:width .3s}
+    .chip{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:600;margin-right:4px;background:rgba(88,166,255,.15);color:var(--accent)}
+    .chip.news{background:rgba(188,140,255,.15);color:var(--purple)}
+    .chip.signal{background:rgba(63,185,80,.12);color:var(--green)}
+    .flex{display:flex;gap:12px;flex-wrap:wrap}.flex .card{flex:1;min-width:200px}
+    @media(max-width:900px){.grid{grid-template-columns:1fr 1fr}.flex{flex-direction:column}}
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="top">
+    <h1><span class="dot pulse"></span> Polymarket Dashboard</h1>
+    <div class="meta">Wed 13 May 2026, 10:51 AM IST<br>DB: /data/trades.db</div>
+  </div>
+
+  <!-- KPI Cards -->
+  <div class="grid">
+    <div class="card">
+      <h3>Accuracy</h3>
+      <div class="v red">0.0%</div>
+      <div class="sub">0W / 0L (0 resolved)</div>
+    </div>
+    <div class="card">
+      <h3>Total PnL</h3>
+      <div class="v green">$0.00</div>
+      <div class="sub">Today: $0.00</div>
+    </div>
+    <div class="card">
+      <h3>Trades</h3>
+      <div class="v">0</div>
+      <div class="sub">0 pending · 0 resolved</div>
+    </div>
+    <div class="card">
+      <h3>Go-Live</h3>
+      <div class="v orange">🔒 20 more needed</div>
+      <div class="sub">Need 0% accuracy (0.0% current)</div>
+    </div>
+    <div class="card">
+      <h3>Bankroll</h3>
+      <div class="v">$30.00</div>
+      <div class="sub">Max bet: $3.00 (10%)</div>
+    </div>
+    <div class="card">
+      <h3>Avg Edge</h3>
+      <div class="v blue">0.00</div>
+      <div class="sub">Avg PnL/trade: $0.00</div>
+    </div>
+  </div>
+
+  <!-- Trade Log -->
+  <div class="section">
+    <h2>📋 Trade Log (0 most recent)</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>#</th><th>Market</th><th>Side</th><th>Entry</th>
+          <th>Edge</th><th>Confidence</th><th>Bet $</th><th>Result</th>
+          <th>PnL</th><th>Strategy</th><th>Duration</th>
+        </tr>
+      </thead>
+      <tbody>
+        
+        
+        <tr><td colspan="11" style="text-align:center;color:var(--muted);padding:24px">No trades yet — the demo runner will start placing trades soon.</td></tr>
+        
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Diagnostics -->
+  <div class="section">
+    <h2>🔧 Database Diagnostics</h2>
+    <table>
+      <thead><tr><th>Table</th><th>Row Count</th></tr></thead>
+      <tbody>
+        
+          
+          <tr><td>trades</td><td>0</td></tr>
+          
+        
+          
+          <tr><td>outcomes</td><td>0</td></tr>
+          
+        
+          
+          <tr><td>pipeline_runs</td><td>0</td></tr>
+          
+        
+          
+          <tr><td>news_events</td><td>0</td></tr>
+          
+        
+          
+          <tr><td>calibration</td><td>0</td></tr>
+          
+        
+          
+        
+        
+      </tbody>
+    </table>
+    <div style="margin-top:12px">
+      <a href="/reset_db" onclick="return confirm('Reset all trades? This cannot be undone.')"
+         style="font-size:12px;color:var(--red)">🗑 Reset DB</a>
+    </div>
+  </div>
+
+  <!-- Config -->
+  <div class="section">
+    <h2>⚙️ Configuration</h2>
+    <table>
+      <thead><tr><th>Setting</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td>Bankroll</td><td>$30.00</td></tr>
+        <tr><td>Max Bet %</td><td>10%</td></tr>
+        <tr><td>Strategy</td><td>edge_weighted</td></tr>
+        <tr><td>ML Scoring</td><td>OFF</td></tr>
+        <tr><td>Adaptive Thresholds</td><td>OFF</td></tr>
+        <tr><td>Risk Engine</td><td>ON</td></tr>
+        <tr><td>Referral Rake</td><td>0.0% (cap $0.0)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+</body>
+</html>

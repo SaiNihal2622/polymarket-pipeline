@@ -12,3 +12,13 @@ nul
 .claude/
 .vscode/
 data/
+  
+gh_api_push.py  
+gh_contents_push.py  
+gh_push.py  
+push_now.py  
+bot.db  
+polycool_market.session  
+session_b64.txt  
+polycool_session.session  
+*.session 

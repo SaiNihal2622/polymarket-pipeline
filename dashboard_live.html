@@ -1,0 +1,976 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Polymarket Vibe Pipeline</title>
+<meta http-equiv="refresh" content="20">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #05070a;
+    --panel: rgba(17, 24, 39, 0.7);
+    --border: rgba(255, 255, 255, 0.08);
+    --text: #f3f4f6;
+    --muted: #9ca3af;
+    --accent: #10b981;
+    --win: #10b981;
+    --loss: #ef4444;
+    --warn: #f59e0b;
+    --cyan: #0ea5e9;
+    --glass: rgba(255, 255, 255, 0.03);
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Inter', sans-serif;
+    background: var(--bg);
+    background-image: 
+        radial-gradient(at 0% 0%, rgba(16, 185, 129, 0.05) 0px, transparent 50%),
+        radial-gradient(at 100% 0%, rgba(14, 165, 233, 0.05) 0px, transparent 50%);
+    color: var(--text);
+    margin: 0;
+    padding: 24px;
+    min-height: 100vh;
+  }
+  .container { max-width: 1400px; margin: 0 auto; }
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 32px;
+  }
+  h1 { 
+    margin: 0; 
+    font-size: 24px; 
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    background: linear-gradient(135deg, #fff 0%, #9ca3af 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .refresh-tag {
+    font-size: 12px;
+    color: var(--muted);
+    background: var(--glass);
+    padding: 4px 12px;
+    border-radius: 100px;
+    border: 1px solid var(--border);
+  }
+  .grid { display: grid; gap: 20px; }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid-2 { grid-template-columns: 1fr 1fr; }
+  
+  .panel {
+    background: var(--panel);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    transition: transform 0.2s ease, border-color 0.2s ease;
+  }
+  .panel:hover {
+    border-color: rgba(255, 255, 255, 0.15);
+  }
+  
+  h2 {
+    margin: 0 0 20px 0;
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  
+  .stat-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .stat-row:last-child { border-bottom: 0; }
+  .stat-label { color: var(--muted); font-size: 14px; }
+  .stat-value { font-weight: 600; font-size: 16px; }
+  .stat-value.large { font-size: 24px; }
+  
+  .win { color: var(--win); }
+  .loss { color: var(--loss); }
+  .warn { color: var(--warn); }
+  
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  th {
+    text-align: left;
+    padding: 12px 8px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+  }
+  td {
+    padding: 16px 8px;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  tr:last-child td { border-bottom: 0; }
+  tr:hover { background: rgba(255, 255, 255, 0.02); }
+  
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.025em;
+  }
+  .pill-yes { background: rgba(16, 185, 129, 0.1); color: #34d399; }
+  .pill-no { background: rgba(239, 68, 68, 0.1); color: #f87171; }
+  .pill-pending { background: rgba(245, 158, 11, 0.1); color: #fbbf24; }
+  .pill-blocked { background: rgba(239, 68, 68, 0.12); color: #fca5a5; }
+  .pill-ok { background: rgba(16, 185, 129, 0.12); color: #86efac; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .small { font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .api-link { color: #7dd3fc; text-decoration: none; font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+  .api-link:hover { text-decoration: underline; }
+  .rule-list { margin: 0; padding-left: 18px; color: var(--text); font-size: 13px; line-height: 1.7; }
+  .log-box { max-height: 260px; overflow: auto; background: rgba(0,0,0,0.28); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+  .log-line { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #cbd5e1; white-space: pre-wrap; border-bottom: 1px solid rgba(255,255,255,0.04); padding: 3px 0; }
+  
+  .strategy-item {
+    margin-bottom: 16px;
+  }
+  .strategy-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    font-size: 14px;
+  }
+  .progress-bg {
+    width: 100%;
+    height: 6px;
+    background: var(--border);
+    border-radius: 100px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--cyan), var(--accent));
+    border-radius: 100px;
+  }
+  
+  .signal-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    background: var(--glass);
+    border: 1px solid var(--border);
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-right: 4px;
+    color: var(--muted);
+  }
+  
+  .question-cell {
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+  
+  .accuracy-circle {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    border: 4px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    position: relative;
+  }
+  
+  .footer {
+    margin-top: 48px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 10px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+  @media (max-width: 1024px) {
+    .grid-3 { grid-template-columns: 1fr; }
+    .grid-2 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <h1>Polymarket Accuracy Pipeline <span style="color:var(--muted); font-weight: 300;">v3.1</span></h1>
+    <div class="refresh-tag">
+      Live • Updates every 20s • 2026-05-11 20:23 UTC
+    </div>
+  </header>
+
+  <!-- SUMMARY CARDS -->
+  <div class="grid grid-3" style="margin-bottom: 32px;">
+    
+    <div class="panel">
+      <h2><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2" ry="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg> Performance</h2>
+      <div class="stat-card">
+        <div class="stat-row">
+          <span class="stat-label">Current Bankroll</span>
+          <span class="stat-value large accent">$95.04</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Today's PnL</span>
+          <span class="stat-value win">$65.04</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Total Net Profit</span>
+          <span class="stat-value win">$65.04</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20v-6M6 20V10M18 20V4"/></svg> Accuracy Metrics</h2>
+      <div class="stat-card">
+        <div class="stat-row">
+          <span class="stat-label">Win Rate</span>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <span class="stat-value large loss">
+              44.8%
+            </span>
+          </div>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Wins / Losses</span>
+          <span class="stat-value"><span class="win">13W</span> / <span class="loss">16L</span></span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Resolved / Pending</span>
+          <span class="stat-value">29 / <span class="warn">0</span></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Readiness</h2>
+      <div class="stat-card">
+        <div class="stat-row">
+          <span class="stat-label">System Mode</span>
+          <span class="stat-value warn">
+            DRY-RUN / TRIAL
+          </span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Trial Progress</span>
+          <span class="stat-value">29 / 20</span>
+        </div>
+        <div class="progress-bg"><div class="progress-fill" style="width: 145.0%"></div></div>
+        <div class="stat-row" style="margin-top: 4px; border-bottom:0;">
+          <span class="stat-label">Gate Status</span>
+          <span class="stat-value win">
+             OPEN
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ENGINE TRANSPARENCY -->
+  <div class="grid grid-2" style="margin-bottom: 32px;">
+    <div class="panel">
+      <h2>🧠 Trade Engine Rules</h2>
+      <ul class="rule-list">
+        <li><strong>Mode:</strong> <span class="warn">DRY-RUN</span></li>
+        <li><strong>YES entry:</strong> only when YES price ≤ <span class="mono">30¢</span></li>
+        <li><strong>NO entry:</strong> only when YES price ≥ <span class="mono">50¢</span> (NO price ≤ <span class="mono">50¢</span>)</li>
+        <li><strong>Middle zone:</strong> 31¢–49¢ YES is intentionally blocked to avoid coin-flip trades.</li>
+        <li><strong>Edge gate:</strong> model edge must be ≥ <span class="mono">15%</span></li>
+        <li><strong>Consensus:</strong> 3 passes, strict=True, enabled=True</li>
+        <li><strong>Materiality:</strong> news must score ≥ <span class="mono">55%</span></li>
+        <li><strong>Risk:</strong> max bet $1.0 • daily loss limit $10.0</li>
+        <li><strong>Categories:</strong> <span class="mono" style="font-size: 11px;">ai, technology, crypto, politics, science, finance, world, other</span></li>
+        <li><strong>Scan interval:</strong> 5min • Resolve check: 6min • Window: 30.0h</li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <h2>📈 Next 24h Expectations</h2>
+      <div class="stat-card">
+        <div class="stat-row"><span class="stat-label">Expected Trades</span><span class="stat-value">0-3 likely; more only if strong matching news appears</span></div>
+        <div class="stat-row"><span class="stat-label">Expected Resolved</span><span class="stat-value">0-3 depending on market close times</span></div>
+        <div class="stat-row"><span class="stat-label">Accuracy Target</span><span class="stat-value win">80% after 20+ resolved trades</span></div>
+        <div class="stat-row"><span class="stat-label">Real Profit</span><span class="stat-value warn">$0 while DRY-RUN/TRIAL is enabled</span></div>
+        <div class="stat-row"><span class="stat-label">Demo PnL Range</span><span class="stat-value">roughly -$3 to +$5 with $1 flat demo bets if 0-3 trades fire</span></div>
+        <div class="small" style="margin-top:10px;">10% disaster risk: Much lower than before, but not impossible; trial gate blocks live trading until proven.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STRATEGIES & SIGNALS -->
+  <div class="grid grid-2" style="margin-bottom: 32px;">
+    <div class="panel">
+      <h2>🏆 Strategy Leaderboard</h2>
+      
+      
+        
+        <div class="strategy-item">
+          <div class="strategy-header">
+            <span style="font-weight: 500;">S10_multi_signal</span>
+            <span><span class="win">100.0%</span> <span class="muted">acc</span></span>
+          </div>
+          <div class="progress-bg"><div class="progress-fill" style="width: 100.0%"></div></div>
+          <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">
+            1W - 0L •  trades • $7.88 PnL
+          </div>
+        </div>
+      
+        
+        <div class="strategy-item">
+          <div class="strategy-header">
+            <span style="font-weight: 500;">S8_rrf_highconv</span>
+            <span><span class="warn">42.9%</span> <span class="muted">acc</span></span>
+          </div>
+          <div class="progress-bg"><div class="progress-fill" style="width: 42.857142857142854%"></div></div>
+          <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">
+            12W - 16L •  trades • $57.16 PnL
+          </div>
+        </div>
+      
+    </div>
+
+    <div class="panel">
+      <h2>📡 Signal Intelligence</h2>
+      
+      <table>
+        <thead>
+          <tr><th>Signal</th><th>Acc</th><th>Decisive</th><th>Weight</th></tr>
+        </thead>
+        <tbody>
+          
+          <tr>
+            <td><strong>AI Research</strong></td>
+            <td class="warn">44.8%</td>
+            <td>29</td>
+            <td>
+              <div class="progress-bg" style="width: 60px;"><div class="progress-fill" style="width: 44.8%"></div></div>
+            </td>
+          </tr>
+          
+          <tr>
+            <td><strong>consensus</strong></td>
+            <td class="warn">44.8%</td>
+            <td>29</td>
+            <td>
+              <div class="progress-bg" style="width: 60px;"><div class="progress-fill" style="width: 44.8%"></div></div>
+            </td>
+          </tr>
+          
+          <tr>
+            <td><strong>rrf</strong></td>
+            <td class="warn">44.8%</td>
+            <td>29</td>
+            <td>
+              <div class="progress-bg" style="width: 60px;"><div class="progress-fill" style="width: 44.8%"></div></div>
+            </td>
+          </tr>
+          
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- RECENT TRADES -->
+  <div class="panel" style="margin-bottom: 32px;">
+    <h2>💼 Active & Recent Trades</h2>
+    <div style="overflow-x: auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th><th>Market Question</th><th>Side</th><th>Edge</th><th>Amount</th><th>Status</th><th>Exp. Profit</th><th>Res. Duration</th><th>Result</th><th>TTR</th>
+          </tr>
+        </thead>
+        <tbody>
+          
+          <tr>
+            <td class="muted">19:02</td>
+            <td class="question-cell" title="Spread: US Catanzaro 1929 (-1.5)">Spread: US Catanzaro 1929 (-1.5)</td>
+            <td><span class="pill pill-yes">YES</span></td>
+            <td class="win">+45.0%</td>
+            <td>$4.05</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+8.48</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">1h 13m</td>
+            <td>
+              
+                <span class="loss" style="font-weight: 700;">LOSS <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$-4.05</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">1h 13m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">18:35</td>
+            <td class="question-cell" title="XRP Up or Down - May 11, 12:00PM-4:00PM ET">XRP Up or Down - May 11, 12:00PM-4:00PM ET</td>
+            <td><span class="pill pill-yes">YES</span></td>
+            <td class="win">+54.0%</td>
+            <td>$3.76</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+9.23</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">4m</td>
+            <td>
+              
+                <span class="win" style="font-weight: 700;">WIN <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$13.33</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">4m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">18:09</td>
+            <td class="question-cell" title="Will Moreirense FC win on 2026-05-11?">Will Moreirense FC win on 2026-05-11?</td>
+            <td><span class="pill pill-yes">YES</span></td>
+            <td class="win">+46.0%</td>
+            <td>$3.76</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+8.44</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">36m</td>
+            <td>
+              
+                <span class="loss" style="font-weight: 700;">LOSS <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$-3.76</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">36m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">17:28</td>
+            <td class="question-cell" title="Spread: Modern SC (-1.5)">Spread: Modern SC (-1.5)</td>
+            <td><span class="pill pill-yes">YES</span></td>
+            <td class="win">+50.4%</td>
+            <td>$3.76</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+13.54</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">1h 17m</td>
+            <td>
+              
+                <span class="loss" style="font-weight: 700;">LOSS <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$-3.76</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">1h 17m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">17:12</td>
+            <td class="question-cell" title="WTI Crude Oil (WTI) closes above $98 on May 11?">WTI Crude Oil (WTI) closes above $98 on May 11?</td>
+            <td><span class="pill pill-no">NO</span></td>
+            <td class="win">+58.0%</td>
+            <td>$3.96</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+12.76</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">1h 53m</td>
+            <td>
+              
+                <span class="win" style="font-weight: 700;">WIN <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$18.04</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">1h 53m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">17:01</td>
+            <td class="question-cell" title="Spread: RC Celta de Vigo (-1.5)">Spread: RC Celta de Vigo (-1.5)</td>
+            <td><span class="pill pill-yes">YES</span></td>
+            <td class="win">+32.2%</td>
+            <td>$3.96</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+4.32</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">15m</td>
+            <td>
+              
+                <span class="loss" style="font-weight: 700;">LOSS <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$-3.96</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">15m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">16:25</td>
+            <td class="question-cell" title="Will CZ post 0-19 posts from May 5 to May 12, 2026?">Will CZ post 0-19 posts from May 5 to May 12, 2026?</td>
+            <td><span class="pill pill-yes">YES</span></td>
+            <td class="win">+36.1%</td>
+            <td>$3.99</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+8.95</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">4m</td>
+            <td>
+              
+                <span class="loss" style="font-weight: 700;">LOSS <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$-3.99</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">4m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">16:02</td>
+            <td class="question-cell" title="Will Elche CF win on 2026-05-12?">Will Elche CF win on 2026-05-12?</td>
+            <td><span class="pill pill-yes">YES</span></td>
+            <td class="win">+49.0%</td>
+            <td>$3.23</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+9.04</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">8m</td>
+            <td>
+              
+                <span class="win" style="font-weight: 700;">WIN <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$15.23</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">8m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">16:02</td>
+            <td class="question-cell" title="Game 1: Both Teams Slay Baron Nashor?">Game 1: Both Teams Slay Baron Nashor?</td>
+            <td><span class="pill pill-no">NO</span></td>
+            <td class="win">+12.2%</td>
+            <td>$3.23</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+0.80</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">41m</td>
+            <td>
+              
+                <span class="win" style="font-weight: 700;">WIN <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$3.30</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">41m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">15:32</td>
+            <td class="question-cell" title="Will Greece win the first Eurovision Semi-Final?">Will Greece win the first Eurovision Semi-Final?</td>
+            <td><span class="pill pill-yes">YES</span></td>
+            <td class="win">+42.5%</td>
+            <td>$3.40</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+6.02</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">33s</td>
+            <td>
+              
+                <span class="loss" style="font-weight: 700;">LOSS <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$-3.40</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">0m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">15:05</td>
+            <td class="question-cell" title="Will FK Krasnodar win on 2026-05-11?">Will FK Krasnodar win on 2026-05-11?</td>
+            <td><span class="pill pill-no">NO</span></td>
+            <td class="win">+42.5%</td>
+            <td>$3.21</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+3.00</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">44s</td>
+            <td>
+              
+                <span class="win" style="font-weight: 700;">WIN <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$3.84</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">0m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">14:57</td>
+            <td class="question-cell" title="Spread: Tottenham Hotspur FC (-2.5)">Spread: Tottenham Hotspur FC (-2.5)</td>
+            <td><span class="pill pill-yes">YES</span></td>
+            <td class="win">+62.5%</td>
+            <td>$3.13</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+14.49</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">38s</td>
+            <td>
+              
+                <span class="loss" style="font-weight: 700;">LOSS <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$-3.13</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">0m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">14:41</td>
+            <td class="question-cell" title="XRP Up or Down - May 11, 8:00AM-12:00PM ET">XRP Up or Down - May 11, 8:00AM-12:00PM ET</td>
+            <td><span class="pill pill-no">NO</span></td>
+            <td class="win">+35.7%</td>
+            <td>$2.74</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+3.76</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">3m</td>
+            <td>
+              
+                <span class="win" style="font-weight: 700;">WIN <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$7.80</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">3m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">14:36</td>
+            <td class="question-cell" title="Will Donald Trump post 180-199 Truth Social posts from May 5 to May 12, 2026?">Will Donald Trump post 180-199 Truth Social posts from May 5 to May 12, 2026?</td>
+            <td><span class="pill pill-yes">YES</span></td>
+            <td class="win">+50.2%</td>
+            <td>$2.47</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+4.81</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">21m</td>
+            <td>
+              
+                <span class="loss" style="font-weight: 700;">LOSS <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$-2.47</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">21m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">14:34</td>
+            <td class="question-cell" title="WTI Crude Oil (WTI) closes above $96 on May 11?">WTI Crude Oil (WTI) closes above $96 on May 11?</td>
+            <td><span class="pill pill-no">NO</span></td>
+            <td class="win">+31.5%</td>
+            <td>$2.47</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+3.05</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">23m</td>
+            <td>
+              
+                <span class="win" style="font-weight: 700;">WIN <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$7.22</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">23m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">14:33</td>
+            <td class="question-cell" title="Will SC Braga win on 2026-05-11?">Will SC Braga win on 2026-05-11?</td>
+            <td><span class="pill pill-yes">YES</span></td>
+            <td class="win">+55.0%</td>
+            <td>$2.47</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+11.81</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">2m</td>
+            <td>
+              
+                <span class="loss" style="font-weight: 700;">LOSS <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$-2.47</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">2m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">13:57</td>
+            <td class="question-cell" title="EWY (EWY) Up or Down on May 11?">EWY (EWY) Up or Down on May 11?</td>
+            <td><span class="pill pill-no">NO</span></td>
+            <td class="win">+21.3%</td>
+            <td>$2.47</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+1.37</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">1m</td>
+            <td>
+              
+                <span class="win" style="font-weight: 700;">WIN <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$3.95</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">1m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">13:50</td>
+            <td class="question-cell" title="Spread: Pohang Steelers FC (-1.5)">Spread: Pohang Steelers FC (-1.5)</td>
+            <td><span class="pill pill-yes">YES</span></td>
+            <td class="win">+64.5%</td>
+            <td>$2.47</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+13.85</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">16m</td>
+            <td>
+              
+                <span class="loss" style="font-weight: 700;">LOSS <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$-2.47</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">16m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">13:07</td>
+            <td class="question-cell" title="Will Gwangju FC win on 2026-05-12?">Will Gwangju FC win on 2026-05-12?</td>
+            <td><span class="pill pill-yes">YES</span></td>
+            <td class="win">+41.7%</td>
+            <td>$1.35</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+5.36</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">50s</td>
+            <td>
+              
+                <span class="win" style="font-weight: 700;">WIN <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$11.51</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">0m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">13:06</td>
+            <td class="question-cell" title="WTI Crude Oil (WTI) closes above $100 on May 11?">WTI Crude Oil (WTI) closes above $100 on May 11?</td>
+            <td><span class="pill pill-yes">YES</span></td>
+            <td class="win">+46.5%</td>
+            <td>$1.35</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+3.14</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">1m</td>
+            <td>
+              
+                <span class="loss" style="font-weight: 700;">LOSS <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$-1.35</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">1m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">12:43</td>
+            <td class="question-cell" title="Will Daejeon Hana Citizen FC win on 2026-05-12?">Will Daejeon Hana Citizen FC win on 2026-05-12?</td>
+            <td><span class="pill pill-yes">YES</span></td>
+            <td class="win">+35.7%</td>
+            <td>$1.50</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+2.06</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">1m</td>
+            <td>
+              
+                <span class="loss" style="font-weight: 700;">LOSS <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$-1.50</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">1m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">12:43</td>
+            <td class="question-cell" title="Will Israel win the first Eurovision Semi-Final?">Will Israel win the first Eurovision Semi-Final?</td>
+            <td><span class="pill pill-yes">YES</span></td>
+            <td class="win">+62.5%</td>
+            <td>$1.50</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+6.94</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">2m</td>
+            <td>
+              
+                <span class="loss" style="font-weight: 700;">LOSS <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$-1.50</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">2m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">12:41</td>
+            <td class="question-cell" title="Spread: Odense BK (-1.5)">Spread: Odense BK (-1.5)</td>
+            <td><span class="pill pill-yes">YES</span></td>
+            <td class="win">+37.7%</td>
+            <td>$1.50</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+3.90</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">26m</td>
+            <td>
+              
+                <span class="win" style="font-weight: 700;">WIN <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$8.84</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">26m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">12:33</td>
+            <td class="question-cell" title="Will Hims &amp; Hers Health (HIMS) beat quarterly earnings?">Will Hims &amp; Hers Health (HIMS) beat quarterly earnings?</td>
+            <td><span class="pill pill-yes">YES</span></td>
+            <td class="win">+26.7%</td>
+            <td>$1.50</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+2.50</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">2h 3m</td>
+            <td>
+              
+                <span class="win" style="font-weight: 700;">WIN <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$7.88</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">2h 3m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">12:28</td>
+            <td class="question-cell" title="Will Millwall FC vs. Hull City AFC end in a draw?">Will Millwall FC vs. Hull City AFC end in a draw?</td>
+            <td><span class="pill pill-yes">YES</span></td>
+            <td class="win">+73.6%</td>
+            <td>$1.50</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+4.33</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">1h 39m</td>
+            <td>
+              
+                <span class="loss" style="font-weight: 700;">LOSS <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$-1.50</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">1h 39m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">12:27</td>
+            <td class="question-cell" title="SSC Napoli vs. Bologna FC 1909: O/U 3.5">SSC Napoli vs. Bologna FC 1909: O/U 3.5</td>
+            <td><span class="pill pill-yes">YES</span></td>
+            <td class="win">+70.6%</td>
+            <td>$1.50</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+3.71</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">40m</td>
+            <td>
+              
+                <span class="loss" style="font-weight: 700;">LOSS <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$-1.50</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">40m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">12:26</td>
+            <td class="question-cell" title="Will Al Taawoun Saudi Club vs. Al Ahli Saudi Club end in a draw?">Will Al Taawoun Saudi Club vs. Al Ahli Saudi Club end in a draw?</td>
+            <td><span class="pill pill-yes">YES</span></td>
+            <td class="win">+74.6%</td>
+            <td>$1.50</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+4.56</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">41m</td>
+            <td>
+              
+                <span class="loss" style="font-weight: 700;">LOSS <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$-1.50</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">41m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">12:24</td>
+            <td class="question-cell" title="Will NEOM SC vs. Al Shabab Saudi Club end in a draw?">Will NEOM SC vs. Al Shabab Saudi Club end in a draw?</td>
+            <td><span class="pill pill-yes">YES</span></td>
+            <td class="win">+70.4%</td>
+            <td>$1.50</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+4.14</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">43m</td>
+            <td>
+              
+                <span class="win" style="font-weight: 700;">WIN <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$4.38</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">43m</td>
+          </tr>
+          
+          <tr>
+            <td class="muted">12:19</td>
+            <td class="question-cell" title="Will Donald Trump post 160-179 Truth Social posts from May 5 to May 12, 2026?">Will Donald Trump post 160-179 Truth Social posts from May 5 to May 12, 2026?</td>
+            <td><span class="pill pill-no">NO</span></td>
+            <td class="win">+42.3%</td>
+            <td>$1.50</td>
+            <td><span class="signal-badge">demo</span></td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #34d399;">$+1.50</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">48m</td>
+            <td>
+              
+                <span class="win" style="font-weight: 700;">WIN <span style="font-size: 11px; font-weight: 400; color: var(--muted);">$2.04</span></span>
+              
+            </td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted);">48m</td>
+          </tr>
+          
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="grid grid-2" style="margin-bottom: 32px;">
+    <div class="panel">
+      <h2>🩺 Diagnostics + API Links</h2>
+      <div class="stat-card">
+        <div class="stat-row"><span class="stat-label">DB Exists</span><span class="stat-value win">True</span></div>
+        <div class="stat-row"><span class="stat-label">DB Path</span><span class="stat-value mono" style="font-size:12px;">/data/trades.db</span></div>
+        <div class="stat-row"><span class="stat-label">Counts</span><span class="stat-value mono" style="font-size:12px;">{&#39;trades&#39;: 29, &#39;outcomes&#39;: 29, &#39;news_events&#39;: 0, &#39;pipeline_runs&#39;: 0}</span></div>
+      </div>
+      <div style="margin-top:14px; display:flex; flex-wrap:wrap; gap:10px;">
+        
+          <a class="api-link" href="/api/summary">/api/summary</a>
+        
+          <a class="api-link" href="/api/trades">/api/trades</a>
+        
+          <a class="api-link" href="/api/news">/api/news</a>
+        
+          <a class="api-link" href="/api/runs">/api/runs</a>
+        
+          <a class="api-link" href="/api/config">/api/config</a>
+        
+          <a class="api-link" href="/api/expectations">/api/expectations</a>
+        
+          <a class="api-link" href="/api/diagnostics">/api/diagnostics</a>
+        
+          <a class="api-link" href="/api/logs">/api/logs</a>
+        
+          <a class="api-link" href="/healthz">/healthz</a>
+        
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>🧾 Live Logs Tail</h2>
+      <div class="log-box">
+        
+          <div class="log-line">2026-04-26 01:46:10,314 | WARNING | get_ipl_markets: </div>
+        
+          <div class="log-line">2026-04-26 01:46:10,689 | INFO | HTTP Request: GET https://hs-consumer-api.espncricinfo.com/v1/pages/matches/current?lang=en&amp;latest=true &#34;HTTP/1.1 403 Forbidden&#34;</div>
+        
+          <div class="log-line">2026-04-26 01:46:11,130 | INFO | HTTP Request: GET https://www.cricbuzz.com/api/cricket-match/live &#34;HTTP/1.1 404 Not Found&#34;</div>
+        
+          <div class="log-line">2026-04-26 01:46:12,665 | INFO | HTTP Request: GET https://site.api.espn.com/apis/site/v2/sports/cricket/ipl/scoreboard &#34;HTTP/1.1 404 Not Found&#34;</div>
+        
+          <div class="log-line">2026-04-26 01:46:13,585 | INFO | HTTP Request: GET https://site.api.espn.com/apis/site/v2/sports/cricket/scoreboard &#34;HTTP/1.1 404 Not Found&#34;</div>
+        
+          <div class="log-line">2026-04-26 01:49:29,173 | INFO | HTTP Request: GET https://hs-consumer-api.espncricinfo.com/v1/pages/matches/current?lang=en&amp;latest=true &#34;HTTP/1.1 403 Forbidden&#34;</div>
+        
+          <div class="log-line">2026-04-26 01:49:29,384 | INFO | HTTP Request: GET https://www.cricbuzz.com/api/cricket-match/live &#34;HTTP/1.1 404 Not Found&#34;</div>
+        
+          <div class="log-line">2026-04-26 01:49:30,599 | INFO | HTTP Request: GET https://site.api.espn.com/apis/site/v2/sports/cricket/ipl/scoreboard &#34;HTTP/1.1 404 Not Found&#34;</div>
+        
+          <div class="log-line">2026-04-26 01:49:30,910 | INFO | HTTP Request: GET https://site.api.espn.com/apis/site/v2/sports/cricket/scoreboard &#34;HTTP/1.1 404 Not Found&#34;</div>
+        
+      </div>
+      <div class="small" style="margin-top:8px;">If this says no local log found, Railway stdout/stderr logs are still separate from this dashboard process.</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    Polymarket AI Pipeline • DB: /data/trades.db • Window: 30h
+  </div>
+</div>
+
+</body>
+</html>
