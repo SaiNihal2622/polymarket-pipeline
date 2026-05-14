@@ -1,12 +1,1 @@
-feat: 300% ROI target — widen strategy engine, unify price caps
-
-- MAX_BUY_PRICE: 0.35 to 0.25 (YES less than 25c = 300% ROI)
-- MAX_NO_BUY_PRICE: 0.45 to 0.35 (NO less than 35c = 186%+ ROI)
-- Remove S13 special price cap override (all strategies use same caps)
-- Lower S8 thresholds: rrf>=0.35, mat>=0.40 (was 0.40/0.45)
-- Lower S5 thresholds: consensus>=0.35, rrf>=0.25, mat>=0.35
-- Lower S9: mat>=0.45, conf>=0.45, rrf>=0.30
-- Lower S10: rrf>=0.25, mat>=0.35
-- Lower S11: mat>=0.45, conf>=0.40
-- S13 deadzone: YES>=0.65 (NO share <= 35c) instead of 0.31-0.49
-- All strategies now compete equally for cheap entry prices
+Aggressive trading config + resolver fixes + DB path consistency

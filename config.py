@@ -77,48 +77,48 @@ DB_PATH = os.getenv("DB_PATH", "/data/trades.db" if os.path.exists("/data") else
 POLYMARKET_HOST     = os.getenv("POLYMARKET_HOST", "https://clob.polymarket.com")
 
 # ─── Trading Parameters ─────────────────────────────────────────────────────
-DRY_RUN             = os.getenv("DRY_RUN", "true").lower() == "true"
+DRY_RUN             = os.getenv("DRY_RUN", "false").lower() == "true"
 BANKROLL_USD        = float(os.getenv("BANKROLL_USD", "100"))
 MAX_BET_USD         = float(os.getenv("MAX_BET_USD", "2.0"))
 MIN_BET_USD         = 0.50
-TRADES_PER_DAY      = int(os.getenv("TRADES_PER_DAY", "50"))
-DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "10"))
+TRADES_PER_DAY      = int(os.getenv("TRADES_PER_DAY", "100"))
+DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "20"))
 
 # ─── Edge / Scoring Thresholds (EXTREME ROI) ────────────────────────────────
 # HIGH thresholds = only trade when AI is very confident vs market
 # At 15-cent entry with 65% confidence: 4.3x expected return
-EDGE_THRESHOLD      = float(os.getenv("EDGE_THRESHOLD", "0.25"))
-MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.55"))
-MIN_COMPOSITE_SCORE = float(os.getenv("MIN_COMPOSITE_SCORE", "0.40"))
+EDGE_THRESHOLD      = float(os.getenv("EDGE_THRESHOLD", "0.15"))
+MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.40"))
+MIN_COMPOSITE_SCORE = float(os.getenv("MIN_COMPOSITE_SCORE", "0.25"))
 
 # Price caps — ULTRA HIGH ROI: 5x-20x payout ONLY
 # YES trades: entry 0.03–0.15 (buy cheap YES, win $1 = 567-3233% ROI)
 # NO trades:  entry when YES ≥ 0.85 (NO share ≤ 0.15, win $1 = 567-3233% ROI)
 # SKIP everything else (low ROI = waste of capital)
 # At 5x payout, breakeven accuracy = 17%. At 65% accuracy = 3.25x profit.
-MAX_BUY_PRICE       = float(os.getenv("MAX_BUY_PRICE", "0.15"))
-MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.20"))
+MAX_BUY_PRICE       = float(os.getenv("MAX_BUY_PRICE", "0.25"))
+MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.30"))
 MIN_YES_ENTRY_PRICE = float(os.getenv("MIN_YES_ENTRY_PRICE", "0.03"))
-MIN_NO_ENTRY_PRICE  = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.80"))
+MIN_NO_ENTRY_PRICE  = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.70"))
 MAX_NO_ENTRY_PRICE  = float(os.getenv("MAX_NO_ENTRY_PRICE", "0.97"))
-MAX_NO_BUY_PRICE    = float(os.getenv("MAX_NO_BUY_PRICE", "0.15"))
+MAX_NO_BUY_PRICE    = float(os.getenv("MAX_NO_BUY_PRICE", "0.25"))
 
 # Dead-zone: skip markets where YES price is between these values (low ROI)
 # WIDE dead zone: anything between 20-80 cents is low ROI
-DEAD_ZONE_LOW       = float(os.getenv("DEAD_ZONE_LOW", "0.20"))
-DEAD_ZONE_HIGH      = float(os.getenv("DEAD_ZONE_HIGH", "0.80"))
+DEAD_ZONE_LOW       = float(os.getenv("DEAD_ZONE_LOW", "0.30"))
+DEAD_ZONE_HIGH      = float(os.getenv("DEAD_ZONE_HIGH", "0.70"))
 
 # Fast-resolution filter: only take markets resolving within this window
 # 7 days max - focus on near-term events for faster capital turnover
-MAX_HOURS_TO_CLOSE  = float(os.getenv("MAX_HOURS_TO_CLOSE", "168"))
+MAX_HOURS_TO_CLOSE  = float(os.getenv("MAX_HOURS_TO_CLOSE", "336"))
 
 # ─── Volume Filter ───────────────────────────────────────────────────────────
-MIN_VOLUME_USD      = float(os.getenv("MIN_VOLUME_USD", "100"))
-MAX_VOLUME_USD      = float(os.getenv("MAX_VOLUME_USD", "1000000"))
+MIN_VOLUME_USD      = float(os.getenv("MIN_VOLUME_USD", "50"))
+MAX_VOLUME_USD      = float(os.getenv("MAX_VOLUME_USD", "5000000"))
 
 # ─── LLM Settings ────────────────────────────────────────────────────────────
-LLM_PROVIDER        = os.getenv("LLM_PROVIDER", "mimo")
-CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "mimo-v2.5-pro")
+LLM_PROVIDER        = os.getenv("LLM_PROVIDER", "groq")
+CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "llama-3.3-70b-versatile")
 GEMINI_MODEL        = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 GROQ_MODEL          = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 NVIDIA_MODEL        = os.getenv("NVIDIA_MODEL", "nvidia/llama-3.3-nemotron-super-49b-v1")
@@ -150,10 +150,10 @@ DYNAMIC_WEIGHT_RANGES = {
 }
 
 # ─── Market Filters ──────────────────────────────────────────────────────────
-SCAN_INTERVAL_MIN   = int(os.getenv("SCAN_INTERVAL_MIN", "3"))
-RESOLVE_INTERVAL_MIN = int(os.getenv("RESOLVE_INTERVAL_MIN", "2"))
-MAX_MARKETS_PER_SCAN = int(os.getenv("MAX_MARKETS_PER_SCAN", "800"))
-MAX_AI_CALLS_PER_SCAN = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "500"))
+SCAN_INTERVAL_MIN   = int(os.getenv("SCAN_INTERVAL_MIN", "2"))
+RESOLVE_INTERVAL_MIN = int(os.getenv("RESOLVE_INTERVAL_MIN", "1"))
+MAX_MARKETS_PER_SCAN = int(os.getenv("MAX_MARKETS_PER_SCAN", "1000"))
+MAX_AI_CALLS_PER_SCAN = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "800"))
 
 # ─── Demo / Go-Live ─────────────────────────────────────────────────────────
 ACCURACY_THRESHOLD  = float(os.getenv("ACCURACY_THRESHOLD", "65"))
@@ -164,7 +164,7 @@ DEMO_HOURS_WINDOW   = float(os.getenv("DEMO_HOURS_WINDOW", "168"))
 SPEED_TARGET_SECONDS = float(os.getenv("SPEED_TARGET_SECONDS", "5"))
 
 # ─── News Settings ───────────────────────────────────────────────────────
-NEWS_LOOKBACK_HOURS = int(os.getenv("NEWS_LOOKBACK_HOURS", "72"))
+NEWS_LOOKBACK_HOURS = int(os.getenv("NEWS_LOOKBACK_HOURS", "48"))
 
 # ─── Paths ───────────────────────────────────────────────────────────────────
 PROJECT_ROOT        = Path(__file__).parent

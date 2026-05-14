@@ -46,10 +46,13 @@ except ImportError:
 _db_env = os.getenv("DB_PATH", "")
 if _db_env:
     DB_PATH = Path(_db_env)
-elif Path("/data/bot.db").exists():
-    DB_PATH = Path("/data/bot.db")
 else:
-    DB_PATH = Path(__file__).parent / "bot.db"
+    # Use same path as logger.py: /data/trades.db on Railway, ./trades.db locally
+    _railway_volume = Path("/data")
+    if _railway_volume.exists():
+        DB_PATH = _railway_volume / "trades.db"
+    else:
+        DB_PATH = Path(__file__).parent / "trades.db"
 GAMMA_API = "https://gamma-api.polymarket.com"
 CLOB_API  = "https://clob.polymarket.com"
 DATA_API  = "https://data-api.polymarket.com"
@@ -155,7 +158,9 @@ def _resolve_via_gamma_slug(trade: dict) -> float | None:
     question = trade.get("market_question", "")
     market_id = trade.get("market_id", "")
     token_id = trade.get("token_id", "")
-    # End-date guard: skip if market hasn't ended yet (with 30-min buffer)
+    # End-date guard: only skip if market end is MORE than 24h away.
+    # Many markets resolve early, so we check Gamma regardless unless
+    # the end date is far in the future.
     end_str = trade.get("end_date_iso") or trade.get("market_end_date") or ""
     if end_str:
         try:
@@ -164,8 +169,8 @@ def _resolve_via_gamma_slug(trade: dict) -> float | None:
             if end_dt.tzinfo is None:
                 end_dt = end_dt.replace(tzinfo=_tz2.utc)
             now = _dt2.now(_tz2.utc)
-            if now < end_dt:
-                remaining_hours = (end_dt - now).total_seconds() / 3600
+            remaining_hours = (end_dt - now).total_seconds() / 3600
+            if remaining_hours > 24:
                 log.info(f"[resolver] Skipping trade — market ends in {remaining_hours:.1f}h: {question[:50]}")
                 return None
         except Exception:
