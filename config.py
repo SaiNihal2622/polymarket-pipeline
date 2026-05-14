@@ -88,7 +88,7 @@ DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "10"))
 # These are the MINIMUM requirements for a trade to fire
 EDGE_THRESHOLD      = float(os.getenv("EDGE_THRESHOLD", "0.12"))
 MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.45"))
-MIN_COMPOSITE_SCORE = float(os.getenv("MIN_COMPOSITE_SCORE", "0.45"))
+MIN_COMPOSITE_SCORE = float(os.getenv("MIN_COMPOSITE_SCORE", "0.25"))
 
 # Price caps — EXTREME ROI focus: 4x-20x payout only
 # YES trades: entry 0.03–0.25 (buy cheap YES, win $1 = 300-3200% ROI)
@@ -96,18 +96,18 @@ MIN_COMPOSITE_SCORE = float(os.getenv("MIN_COMPOSITE_SCORE", "0.45"))
 # SKIP: YES price 0.26–0.74 (low ROI either direction — waste of capital)
 # At 4x payout, breakeven accuracy = 20%. At 70% accuracy = 3.5x profit.
 MAX_BUY_PRICE       = float(os.getenv("MAX_BUY_PRICE", "0.25"))
-MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.25"))
-MIN_YES_ENTRY_PRICE = float(os.getenv("MIN_YES_ENTRY_PRICE", "0.03"))
-MIN_NO_ENTRY_PRICE  = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.75"))
+MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.40"))
+MIN_YES_ENTRY_PRICE = float(os.getenv("MIN_YES_ENTRY_PRICE", "0.05"))
+MIN_NO_ENTRY_PRICE  = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.65"))
 MAX_NO_ENTRY_PRICE  = float(os.getenv("MAX_NO_ENTRY_PRICE", "0.97"))
 MAX_NO_BUY_PRICE    = float(os.getenv("MAX_NO_BUY_PRICE", "0.25"))
 
 # Dead-zone: skip markets where YES price is between these values (low ROI)
-DEAD_ZONE_LOW       = float(os.getenv("DEAD_ZONE_LOW", "0.26"))
-DEAD_ZONE_HIGH      = float(os.getenv("DEAD_ZONE_HIGH", "0.74"))
+DEAD_ZONE_LOW       = float(os.getenv("DEAD_ZONE_LOW", "0.35"))
+DEAD_ZONE_HIGH      = float(os.getenv("DEAD_ZONE_HIGH", "0.65"))
 
 # Fast-resolution filter: only take markets resolving within this window
-MAX_HOURS_TO_CLOSE  = float(os.getenv("MAX_HOURS_TO_CLOSE", "38"))
+MAX_HOURS_TO_CLOSE  = float(os.getenv("MAX_HOURS_TO_CLOSE", "72"))
 
 # ─── Volume Filter ───────────────────────────────────────────────────────────
 MIN_VOLUME_USD      = float(os.getenv("MIN_VOLUME_USD", "100"))
@@ -122,8 +122,8 @@ NVIDIA_MODEL        = os.getenv("NVIDIA_MODEL", "nvidia/llama-3.3-nemotron-super
 OPENAI_MODEL        = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 # ─── Consensus Settings ─────────────────────────────────────────────────────
-CONSENSUS_ENABLED   = os.getenv("CONSENSUS_ENABLED", "true").lower() == "true"
-CONSENSUS_PASSES    = int(os.getenv("CONSENSUS_PASSES", "2"))
+CONSENSUS_ENABLED   = os.getenv("CONSENSUS_ENABLED", "false").lower() == "true"
+CONSENSUS_PASSES    = int(os.getenv("CONSENSUS_PASSES", "1"))
 CONSENSUS_MIN_AGREEMENT = float(os.getenv("CONSENSUS_MIN_AGREEMENT", "1.0"))
 STRICT_CONSENSUS    = os.getenv("STRICT_CONSENSUS", "true").lower() == "true"
 
@@ -150,12 +150,12 @@ DYNAMIC_WEIGHT_RANGES = {
 SCAN_INTERVAL_MIN   = int(os.getenv("SCAN_INTERVAL_MIN", "5"))
 RESOLVE_INTERVAL_MIN = int(os.getenv("RESOLVE_INTERVAL_MIN", "2"))
 MAX_MARKETS_PER_SCAN = int(os.getenv("MAX_MARKETS_PER_SCAN", "300"))
-MAX_AI_CALLS_PER_SCAN = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "150"))
+MAX_AI_CALLS_PER_SCAN = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "200"))
 
 # ─── Demo / Go-Live ─────────────────────────────────────────────────────────
 ACCURACY_THRESHOLD  = float(os.getenv("ACCURACY_THRESHOLD", "65"))
 MIN_RESOLVED        = int(os.getenv("MIN_RESOLVED", "30"))
-DEMO_HOURS_WINDOW   = float(os.getenv("DEMO_HOURS_WINDOW", "48"))
+DEMO_HOURS_WINDOW   = float(os.getenv("DEMO_HOURS_WINDOW", "72"))
 
 # ─── Speed Target ───────────────────────────────────────────────────────────
 SPEED_TARGET_SECONDS = float(os.getenv("SPEED_TARGET_SECONDS", "5"))
