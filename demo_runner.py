@@ -774,25 +774,30 @@ def scan_and_trade() -> dict:
         # + price caps already guarantee 1.5x-6x payout. Breakeven at 20-40%.
         # We fire aggressively — AI direction alone is enough to trade.
 
-        # S1: AI SIGNAL — any AI direction with decent confidence (PRIMARY DRIVER)
-        # S1: AI SIGNAL — 35%+ confidence triggers (PRIMARY VOLUME DRIVER)
-        if gem_dir != "neutral" and gem_conf >= 0.35:
-            strategies_to_try.append(("S1_ai_signal", _dir(gem_dir), gem_conf))
+        # S1: AI SIGNAL — 45%+ confidence with PROVEN direction (PRIMARY DRIVER)
+        # Must have real edge: AI confidence must meaningfully exceed market price
+        if gem_dir != "neutral" and gem_conf >= 0.45:
+            # Verify real edge exists: model prob must exceed market by 4%+
+            model_edge = (gem_conf - price) if gem_dir == "bullish" else (gem_conf - (1 - price))
+            if model_edge >= 0.04:
+                strategies_to_try.append(("S1_ai_signal", _dir(gem_dir), gem_conf))
 
-        # S2: AI + NEWS — AI direction + news materiality (lowered from 0.40)
-        if gem_dir != "neutral" and gem_mat >= 0.25 and has_news:
-            strategies_to_try.append(("S2_ai_news", _dir(gem_dir), max(gem_conf, 0.35)))
+        # S2: AI + NEWS — AI direction + news materiality + edge check
+        if gem_dir != "neutral" and gem_mat >= 0.30 and has_news and gem_conf >= 0.40:
+            model_edge = (gem_conf - price) if gem_dir == "bullish" else (gem_conf - (1 - price))
+            if model_edge >= 0.04:
+                strategies_to_try.append(("S2_ai_news", _dir(gem_dir), max(gem_conf, 0.40)))
 
-        # S3: MULTI-SIGNAL — any 2+ non-neutral signals agree direction
-        if n_agree >= 2:
-            strategies_to_try.append(("S3_multi_signal", best_side, max(best_score, 0.30)))
+        # S3: MULTI-SIGNAL — 2+ signals agree + must have edge
+        if n_agree >= 2 and best_score >= 0.40:
+            strategies_to_try.append(("S3_multi_signal", best_side, max(best_score, 0.40)))
 
-        # S4: PRICE-FLOW — price flow signal + any AI agreement
-        if pf_dir != "neutral" and pf_conf >= 0.35 and (gem_dir == "neutral" or gem_dir == pf_dir):
+        # S4: PRICE-FLOW — price flow signal + AI agreement + edge
+        if pf_dir != "neutral" and pf_conf >= 0.40 and (gem_dir == "neutral" or gem_dir == pf_dir):
             strategies_to_try.append(("S4_price_flow", _dir(pf_dir), pf_conf))
 
-        # S5: COPY-WHALE — whale or copy signal + any AI agreement
-        if ((cp_dir != "neutral" and cp_conf >= 0.35) or (wh_dir != "neutral" and wh_conf >= 0.35)):
+        # S5: COPY-WHALE — whale or copy signal + AI agreement
+        if ((cp_dir != "neutral" and cp_conf >= 0.40) or (wh_dir != "neutral" and wh_conf >= 0.40)):
             sig_conf = max(cp_conf, wh_conf)
             sig_dir = cp_dir if cp_dir != "neutral" else wh_dir
             if gem_dir == "neutral" or gem_dir == sig_dir:
@@ -804,24 +809,29 @@ def scan_and_trade() -> dict:
             strategies_to_try.append(("S6_high_rrf", _dir(gem_dir), max(gem_conf, rrf_score)))
 
         # S7: CONSENSUS — AI + skeptic agree (highest quality)
-        # S7: CONSENSUS — AI + skeptic agree (lowered for volume)
-        if gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.30:
-            strategies_to_try.append(("S7_consensus", _dir(gem_dir), max(gem_conf, consensus_score)))
+        # S7: CONSENSUS — AI + skeptic agree (HIGHEST QUALITY signal)
+        if gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.45:
+            model_edge = (consensus_score - price) if gem_dir == "bullish" else (consensus_score - (1 - price))
+            if model_edge >= 0.04:
+                strategies_to_try.append(("S7_consensus", _dir(gem_dir), max(gem_conf, consensus_score)))
 
         # S8: SURESHOT — AI very confident + news + multi-signal (top quality)
-        if (gem_dir != "neutral" and gem_conf >= 0.50 and gem_mat >= 0.50
-                and has_news and n_agree >= 1):
-            strategies_to_try.append(("S8_sureshot", _dir(gem_dir), gem_conf))
+        if (gem_dir != "neutral" and gem_conf >= 0.55 and gem_mat >= 0.40
+                and has_news and n_agree >= 2):
+            model_edge = (gem_conf - price) if gem_dir == "bullish" else (gem_conf - (1 - price))
+            if model_edge >= 0.06:
+                strategies_to_try.append(("S8_sureshot", _dir(gem_dir), gem_conf))
 
-        # S9: DEAD ZONE NO — bearish on high-price YES markets
-        # S9: DEAD ZONE NO — bearish on high-price YES (lowered from 0.55)
-        if gem_dir == "bearish" and gem_conf >= 0.45 and price >= 0.65:
-            strategies_to_try.append(("S9_deadzone_no", "NO", gem_conf))
+        # S9: DEAD ZONE NO — bearish on high-price YES markets with edge
+        if gem_dir == "bearish" and gem_conf >= 0.50 and price >= 0.60:
+            model_edge = (gem_conf - (1 - price))  # bearish = NO side
+            if model_edge >= 0.04:
+                strategies_to_try.append(("S9_deadzone_no", "NO", gem_conf))
 
-        # S10: PRICE OUTCOME — strongly directional price flow in extreme markets
-        if price <= 0.20 and pf_dir == "bullish" and pf_conf >= 0.30:
+        # S10: PRICE FLOW — price flow signals extreme market + AI agrees
+        if price <= 0.25 and pf_dir == "bullish" and pf_conf >= 0.40:
             strategies_to_try.append(("S10_price_yes", "YES", pf_conf))
-        elif price >= 0.80 and pf_dir == "bearish" and pf_conf >= 0.30:
+        elif price >= 0.75 and pf_dir == "bearish" and pf_conf >= 0.40:
             strategies_to_try.append(("S10_price_no", "NO", pf_conf))
 
         if not strategies_to_try:
