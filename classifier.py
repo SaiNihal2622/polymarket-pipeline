@@ -466,6 +466,18 @@ async def _single_classify_with_provider_async(prompt_template: str, headline: s
         except (TypeError, ValueError):
             prob = None
 
+    # CAP: LLMs are massively overconfident on sports/event outcomes.
+    # Even with perfect info, no sports outcome exceeds 75% certainty.
+    # Cap probability to prevent false edge calculations.
+    if prob is not None and prob > 0.75:
+        question_lower = market.question.lower()
+        sports_indicators = ["win", "score", "goal", "match", "game", "beat",
+                           "defeat", "draw", "tie", "champion", "final",
+                           "quarter", "half", "set", "round", "wicket",
+                           "run", "touchdown", "point", "assist", "save"]
+        if any(ind in question_lower for ind in sports_indicators):
+            prob = min(prob, 0.75)  # Cap at 75% for sports
+
     return {
         "direction": direction,
         "materiality": materiality,

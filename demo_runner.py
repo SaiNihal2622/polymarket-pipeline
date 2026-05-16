@@ -446,6 +446,12 @@ def scan_and_trade() -> dict:
         "republican nominee", "democratic nominee",
         # ── ICEMAN / NICHE SHOW PROPS (no reliable data) ──
         "iceman", "be said on",
+        # ── DRAW / TIE MARKETS (unpredictable, low hit rate) ──
+        " will draw", " end in a draw", "match drawn", "tie or draw",
+        # ── MULTI-OUTCOME (AI can't rank 3+ outcomes reliably) ──
+        "who will win the",  # too broad when combined with multiple teams
+        # ── STREAMER/CONTENT CREATOR PROPS (no reliable data) ──
+        "stream", "twitch", "kick.com", "youtube live",
     ]
 
     from price_feeds import verify_crypto_market, get_all_crypto_prices

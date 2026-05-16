@@ -87,27 +87,27 @@ DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "20"))
 # ─── Edge / Scoring Thresholds (PROFITABILITY-FOCUSED) ───────────────────────
 # Per strategy guide: minimum 4% edge required, high materiality, proper sizing
 # edge = p_model - p_market must exceed threshold for ANY trade
-EDGE_THRESHOLD      = float(os.getenv("EDGE_THRESHOLD", "0.03"))
-MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.20"))
-MIN_COMPOSITE_SCORE = float(os.getenv("MIN_COMPOSITE_SCORE", "0.20"))
-MIN_AI_CONFIDENCE   = float(os.getenv("MIN_AI_CONFIDENCE", "0.35"))
-MIN_STRATEGY_SCORE  = float(os.getenv("MIN_STRATEGY_SCORE", "0.30"))
+EDGE_THRESHOLD      = float(os.getenv("EDGE_THRESHOLD", "0.05"))
+MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.50"))
+MIN_COMPOSITE_SCORE = float(os.getenv("MIN_COMPOSITE_SCORE", "0.50"))
+MIN_AI_CONFIDENCE   = float(os.getenv("MIN_AI_CONFIDENCE", "0.55"))
+MIN_STRATEGY_SCORE  = float(os.getenv("MIN_STRATEGY_SCORE", "0.50"))
 
 # Price caps — SWEET SPOT trades (0.20-0.55 entry = best ROI:accuracy)
 # YES trades: entry 0.20–0.55 (2-4x payout, realistic win probability)
 # NO trades: entry when YES ≥ 0.55 (NO at 0.45 max, 2x+ payout)
 # AVOID: entry < 0.20 (lottery tickets, <20% win rate, guaranteed losers)
 MAX_BUY_PRICE       = float(os.getenv("MAX_BUY_PRICE", "0.55"))
-MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.55"))
-MIN_YES_ENTRY_PRICE = float(os.getenv("MIN_YES_ENTRY_PRICE", "0.20"))
-MIN_NO_ENTRY_PRICE  = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.55"))
+MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.50"))
+MIN_YES_ENTRY_PRICE = float(os.getenv("MIN_YES_ENTRY_PRICE", "0.25"))
+MIN_NO_ENTRY_PRICE  = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.50"))
 MAX_NO_ENTRY_PRICE  = float(os.getenv("MAX_NO_ENTRY_PRICE", "0.80"))
 MAX_NO_BUY_PRICE    = float(os.getenv("MAX_NO_BUY_PRICE", "0.45"))
 
 # Dead-zone: skip markets where YES price is between these values (uncertain)
 # 0.40-0.60 = coinflip zone, skip it
-DEAD_ZONE_LOW       = float(os.getenv("DEAD_ZONE_LOW", "0.43"))
-DEAD_ZONE_HIGH      = float(os.getenv("DEAD_ZONE_HIGH", "0.57"))
+DEAD_ZONE_LOW       = float(os.getenv("DEAD_ZONE_LOW", "0.40"))
+DEAD_ZONE_HIGH      = float(os.getenv("DEAD_ZONE_HIGH", "0.60"))
 
 # Fast-resolution filter: only take markets resolving within this window
 # 7 days max - focus on near-term events for faster capital turnover

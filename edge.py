@@ -163,6 +163,15 @@ def detect_edge_v2(
         log.debug(f"[edge] REJECTED edge={raw_edge:.3f} < {config.EDGE_THRESHOLD}")
         return None
 
+    # ── GATE 5b: Maximum edge cap — LLM overconfidence guard ──────────────
+    # LLMs are notoriously overconfident. An edge > 0.40 is almost certainly
+    # an LLM hallucination rather than a real market inefficiency.
+    # Cap at 0.40 and reduce confidence proportionally.
+    MAX_EDGE = 0.40
+    if raw_edge > MAX_EDGE:
+        log.info(f"[edge] CAPPING edge={raw_edge:.3f} → {MAX_EDGE:.3f} (overconfidence guard)")
+        raw_edge = MAX_EDGE
+
     # ── GATE 6: Composite score (cheap — weighted sum) ────────────────────
     composite = compute_composite_score(
         classification=classification,
