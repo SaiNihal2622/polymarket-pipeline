@@ -775,70 +775,50 @@ def scan_and_trade() -> dict:
         # Breakeven at ~25% accuracy (avg entry $0.25), so we can afford volume.
         # The dead-zone filter + price caps already guarantee high-ROI setups.
 
-        # ── HIGH-VOLUME STRATEGY ENGINE ──
-        # Goal: take MANY trades with any edge signal. Dead-zone (0.35-0.65)
-        # + price caps already guarantee 1.5x-6x payout. Breakeven at 20-40%.
-        # We fire aggressively — AI direction alone is enough to trade.
+        # ── QUALITY-FIRST STRATEGY ENGINE ──
+        # ROOT CAUSE FIX: Past losses came from weak signals (S1,S4,S5,S6,S9,S10)
+        # firing on unrelated news. Now ONLY consensus-required strategies trade.
+        # This means fewer trades but MUCH higher accuracy.
 
-        # S1: AI SIGNAL — 45%+ confidence with PROVEN direction (PRIMARY DRIVER)
-        # Must have real edge: AI confidence must meaningfully exceed market price
-        if gem_dir != "neutral" and gem_conf >= 0.45:
-            # Verify real edge exists: model prob must exceed market by 4%+
+        # SPORTS FILTER: Skip unless consensus+sureshot level
+        # Sports markets need domain expertise the bot lacks
+        sports_keywords = [
+            "cricket", "ipl", "soccer", "football", "nba", "nfl", "mlb",
+            "tennis", "golf", "boxing", "ufc", "f1", "formula", "hockey",
+            "win on 20", "match", "tournament", "championship", "league",
+            "score", "goal", "scored", "wickets", "innings", "overs",
+            "premier league", "la liga", "bundesliga", "serie a", "ligue 1",
+            "champions league", "europa league", "world cup",
+        ]
+        is_sports = any(kw in q_lower for kw in sports_keywords)
+
+        # S2: AI + NEWS — requires CONSENSUS agreement + HIGH materiality
+        if gem_dir != "neutral" and consensus_agreed and n_agree >= 1 and gem_mat >= 0.60:
             model_edge = (gem_conf - price) if gem_dir == "bullish" else (gem_conf - (1 - price))
-            if model_edge >= 0.04:
-                strategies_to_try.append(("S1_ai_signal", _dir(gem_dir), gem_conf))
+            if model_edge >= 0.06:
+                strategies_to_try.append(("S2_ai_news", _dir(gem_dir), max(gem_conf, 0.60)))
 
-        # S2: AI + NEWS — AI direction + news materiality + edge check
-        if gem_dir != "neutral" and gem_mat >= 0.30 and has_news and gem_conf >= 0.40:
-            model_edge = (gem_conf - price) if gem_dir == "bullish" else (gem_conf - (1 - price))
-            if model_edge >= 0.04:
-                strategies_to_try.append(("S2_ai_news", _dir(gem_dir), max(gem_conf, 0.40)))
+        # S3: MULTI-SIGNAL — 2+ signals + CONSENSUS required
+        if consensus_agreed and n_agree >= 2 and best_score >= 0.55:
+            strategies_to_try.append(("S3_multi_signal", best_side, max(best_score, 0.55)))
 
-        # S3: MULTI-SIGNAL — 2+ signals agree + must have edge
-        if n_agree >= 2 and best_score >= 0.40:
-            strategies_to_try.append(("S3_multi_signal", best_side, max(best_score, 0.40)))
-
-        # S4: PRICE-FLOW — price flow signal + AI agreement + edge
-        if pf_dir != "neutral" and pf_conf >= 0.40 and (gem_dir == "neutral" or gem_dir == pf_dir):
-            strategies_to_try.append(("S4_price_flow", _dir(pf_dir), pf_conf))
-
-        # S5: COPY-WHALE — whale or copy signal + AI agreement
-        if ((cp_dir != "neutral" and cp_conf >= 0.40) or (wh_dir != "neutral" and wh_conf >= 0.40)):
-            sig_conf = max(cp_conf, wh_conf)
-            sig_dir = cp_dir if cp_dir != "neutral" else wh_dir
-            if gem_dir == "neutral" or gem_dir == sig_dir:
-                strategies_to_try.append(("S5_copy_whale", _dir(sig_dir), max(sig_conf, gem_conf)))
-
-        # S6: HIGH-RRF — RRF composite score indicates edge
-        # S6: HIGH-RRF — require 0.45+ RRF for quality trades
-        if gem_dir != "neutral" and rrf_score >= 0.45:
-            strategies_to_try.append(("S6_high_rrf", _dir(gem_dir), max(gem_conf, rrf_score)))
-
-        # S7: CONSENSUS — AI + skeptic agree (highest quality)
-        # S7: CONSENSUS — AI + skeptic agree (HIGHEST QUALITY signal)
-        if gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.45:
+        # S7: CONSENSUS — AI + skeptic agree (PRIMARY strategy)
+        if gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.55:
             model_edge = (consensus_score - price) if gem_dir == "bullish" else (consensus_score - (1 - price))
-            if model_edge >= 0.04:
+            if model_edge >= 0.06:
                 strategies_to_try.append(("S7_consensus", _dir(gem_dir), max(gem_conf, consensus_score)))
 
         # S8: SURESHOT — AI very confident + news + multi-signal (top quality)
-        if (gem_dir != "neutral" and gem_conf >= 0.55 and gem_mat >= 0.40
+        if (gem_dir != "neutral" and consensus_agreed and gem_conf >= 0.60 and gem_mat >= 0.55
                 and has_news and n_agree >= 2):
             model_edge = (gem_conf - price) if gem_dir == "bullish" else (gem_conf - (1 - price))
-            if model_edge >= 0.06:
+            if model_edge >= 0.08:
                 strategies_to_try.append(("S8_sureshot", _dir(gem_dir), gem_conf))
 
-        # S9: DEAD ZONE NO — bearish on high-price YES markets with edge
-        if gem_dir == "bearish" and gem_conf >= 0.50 and price >= 0.60:
-            model_edge = (gem_conf - (1 - price))  # bearish = NO side
-            if model_edge >= 0.04:
-                strategies_to_try.append(("S9_deadzone_no", "NO", gem_conf))
-
-        # S10: PRICE FLOW — price flow signals extreme market + AI agrees
-        if price <= 0.25 and pf_dir == "bullish" and pf_conf >= 0.40:
-            strategies_to_try.append(("S10_price_yes", "YES", pf_conf))
-        elif price >= 0.75 and pf_dir == "bearish" and pf_conf >= 0.40:
-            strategies_to_try.append(("S10_price_no", "NO", pf_conf))
+        # SKIP sports markets entirely — bot has no sports expertise
+        if is_sports and not any(s[0] == "S8_sureshot" for s in strategies_to_try):
+            _skip("sports_market_filtered")
+            continue
 
         if not strategies_to_try:
             _skip("no_strategy_fired")

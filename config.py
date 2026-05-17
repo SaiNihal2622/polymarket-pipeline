@@ -87,11 +87,11 @@ DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "20"))
 # ─── Edge / Scoring Thresholds (PROFITABILITY-FOCUSED) ───────────────────────
 # Per strategy guide: minimum 4% edge required, high materiality, proper sizing
 # edge = p_model - p_market must exceed threshold for ANY trade
-EDGE_THRESHOLD      = float(os.getenv("EDGE_THRESHOLD", "0.05"))
-MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.50"))
-MIN_COMPOSITE_SCORE = float(os.getenv("MIN_COMPOSITE_SCORE", "0.50"))
-MIN_AI_CONFIDENCE   = float(os.getenv("MIN_AI_CONFIDENCE", "0.55"))
-MIN_STRATEGY_SCORE  = float(os.getenv("MIN_STRATEGY_SCORE", "0.50"))
+EDGE_THRESHOLD      = float(os.getenv("EDGE_THRESHOLD", "0.08"))
+MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.60"))
+MIN_COMPOSITE_SCORE = float(os.getenv("MIN_COMPOSITE_SCORE", "0.55"))
+MIN_AI_CONFIDENCE   = float(os.getenv("MIN_AI_CONFIDENCE", "0.60"))
+MIN_STRATEGY_SCORE  = float(os.getenv("MIN_STRATEGY_SCORE", "0.55"))
 
 # Price caps — SWEET SPOT trades (0.20-0.55 entry = best ROI:accuracy)
 # YES trades: entry 0.20–0.55 (2-4x payout, realistic win probability)
@@ -111,7 +111,7 @@ DEAD_ZONE_HIGH      = float(os.getenv("DEAD_ZONE_HIGH", "0.60"))
 
 # Fast-resolution filter: only take markets resolving within this window
 # 7 days max - focus on near-term events for faster capital turnover
-MAX_HOURS_TO_CLOSE  = float(os.getenv("MAX_HOURS_TO_CLOSE", "720"))
+MAX_HOURS_TO_CLOSE  = float(os.getenv("MAX_HOURS_TO_CLOSE", "48"))
 
 # ─── Volume Filter ───────────────────────────────────────────────────────────
 MIN_VOLUME_USD      = float(os.getenv("MIN_VOLUME_USD", "50"))
