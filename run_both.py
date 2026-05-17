@@ -40,6 +40,26 @@ if __name__ == "__main__":
     print("🤖 Starting Trading Pipeline in background...", flush=True)
     threading.Thread(target=_run_pipeline, daemon=True).start()
 
+    # Cashout monitor in background thread (position management)
+    def _run_cashout():
+        import time as _time
+        try:
+            from cashout import ensure_cashout_columns, check_and_cashout, CHECK_INTERVAL
+            ensure_cashout_columns()
+            print("💰 Cashout monitor started (take-profit + stop-loss + trailing stop)", flush=True)
+            while True:
+                try:
+                    result = check_and_cashout(verbose=False)
+                    if result.get("cashouts", 0) > 0:
+                        print(f"💰 {result['cashouts']} cashouts | P&L: ${result['total_pnl']:+.4f}", flush=True)
+                except Exception as e:
+                    logging.warning(f"Cashout check error: {e}")
+                _time.sleep(CHECK_INTERVAL)
+        except Exception as e:
+            logging.warning(f"Cashout monitor failed to start: {e}")
+
+    threading.Thread(target=_run_cashout, daemon=True).start()
+
     # Dashboard in main thread to ensure Railway health checks pass
     port = int(os.getenv("PORT", "8081"))
     try:
