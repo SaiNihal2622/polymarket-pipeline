@@ -654,7 +654,7 @@ def scan_and_trade() -> dict:
             except Exception as e:
                 log.debug(f"[research] {e}")
 
-        # ── S5b: Multi-pass Consensus Loop ──
+        # ── S5b: Multi-pass Consensus Loop (SYNC to avoid event-loop issues) ──
         consensus_agreed = (gem_dir != "neutral")
         consensus_score  = gem_conf
         consensus_passes = 1
@@ -664,14 +664,9 @@ def scan_and_trade() -> dict:
                 from classifier import PROMPTS as _PROMPTS, _call_llm
                 from classifier import _build_analyst_prompt, _parse_json_response
                 
-                # Passes start from index 1 (Skeptic, Reflector, etc.)
-                from classifier import PROMPTS as _PROMPTS, _call_llm_async
-                from classifier import SKEPTIC_PROMPT, REFLECTOR_PROMPT
-                
                 for p_idx in range(1, config.CONSENSUS_PASSES):
                     if ai_calls_left <= 0: break
                     
-                    # Use the CORRECT skeptic/reflector prompt for each pass
                     prompt_tmpl = _PROMPTS[p_idx % len(_PROMPTS)]
                     p_prompt = prompt_tmpl.format(
                         question=market.question,
@@ -681,7 +676,7 @@ def scan_and_trade() -> dict:
                     )
                     
                     try:
-                        p_text = asyncio.run(_call_llm_async(p_prompt, temperature=0.15))
+                        p_text = _call_llm(p_prompt, temperature=0.15)
                         p_res  = _parse_json_response(p_text)
                         p_dir  = p_res.get("direction", "neutral")
                         p_mat  = max(0.0, min(1.0, float(p_res.get("materiality", 0))))

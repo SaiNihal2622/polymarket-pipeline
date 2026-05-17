@@ -702,29 +702,59 @@ def api_config():
 
 @app.route("/api/positions")
 def api_positions():
-    """JSON API: open positions with live P&L data."""
+    """JSON API: open positions with live P&L data from demo_trades."""
     try:
-        from cashout import get_open_positions, get_current_price, calculate_unrealized_pnl
-        positions = get_open_positions()
+        rows = _q(
+            "SELECT id, market_question, side, entry_price, bet_amount, token_id, "
+            "composite_score, edge, created_at "
+            "FROM demo_trades WHERE result IS NULL OR result = '' OR result = 'pending' "
+            "ORDER BY id DESC LIMIT 50"
+        )
         enriched = []
-        for pos in positions:
-            entry_price = float(pos.get("market_price") or 0.5)
-            amount_usd = float(pos.get("amount_usd") or 1.0)
+        for pos in rows:
+            entry_price = float(pos.get("entry_price") or 0.5)
+            amount_usd = float(pos.get("bet_amount") or 1.0)
             token_id = pos.get("token_id", "")
-            price_data = get_current_price(token_id) if token_id else None
-            if price_data:
-                pnl_info = calculate_unrealized_pnl(pos["side"], entry_price, price_data["mid"], amount_usd)
-                pos["current_price"] = price_data["mid"]
-                pos["best_bid"] = price_data["best_bid"]
-                pos["best_ask"] = price_data["best_ask"]
-                pos["unrealized_pnl"] = pnl_info["pnl"]
-                pos["unrealized_pnl_pct"] = pnl_info["pnl_pct"]
-                pos["profit_pct_of_max"] = pnl_info["profit_pct_of_max"]
-            else:
-                pos["current_price"] = None
-                pos["unrealized_pnl"] = 0.0
-                pos["unrealized_pnl_pct"] = 0.0
-                pos["profit_pct_of_max"] = 0.0
+            # Try to get live price from CLOB
+            current_price = None
+            bid = None
+            ask = None
+            try:
+                import httpx as _hx
+                if token_id:
+                    r = _hx.get(f"https://clob.polymarket.com/book", params={"token_id": token_id}, timeout=8)
+                    if r.status_code == 200:
+                        data = r.json()
+                        bids = data.get("bids", []) or []
+                        asks = data.get("asks", []) or []
+                        if bids:
+                            bid = float(bids[0].get("price", 0))
+                        if asks:
+                            ask = float(asks[0].get("price", 0))
+                        if bid and ask:
+                            current_price = (bid + ask) / 2.0
+                        elif bid:
+                            current_price = bid
+                        elif ask:
+                            current_price = ask
+            except Exception:
+                pass
+            # Calculate P&L
+            pnl = 0.0
+            pnl_pct = 0.0
+            if current_price and entry_price:
+                side = pos.get("side", "YES")
+                if side == "YES":
+                    pnl = (current_price - entry_price) / entry_price * amount_usd
+                else:
+                    pnl = (entry_price - current_price) / entry_price * amount_usd
+                pnl_pct = pnl / amount_usd * 100 if amount_usd else 0
+            pos["current_price"] = current_price
+            pos["bid"] = bid
+            pos["ask"] = ask
+            pos["unrealized_pnl"] = round(pnl, 2)
+            pos["pnl_pct"] = round(pnl_pct, 1)
+            pos["position_status"] = "open"
             enriched.append(pos)
         return jsonify({"positions": enriched, "count": len(enriched)})
     except Exception as e:
@@ -733,14 +763,31 @@ def api_positions():
 
 @app.route("/api/cashouts")
 def api_cashouts():
-    """JSON API: recent cashout events."""
+    """JSON API: recent cashout events from demo_trades."""
     try:
-        rows = _q(
-            "SELECT t.id, t.market_question, t.side, t.market_price, t.cashout_price, "
-            "t.cashout_reason, t.cashout_at, t.amount_usd, o.pnl, o.result "
-            "FROM trades t LEFT JOIN outcomes o ON t.id = o.trade_id "
-            "WHERE t.cashout_at IS NOT NULL ORDER BY t.id DESC LIMIT 50"
-        )
+        # Check if cashout columns exist in demo_trades
+        cols = set()
+        try:
+            cols = {r[1] for r in _q("PRAGMA table_info(demo_trades)")}
+        except Exception:
+            pass
+        if "cashout_at" in cols:
+            rows = _q(
+                "SELECT id, market_question, side, entry_price as market_price, "
+                "cashout_price, cashout_reason, cashout_at, bet_amount as amount_usd, "
+                "pnl, result FROM demo_trades "
+                "WHERE cashout_at IS NOT NULL ORDER BY id DESC LIMIT 50"
+            )
+        else:
+            # Show resolved trades as cashout events
+            rows = _q(
+                "SELECT id, market_question, side, entry_price as market_price, "
+                "entry_price as cashout_price, result as cashout_reason, "
+                "resolved_at as cashout_at, bet_amount as amount_usd, "
+                "pnl, result FROM demo_trades "
+                "WHERE result IS NOT NULL AND result != '' AND result != 'pending' "
+                "ORDER BY id DESC LIMIT 50"
+            )
         return jsonify({"cashouts": rows, "count": len(rows)})
     except Exception as e:
         return jsonify({"cashouts": [], "count": 0, "error": str(e)})
@@ -750,20 +797,41 @@ def api_cashouts():
 def api_pipeline_status():
     """JSON API: current pipeline status (last scan, last resolve, etc)."""
     try:
-        last_run = _q("SELECT * FROM pipeline_runs ORDER BY id DESC LIMIT 1")
+        # Try pipeline_runs, fall back to demo_runs
+        last_run = []
+        try:
+            last_run = _q("SELECT * FROM pipeline_runs ORDER BY id DESC LIMIT 1")
+        except Exception:
+            pass
+        if not last_run:
+            try:
+                last_run = _q("SELECT * FROM demo_runs ORDER BY id DESC LIMIT 1")
+            except Exception:
+                pass
+
+        # Get last resolved trade from demo_trades
         last_resolve = _q(
-            "SELECT * FROM outcomes ORDER BY id DESC LIMIT 1"
+            "SELECT id, market_question, result, pnl, resolved_at, created_at "
+            "FROM demo_trades WHERE result IS NOT NULL AND result != '' AND result != 'pending' "
+            "ORDER BY id DESC LIMIT 1"
         )
-        last_news = _q(
-            "SELECT headline, source, received_at FROM news_events ORDER BY id DESC LIMIT 1"
-        )
+
+        # Get last news from demo_news
+        last_news = []
+        try:
+            last_news = _q(
+                "SELECT headline, source, received_at FROM demo_news ORDER BY id DESC LIMIT 1"
+            )
+        except Exception:
+            pass
         if not last_news:
             try:
                 last_news = _q(
-                    "SELECT headline, source, received_at FROM demo_news ORDER BY id DESC LIMIT 1"
+                    "SELECT headline, source, received_at FROM news_events ORDER BY id DESC LIMIT 1"
                 )
             except Exception:
                 pass
+
         return jsonify({
             "last_run": last_run[0] if last_run else None,
             "last_resolve": last_resolve[0] if last_resolve else None,
@@ -1058,6 +1126,98 @@ TEMPLATE = r"""<!DOCTYPE html>
     </table>
   </div>
 
+<script>
+async function fetchJSON(url) {
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch(e) { return null; }
+}
+
+async function loadPositions() {
+  const data = await fetchJSON('/api/positions');
+  const body = document.getElementById('positions-body');
+  const count = document.getElementById('positions-count');
+  if (!data || !data.positions) { body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted)">No active positions</td></tr>'; count.textContent='0'; return; }
+  const pos = data.positions;
+  count.textContent = pos.length;
+  if (pos.length === 0) { body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted)">No active positions</td></tr>'; return; }
+  body.innerHTML = pos.map(p => `<tr>
+    <td>${(p.market_question||'').substring(0,50)}</td>
+    <td>${p.side||''}</td>
+    <td>${p.entry_price!=null?'$'+p.entry_price.toFixed(3):'—'}</td>
+    <td>${p.current_price!=null?'$'+p.current_price.toFixed(3):'—'}</td>
+    <td>${p.bid!=null?'$'+p.bid.toFixed(3):'—'} / ${p.ask!=null?'$'+p.ask.toFixed(3):'—'}</td>
+    <td class="${(p.unrealized_pnl||0)>=0?'green':'red'}">${p.unrealized_pnl!=null?'$'+p.unrealized_pnl.toFixed(2):'—'}</td>
+    <td class="${(p.pnl_pct||0)>=0?'green':'red'}">${p.pnl_pct!=null?p.pnl_pct.toFixed(1)+'%':'—'}</td>
+    <td>${p.position_status||'open'}</td>
+  </tr>`).join('');
+}
+
+async function loadCashouts() {
+  const data = await fetchJSON('/api/cashouts');
+  const body = document.getElementById('cashouts-body');
+  const count = document.getElementById('cashouts-count');
+  if (!data || !data.cashouts) { body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted)">No cashouts yet</td></tr>'; count.textContent='0'; return; }
+  const co = data.cashouts;
+  count.textContent = co.length;
+  if (co.length === 0) { body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted)">No cashouts yet</td></tr>'; return; }
+  body.innerHTML = co.map(c => `<tr>
+    <td>${(c.market_question||'').substring(0,50)}</td>
+    <td>${c.side||''}</td>
+    <td>${c.market_price!=null?'$'+Number(c.market_price).toFixed(3):'—'}</td>
+    <td>${c.cashout_price!=null?'$'+Number(c.cashout_price).toFixed(3):'—'}</td>
+    <td>${c.cashout_reason||c.result||'—'}</td>
+    <td class="${(c.pnl||0)>=0?'green':'red'}">${c.pnl!=null?'$'+Number(c.pnl).toFixed(2):'—'}</td>
+    <td>${c.cashout_at||'—'}</td>
+  </tr>`).join('');
+}
+
+async function loadPipeline() {
+  const data = await fetchJSON('/api/pipeline_status');
+  if (!data) {
+    // Fallback: derive from trades
+    const trades = await fetchJSON('/api/trades?limit=1');
+    const scan = document.querySelector('#pipe-last-scan .v');
+    const resolve = document.querySelector('#pipe-last-resolve .v');
+    if (trades && trades.trades && trades.trades.length > 0) {
+      scan.textContent = 'Trade #' + trades.trades[0].id + ' at ' + (trades.trades[0].created_at || '');
+    }
+    return;
+  }
+  const scan = document.querySelector('#pipe-last-scan .v');
+  const newsEl = document.querySelector('#pipe-last-news .v');
+  const resolve = document.querySelector('#pipe-last-resolve .v');
+  if (data.last_run) scan.textContent = '#' + (data.last_run.id||'') + ' ' + (data.last_run.started_at||data.last_run.created_at||'');
+  if (data.last_news) newsEl.textContent = (data.last_news.headline||'').substring(0,60) + ' - ' + (data.last_news.received_at||'');
+  if (data.last_resolve) resolve.textContent = '#' + (data.last_resolve.id||'') + ' ' + (data.last_resolve.resolved_at||data.last_resolve.created_at||'');
+}
+
+async function loadNews() {
+  const data = await fetchJSON('/api/news');
+  const body = document.getElementById('news-body');
+  const count = document.getElementById('news-count');
+  if (!data || !data.news || data.news.length === 0) { body.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted)">No news events yet</td></tr>'; count.textContent='0'; return; }
+  const news = data.news;
+  count.textContent = news.length;
+  body.innerHTML = news.slice(0,20).map(n => `<tr>
+    <td>${(n.headline||n.title||'').substring(0,80)}</td>
+    <td>${n.source||'—'}</td>
+    <td>${n.matched_markets||'—'}</td>
+    <td>${n.triggered_trades||'—'}</td>
+    <td>${n.timestamp||n.created_at||'—'}</td>
+  </tr>`).join('');
+}
+
+// Load all dynamic sections
+loadPositions();
+loadCashouts();
+loadPipeline();
+loadNews();
+// Auto-refresh every 60 seconds
+setInterval(() => { loadPositions(); loadCashouts(); loadPipeline(); loadNews(); }, 60000);
+</script>
 </div>
 </body>
 </html>"""
