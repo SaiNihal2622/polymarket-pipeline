@@ -110,8 +110,8 @@ DEAD_ZONE_LOW       = float(os.getenv("DEAD_ZONE_LOW", "0.43"))
 DEAD_ZONE_HIGH      = float(os.getenv("DEAD_ZONE_HIGH", "0.57"))
 
 # Fast-resolution filter: markets resolving within this window
-# 72 hours = 3 days - focus on near-term events for faster capital turnover
-MAX_HOURS_TO_CLOSE  = float(os.getenv("MAX_HOURS_TO_CLOSE", "72"))
+# 48 hours = 2 days — fast capital turnover, quick resolution
+MAX_HOURS_TO_CLOSE  = float(os.getenv("MAX_HOURS_TO_CLOSE", "48"))
 
 # ─── Volume Filter ───────────────────────────────────────────────────────────
 MIN_VOLUME_USD      = float(os.getenv("MIN_VOLUME_USD", "50"))
@@ -162,7 +162,7 @@ MAX_AI_CALLS_PER_SCAN = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "150"))
 # ─── Demo / Go-Live ─────────────────────────────────────────────────────────
 ACCURACY_THRESHOLD  = float(os.getenv("ACCURACY_THRESHOLD", "55"))
 MIN_RESOLVED        = int(os.getenv("MIN_RESOLVED", "15"))
-DEMO_HOURS_WINDOW   = float(os.getenv("DEMO_HOURS_WINDOW", "168"))
+DEMO_HOURS_WINDOW   = float(os.getenv("DEMO_HOURS_WINDOW", "48"))
 
 # ─── Speed Target ───────────────────────────────────────────────────────────
 SPEED_TARGET_SECONDS = float(os.getenv("SPEED_TARGET_SECONDS", "5"))

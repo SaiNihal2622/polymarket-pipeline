@@ -33,17 +33,17 @@ log = logging.getLogger(__name__)
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 # Take-profit: sell when unrealized P&L reaches this % of max possible profit
-TAKE_PROFIT_PCT = float(os.getenv("TAKE_PROFIT_PCT", "0.50"))  # 50% of max profit
+TAKE_PROFIT_PCT = float(os.getenv("TAKE_PROFIT_PCT", "0.30"))  # 30% of max profit — quick turnover
 
 # Stop-loss: sell when loss reaches this % of entry price
-STOP_LOSS_PCT = float(os.getenv("STOP_LOSS_PCT", "0.40"))  # 40% loss from entry
+STOP_LOSS_PCT = float(os.getenv("STOP_LOSS_PCT", "0.35"))  # 35% loss — tighter stop
 
 # Trailing stop: enable trailing stop that follows price up
 TRAILING_STOP = os.getenv("TRAILING_STOP", "true").lower() == "true"
 TRAILING_STOP_PCT = float(os.getenv("TRAILING_STOP_PCT", "0.15"))  # 15% trail from peak
 
 # Minimum time to hold before cashing out (avoid noise)
-MIN_HOLD_SECONDS = int(os.getenv("MIN_HOLD_SECONDS", "600"))  # 10 minutes
+MIN_HOLD_SECONDS = int(os.getenv("MIN_HOLD_SECONDS", "120"))  # 2 minutes — fast cashout
 
 # Check interval
 CHECK_INTERVAL = int(os.getenv("CASHOUT_CHECK_INTERVAL", "60"))  # 60 seconds
