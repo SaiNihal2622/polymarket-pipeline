@@ -700,6 +700,79 @@ def api_config():
     })
 
 
+@app.route("/api/positions")
+def api_positions():
+    """JSON API: open positions with live P&L data."""
+    try:
+        from cashout import get_open_positions, get_current_price, calculate_unrealized_pnl
+        positions = get_open_positions()
+        enriched = []
+        for pos in positions:
+            entry_price = float(pos.get("market_price") or 0.5)
+            amount_usd = float(pos.get("amount_usd") or 1.0)
+            token_id = pos.get("token_id", "")
+            price_data = get_current_price(token_id) if token_id else None
+            if price_data:
+                pnl_info = calculate_unrealized_pnl(pos["side"], entry_price, price_data["mid"], amount_usd)
+                pos["current_price"] = price_data["mid"]
+                pos["best_bid"] = price_data["best_bid"]
+                pos["best_ask"] = price_data["best_ask"]
+                pos["unrealized_pnl"] = pnl_info["pnl"]
+                pos["unrealized_pnl_pct"] = pnl_info["pnl_pct"]
+                pos["profit_pct_of_max"] = pnl_info["profit_pct_of_max"]
+            else:
+                pos["current_price"] = None
+                pos["unrealized_pnl"] = 0.0
+                pos["unrealized_pnl_pct"] = 0.0
+                pos["profit_pct_of_max"] = 0.0
+            enriched.append(pos)
+        return jsonify({"positions": enriched, "count": len(enriched)})
+    except Exception as e:
+        return jsonify({"positions": [], "count": 0, "error": str(e)})
+
+
+@app.route("/api/cashouts")
+def api_cashouts():
+    """JSON API: recent cashout events."""
+    try:
+        rows = _q(
+            "SELECT t.id, t.market_question, t.side, t.market_price, t.cashout_price, "
+            "t.cashout_reason, t.cashout_at, t.amount_usd, o.pnl, o.result "
+            "FROM trades t LEFT JOIN outcomes o ON t.id = o.trade_id "
+            "WHERE t.cashout_at IS NOT NULL ORDER BY t.id DESC LIMIT 50"
+        )
+        return jsonify({"cashouts": rows, "count": len(rows)})
+    except Exception as e:
+        return jsonify({"cashouts": [], "count": 0, "error": str(e)})
+
+
+@app.route("/api/pipeline_status")
+def api_pipeline_status():
+    """JSON API: current pipeline status (last scan, last resolve, etc)."""
+    try:
+        last_run = _q("SELECT * FROM pipeline_runs ORDER BY id DESC LIMIT 1")
+        last_resolve = _q(
+            "SELECT * FROM outcomes ORDER BY id DESC LIMIT 1"
+        )
+        last_news = _q(
+            "SELECT headline, source, received_at FROM news_events ORDER BY id DESC LIMIT 1"
+        )
+        if not last_news:
+            try:
+                last_news = _q(
+                    "SELECT headline, source, received_at FROM demo_news ORDER BY id DESC LIMIT 1"
+                )
+            except Exception:
+                pass
+        return jsonify({
+            "last_run": last_run[0] if last_run else None,
+            "last_resolve": last_resolve[0] if last_resolve else None,
+            "last_news": last_news[0] if last_news else None,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+
 @app.route("/api/logs")
 def api_logs():
     """JSON API: recent log lines from the log file."""
@@ -884,6 +957,64 @@ TEMPLATE = r"""<!DOCTYPE html>
         {% if not trades %}
         <tr><td colspan="12" style="text-align:center;color:var(--muted);padding:24px">No trades yet — the demo runner will start placing trades soon.</td></tr>
         {% endif %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Live Positions (loaded via JS) -->
+  <div class="section" id="positions-section">
+    <h2>🎯 Live Positions <span id="positions-count" class="chip">loading...</span></h2>
+    <table>
+      <thead>
+        <tr><th>Market</th><th>Side</th><th>Entry</th><th>Current</th><th>Bid/Ask</th><th>P&L</th><th>P&L %</th><th>Status</th></tr>
+      </thead>
+      <tbody id="positions-body">
+        <tr><td colspan="8" style="text-align:center;color:var(--muted)">Loading positions...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Cashout Events (loaded via JS) -->
+  <div class="section" id="cashouts-section">
+    <h2>💸 Cashout Events <span id="cashouts-count" class="chip">loading...</span></h2>
+    <table>
+      <thead>
+        <tr><th>Market</th><th>Side</th><th>Entry</th><th>Cashout</th><th>Reason</th><th>P&L</th><th>Time</th></tr>
+      </thead>
+      <tbody id="cashouts-body">
+        <tr><td colspan="7" style="text-align:center;color:var(--muted)">Loading cashouts...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Pipeline Status -->
+  <div class="section" id="pipeline-section">
+    <h2>🔄 Pipeline Status</h2>
+    <div class="flex">
+      <div class="card" id="pipe-last-scan">
+        <h3>Last Scan</h3>
+        <div class="v" style="font-size:14px">loading...</div>
+      </div>
+      <div class="card" id="pipe-last-news">
+        <h3>Latest News</h3>
+        <div class="v" style="font-size:14px">loading...</div>
+      </div>
+      <div class="card" id="pipe-last-resolve">
+        <h3>Last Resolution</h3>
+        <div class="v" style="font-size:14px">loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- News Feed (loaded via JS) -->
+  <div class="section" id="news-section">
+    <h2>📰 News Feed <span id="news-count" class="chip">loading...</span></h2>
+    <table>
+      <thead>
+        <tr><th>Headline</th><th>Source</th><th>Matched Markets</th><th>Triggered Trades</th><th>Time</th></tr>
+      </thead>
+      <tbody id="news-body">
+        <tr><td colspan="5" style="text-align:center;color:var(--muted)">Loading news...</td></tr>
       </tbody>
     </table>
   </div>
