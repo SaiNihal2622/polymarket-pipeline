@@ -99,15 +99,15 @@ MIN_STRATEGY_SCORE  = float(os.getenv("MIN_STRATEGY_SCORE", "0.45"))
 # AVOID: entry < 0.20 (lottery tickets, <20% win rate, guaranteed losers)
 MAX_BUY_PRICE       = float(os.getenv("MAX_BUY_PRICE", "0.55"))
 MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.50"))
-MIN_YES_ENTRY_PRICE = float(os.getenv("MIN_YES_ENTRY_PRICE", "0.25"))
-MIN_NO_ENTRY_PRICE  = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.50"))
-MAX_NO_ENTRY_PRICE  = float(os.getenv("MAX_NO_ENTRY_PRICE", "0.80"))
-MAX_NO_BUY_PRICE    = float(os.getenv("MAX_NO_BUY_PRICE", "0.45"))
+MIN_YES_ENTRY_PRICE = float(os.getenv("MIN_YES_ENTRY_PRICE", "0.10"))
+MIN_NO_ENTRY_PRICE  = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.45"))
+MAX_NO_ENTRY_PRICE  = float(os.getenv("MAX_NO_ENTRY_PRICE", "0.90"))
+MAX_NO_BUY_PRICE    = float(os.getenv("MAX_NO_BUY_PRICE", "0.50"))
 
 # Dead-zone: skip markets where YES price is between these values (uncertain)
 # 0.43-0.57 = tight coinflip zone — narrower to allow more trades through
-DEAD_ZONE_LOW       = float(os.getenv("DEAD_ZONE_LOW", "0.46"))
-DEAD_ZONE_HIGH      = float(os.getenv("DEAD_ZONE_HIGH", "0.54"))
+DEAD_ZONE_LOW       = float(os.getenv("DEAD_ZONE_LOW", "0.49"))
+DEAD_ZONE_HIGH      = float(os.getenv("DEAD_ZONE_HIGH", "0.51"))
 
 # Fast-resolution filter: markets resolving within this window
 # 48 hours = 2 days — fast capital turnover, quick resolution

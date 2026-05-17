@@ -566,10 +566,7 @@ def scan_and_trade() -> dict:
         price      = market.yes_price
         tok        = token_map.get(market.condition_id)
 
-        if hours_left > DEMO_HOURS_WINDOW:
-            _skip("hours_gt_window")
-            continue
-        # ── FAST-RESOLUTION FILTER: only trade markets closing within MAX_HOURS_TO_CLOSE ──
+        # ── TIME FILTER: skip markets too far out ──
         if hours_left > config.MAX_HOURS_TO_CLOSE:
             _skip("too_far_out")
             continue
@@ -916,7 +913,7 @@ def scan_and_trade() -> dict:
                 f"     [{', '.join(strat_names)}]"
             )
 
-    ai_used = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "120")) - ai_calls_left
+    ai_used = config.MAX_AI_CALLS_PER_SCAN - ai_calls_left
     if not signals_found:
         console.print(f"  [yellow]No trades this scan — {analyzed} markets analyzed, {ai_used} AI calls used.[/yellow]")
     else:
