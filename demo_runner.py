@@ -792,36 +792,40 @@ def scan_and_trade() -> dict:
         ]
         is_sports = any(kw in q_lower for kw in sports_keywords)
 
-        # S2: AI + NEWS — requires consensus agreement + materiality
-        if gem_dir != "neutral" and consensus_agreed and n_agree >= 1 and gem_mat >= 0.45:
+        # S2: AI + NEWS — requires consensus agreement + materiality (RELAXED)
+        if gem_dir != "neutral" and consensus_agreed and n_agree >= 1 and gem_mat >= 0.30:
             model_edge = (gem_conf - price) if gem_dir == "bullish" else (gem_conf - (1 - price))
-            if model_edge >= 0.04:
-                strategies_to_try.append(("S2_ai_news", _dir(gem_dir), max(gem_conf, 0.50)))
+            if model_edge >= 0.02:
+                strategies_to_try.append(("S2_ai_news", _dir(gem_dir), max(gem_conf, 0.45)))
 
-        # S3: MULTI-SIGNAL — 2+ signals + consensus required
-        if consensus_agreed and n_agree >= 1 and best_score >= 0.45:
-            strategies_to_try.append(("S3_multi_signal", best_side, max(best_score, 0.45)))
+        # S3: MULTI-SIGNAL — 2+ signals + consensus required (RELAXED)
+        if consensus_agreed and n_agree >= 1 and best_score >= 0.40:
+            strategies_to_try.append(("S3_multi_signal", best_side, max(best_score, 0.40)))
 
-        # S7: CONSENSUS — AI + skeptic agree (PRIMARY strategy)
-        if gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.45:
+        # S7: CONSENSUS — AI + skeptic agree (PRIMARY strategy, RELAXED)
+        if gem_dir != "neutral" and consensus_agreed and consensus_score >= 0.35:
             model_edge = (consensus_score - price) if gem_dir == "bullish" else (consensus_score - (1 - price))
-            if model_edge >= 0.04:
+            if model_edge >= 0.02:
                 strategies_to_try.append(("S7_consensus", _dir(gem_dir), max(gem_conf, consensus_score)))
 
-        # S8: SURESHOT — AI confident + news + multi-signal (top quality)
-        if (gem_dir != "neutral" and consensus_agreed and gem_conf >= 0.50 and gem_mat >= 0.35
+        # S8: SURESHOT — AI confident + news + multi-signal (top quality, RELAXED)
+        if (gem_dir != "neutral" and consensus_agreed and gem_conf >= 0.40 and gem_mat >= 0.25
                 and has_news and n_agree >= 1):
             model_edge = (gem_conf - price) if gem_dir == "bullish" else (gem_conf - (1 - price))
-            if model_edge >= 0.04:
+            if model_edge >= 0.02:
                 strategies_to_try.append(("S8_sureshot", _dir(gem_dir), gem_conf))
 
         # S12: AI SOLO — Single AI signal with reasonable confidence (VOLUME DRIVER)
-        # This is the fallback that ensures trades happen. Price-window + dead-zone
+        # RELAXED: This is the main trade driver now. Price-window + dead-zone
         # already filter for good ROI setups, so even solo AI signals are viable.
-        if gem_dir != "neutral" and consensus_agreed and gem_conf >= 0.45:
+        if gem_dir != "neutral" and consensus_agreed and gem_conf >= 0.35:
             model_edge = (gem_conf - price) if gem_dir == "bullish" else (gem_conf - (1 - price))
-            if model_edge >= 0.03:
-                strategies_to_try.append(("S12_ai_solo", _dir(gem_dir), max(gem_conf, 0.45)))
+            if model_edge >= 0.02:
+                strategies_to_try.append(("S12_ai_solo", _dir(gem_dir), max(gem_conf, 0.40)))
+
+        # S13: SIGNAL CONFLUENCE — multiple weak signals combine to strong (NEW)
+        if n_agree >= 2 and best_score >= 0.38 and consensus_agreed:
+            strategies_to_try.append(("S13_confluence", best_side, max(best_score, 0.40)))
 
         # SKIP sports markets only if no strategy fired at all
         # (allow sports if consensus is strong)
@@ -842,6 +846,7 @@ def scan_and_trade() -> dict:
             "S7_consensus":       180,  # AI + skeptic agree (highest quality)
             "S2_ai_news":         160,  # AI + news materiality
             "S3_multi_signal":    150,  # 2+ signals agree
+            "S13_confluence":    145,  # Multiple weak signals combine to strong
             "S5_copy_whale":      140,  # Copy/whale + AI agreement
             "S6_high_rrf":        130,  # RRF composite high
             "S1_ai_signal":       120,  # AI signal alone (primary volume driver)
