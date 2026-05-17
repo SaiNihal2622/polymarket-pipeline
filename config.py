@@ -84,14 +84,14 @@ MIN_BET_USD         = 0.50
 TRADES_PER_DAY      = int(os.getenv("TRADES_PER_DAY", "100"))
 DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "20"))
 
-# ─── Edge / Scoring Thresholds (PROFITABILITY-FOCUSED) ───────────────────────
-# Per strategy guide: minimum 4% edge required, high materiality, proper sizing
-# edge = p_model - p_market must exceed threshold for ANY trade
-EDGE_THRESHOLD      = float(os.getenv("EDGE_THRESHOLD", "0.08"))
-MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.60"))
-MIN_COMPOSITE_SCORE = float(os.getenv("MIN_COMPOSITE_SCORE", "0.55"))
-MIN_AI_CONFIDENCE   = float(os.getenv("MIN_AI_CONFIDENCE", "0.60"))
-MIN_STRATEGY_SCORE  = float(os.getenv("MIN_STRATEGY_SCORE", "0.55"))
+# ─── Edge / Scoring Thresholds (BALANCED: volume + accuracy) ──────────────────
+# Lowered to get 20-25 trades/day while maintaining quality
+# edge = p_model - p_market must exceed threshold
+EDGE_THRESHOLD      = float(os.getenv("EDGE_THRESHOLD", "0.04"))
+MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.50"))
+MIN_COMPOSITE_SCORE = float(os.getenv("MIN_COMPOSITE_SCORE", "0.45"))
+MIN_AI_CONFIDENCE   = float(os.getenv("MIN_AI_CONFIDENCE", "0.55"))
+MIN_STRATEGY_SCORE  = float(os.getenv("MIN_STRATEGY_SCORE", "0.45"))
 
 # Price caps — SWEET SPOT trades (0.20-0.55 entry = best ROI:accuracy)
 # YES trades: entry 0.20–0.55 (2-4x payout, realistic win probability)
@@ -105,21 +105,22 @@ MAX_NO_ENTRY_PRICE  = float(os.getenv("MAX_NO_ENTRY_PRICE", "0.80"))
 MAX_NO_BUY_PRICE    = float(os.getenv("MAX_NO_BUY_PRICE", "0.45"))
 
 # Dead-zone: skip markets where YES price is between these values (uncertain)
-# 0.40-0.60 = coinflip zone, skip it
-DEAD_ZONE_LOW       = float(os.getenv("DEAD_ZONE_LOW", "0.40"))
-DEAD_ZONE_HIGH      = float(os.getenv("DEAD_ZONE_HIGH", "0.60"))
+# 0.43-0.57 = tight coinflip zone — narrower to allow more trades through
+DEAD_ZONE_LOW       = float(os.getenv("DEAD_ZONE_LOW", "0.43"))
+DEAD_ZONE_HIGH      = float(os.getenv("DEAD_ZONE_HIGH", "0.57"))
 
-# Fast-resolution filter: only take markets resolving within this window
-# 7 days max - focus on near-term events for faster capital turnover
-MAX_HOURS_TO_CLOSE  = float(os.getenv("MAX_HOURS_TO_CLOSE", "48"))
+# Fast-resolution filter: markets resolving within this window
+# 72 hours = 3 days - focus on near-term events for faster capital turnover
+MAX_HOURS_TO_CLOSE  = float(os.getenv("MAX_HOURS_TO_CLOSE", "72"))
 
 # ─── Volume Filter ───────────────────────────────────────────────────────────
 MIN_VOLUME_USD      = float(os.getenv("MIN_VOLUME_USD", "50"))
 MAX_VOLUME_USD      = float(os.getenv("MAX_VOLUME_USD", "5000000"))
 
 # ─── LLM Settings ────────────────────────────────────────────────────────────
-LLM_PROVIDER        = os.getenv("LLM_PROVIDER", "groq")
-CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "llama-3.3-70b-versatile")
+# NVIDIA primary (largest quota, best model), Groq fast fallback, MiMo secondary
+LLM_PROVIDER        = os.getenv("LLM_PROVIDER", "nvidia")
+CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "nvidia/llama-3.3-nemotron-super-49b-v1")
 GEMINI_MODEL        = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 GROQ_MODEL          = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 NVIDIA_MODEL        = os.getenv("NVIDIA_MODEL", "nvidia/llama-3.3-nemotron-super-49b-v1")
@@ -159,8 +160,8 @@ MAX_MARKETS_PER_SCAN = int(os.getenv("MAX_MARKETS_PER_SCAN", "500"))
 MAX_AI_CALLS_PER_SCAN = int(os.getenv("MAX_AI_CALLS_PER_SCAN", "150"))
 
 # ─── Demo / Go-Live ─────────────────────────────────────────────────────────
-ACCURACY_THRESHOLD  = float(os.getenv("ACCURACY_THRESHOLD", "65"))
-MIN_RESOLVED        = int(os.getenv("MIN_RESOLVED", "30"))
+ACCURACY_THRESHOLD  = float(os.getenv("ACCURACY_THRESHOLD", "55"))
+MIN_RESOLVED        = int(os.getenv("MIN_RESOLVED", "15"))
 DEMO_HOURS_WINDOW   = float(os.getenv("DEMO_HOURS_WINDOW", "168"))
 
 # ─── Speed Target ───────────────────────────────────────────────────────────

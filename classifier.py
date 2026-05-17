@@ -51,13 +51,13 @@ async def _call_llm_async(prompt: str, temperature: float = 0.1, max_tokens: int
             return await _call_groq_async(prompt, temperature, max_tokens)
         return await _call_mimo_async(prompt, temperature, max_tokens)
     else:
-        # Default fallback: MiMo → NVIDIA → Groq (Gemini removed)
-        if config.MIMO_API_KEY:
-            return await _call_mimo_async(prompt, temperature, max_tokens)
-        elif config.NVIDIA_API_KEY:
+        # Default: NVIDIA → Groq → MiMo (NVIDIA has largest quota)
+        if config.NVIDIA_API_KEY:
             return await _call_nvidia_async(prompt, temperature, max_tokens)
         elif config.GROQ_API_KEY:
             return await _call_groq_async(prompt, temperature, max_tokens)
+        elif config.MIMO_API_KEY:
+            return await _call_mimo_async(prompt, temperature, max_tokens)
         elif config.ANTHROPIC_API_KEY:
             return await _call_anthropic_async(prompt, temperature, max_tokens)
         else:
