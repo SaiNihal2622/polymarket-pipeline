@@ -93,33 +93,33 @@ MIN_BET_USD         = 0.50
 TRADES_PER_DAY      = int(os.getenv("TRADES_PER_DAY", "100"))
 DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "20"))
 
-# ─── Edge / Scoring Thresholds (BALANCED: volume + accuracy) ──────────────────
-# Lowered to get 20-25 trades/day while maintaining quality
-# edge = p_model - p_market must exceed threshold
-EDGE_THRESHOLD      = float(os.getenv("EDGE_THRESHOLD", "0.04"))
-MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.50"))
-MIN_COMPOSITE_SCORE = float(os.getenv("MIN_COMPOSITE_SCORE", "0.45"))
-MIN_AI_CONFIDENCE   = float(os.getenv("MIN_AI_CONFIDENCE", "0.55"))
-MIN_STRATEGY_SCORE  = float(os.getenv("MIN_STRATEGY_SCORE", "0.45"))
+# ─── Edge / Scoring Thresholds (BALANCED: accuracy + opportunity) ────────────
+# These thresholds balance quality (accuracy) with opportunity (trade volume).
+# Based on Brody reference + our multi-signal analysis improvements.
+EDGE_THRESHOLD      = float(os.getenv("EDGE_THRESHOLD", "0.08"))
+MATERIALITY_THRESHOLD = float(os.getenv("MATERIALITY_THRESHOLD", "0.60"))
+MIN_COMPOSITE_SCORE = float(os.getenv("MIN_COMPOSITE_SCORE", "0.55"))
+MIN_AI_CONFIDENCE   = float(os.getenv("MIN_AI_CONFIDENCE", "0.60"))
+MIN_STRATEGY_SCORE  = float(os.getenv("MIN_STRATEGY_SCORE", "0.50"))
 
-# Price caps — SWEET SPOT trades (0.20-0.55 entry = best ROI:accuracy)
-# YES trades: entry 0.20–0.55 (2-4x payout, realistic win probability)
-# NO trades: entry when YES ≥ 0.55 (NO at 0.45 max, 2x+ payout)
-# AVOID: entry < 0.20 (lottery tickets, <20% win rate, guaranteed losers)
-MAX_BUY_PRICE       = float(os.getenv("MAX_BUY_PRICE", "0.55"))
-MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.50"))
+# Price caps — BROADER RANGE for balanced ROI:probability
+# YES: buy at ≤0.65 (≥54% ROI, realistic probability range)
+# NO: buy when YES ≥0.35 (NO at ≤0.65, ≥54% ROI)
+# AVOID extremes: <0.10 (lottery) and >0.85 (too expensive)
+MAX_BUY_PRICE       = float(os.getenv("MAX_BUY_PRICE", "0.65"))
+MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.65"))
 MIN_YES_ENTRY_PRICE = float(os.getenv("MIN_YES_ENTRY_PRICE", "0.10"))
-MIN_NO_ENTRY_PRICE  = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.45"))
+MIN_NO_ENTRY_PRICE  = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.35"))
 MAX_NO_ENTRY_PRICE  = float(os.getenv("MAX_NO_ENTRY_PRICE", "0.90"))
-MAX_NO_BUY_PRICE    = float(os.getenv("MAX_NO_BUY_PRICE", "0.50"))
+MAX_NO_BUY_PRICE    = float(os.getenv("MAX_NO_BUY_PRICE", "0.65"))
 
 # Dead-zone: skip markets where YES price is between these values (uncertain)
-# 0.43-0.57 = tight coinflip zone — narrower to allow more trades through
-DEAD_ZONE_LOW       = float(os.getenv("DEAD_ZONE_LOW", "0.49"))
-DEAD_ZONE_HIGH      = float(os.getenv("DEAD_ZONE_HIGH", "0.51"))
+# Brody uses 0.40-0.60 — we widen slightly to catch more opportunities
+DEAD_ZONE_LOW       = float(os.getenv("DEAD_ZONE_LOW", "0.45"))
+DEAD_ZONE_HIGH      = float(os.getenv("DEAD_ZONE_HIGH", "0.55"))
 
 # Fast-resolution filter: markets resolving within this window
-# 48 hours = 2 days — fast capital turnover, quick resolution
+# 168h = 7 days — allows both fast and medium-term trades
 MAX_HOURS_TO_CLOSE  = float(os.getenv("MAX_HOURS_TO_CLOSE", "168"))
 
 # ─── Volume Filter ───────────────────────────────────────────────────────────

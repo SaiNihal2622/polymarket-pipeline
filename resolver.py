@@ -595,10 +595,14 @@ def _resolve_via_price_expiry(trade: dict) -> float | None:
     Strategy 0: If market is past its end_date and current price is extreme,
     resolve based on price. This catches markets that Polymarket closed but
     our other strategies missed.
+    
+    SAFETY: Returns None if no end_date — prevents premature resolution.
+    SAFETY: Requires market to have ended at least 4 hours ago (not 2h).
     """
     try:
         end_str = trade.get("end_date_iso") or trade.get("market_end_date")
         if not end_str:
+            # NO END DATE = cannot safely use price-expiry strategy
             return None
         from datetime import datetime as _dt, timezone as _tz
         end_dt = _dt.fromisoformat(end_str.replace("Z", "+00:00"))

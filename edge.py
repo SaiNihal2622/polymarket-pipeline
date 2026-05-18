@@ -127,10 +127,13 @@ def detect_edge_v2(
         if model_prob and 0 < model_prob < 1:
             raw_edge = model_prob - market_price
         else:
-            # REJECT trades without probability estimate — strategy guide says
-            # "only trade when confidence exceeds threshold". No probability = no trade.
-            log.debug(f"[edge] REJECTED bullish — no probability estimate from LLM")
-            return None
+            # Brody approach: use materiality as proxy for probability
+            # If LLM says 0.80 materiality bullish, estimate probability = 0.50 + 0.80*0.40 = 0.82
+            model_prob = 0.50 + classification.materiality * 0.40
+            raw_edge = model_prob - market_price
+            if raw_edge <= 0:
+                log.debug(f"[edge] REJECTED bullish — materiality-implied prob={model_prob:.2f} ≤ price={market_price:.2f}")
+                return None
         price_room = 1.0 - market_price
     else:  # bearish
         side = "NO"
@@ -141,21 +144,30 @@ def detect_edge_v2(
         if model_prob and 0 < model_prob < 1:
             raw_edge = (1.0 - model_prob) - (1.0 - market_price)
         else:
-            log.debug(f"[edge] REJECTED bearish — no probability estimate from LLM")
-            return None
+            # Brody approach: use materiality as proxy
+            model_prob = 0.50 - classification.materiality * 0.40
+            no_prob = 1.0 - model_prob
+            raw_edge = no_prob - (1.0 - market_price)
+            if raw_edge <= 0:
+                log.debug(f"[edge] REJECTED bearish — materiality-implied no_prob={no_prob:.2f} ≤ NO_price={1.0-market_price:.2f}")
+                return None
         price_room = market_price
 
-    # ── GATE 4b: Minimum ROI filter (ensures ≥100% ROI per trade) ─────────
-    # YES: buy only if price ≤ 0.50 → profit per $1 = (1/price - 1) ≥ $1.00
-    # NO: buy only if YES price ≥ 0.50 → NO price ≤ 0.50 → same math
+    # ── GATE 4b: Price range filter ───────────────────────────────────────
+    # Brody reference: reject YES > 0.85, NO < 0.15 (extreme prices)
+    # Our approach: use config thresholds for balanced ROI:probability
     if side == "YES" and market_price > config.MAX_YES_ENTRY_PRICE:
-        roi_pct = (1.0 / market_price - 1.0) * 100
-        log.debug(f"[edge] REJECTED YES price={market_price:.2f} > {config.MAX_YES_ENTRY_PRICE:.2f} — ROI={roi_pct:.0f}% too low, need ≥100%")
+        log.debug(f"[edge] REJECTED YES price={market_price:.2f} > {config.MAX_YES_ENTRY_PRICE:.2f}")
+        return None
+    if side == "YES" and market_price < config.MIN_YES_ENTRY_PRICE:
+        log.debug(f"[edge] REJECTED YES price={market_price:.2f} < {config.MIN_YES_ENTRY_PRICE:.2f} — lottery ticket")
         return None
     if side == "NO" and market_price < config.MIN_NO_ENTRY_PRICE:
         no_price = 1.0 - market_price
-        roi_pct = (1.0 / no_price - 1.0) * 100
-        log.debug(f"[edge] REJECTED NO price={no_price:.2f} > 0.50 — ROI={roi_pct:.0f}% too low, need ≥100%")
+        log.debug(f"[edge] REJECTED NO: YES={market_price:.2f}, NO_price={no_price:.2f} — too expensive")
+        return None
+    if side == "NO" and market_price > config.MAX_NO_ENTRY_PRICE:
+        log.debug(f"[edge] REJECTED NO: YES={market_price:.2f} > {config.MAX_NO_ENTRY_PRICE:.2f}")
         return None
 
     # ── GATE 5: Edge threshold (free — pure math) ─────────────────────────
@@ -206,8 +218,8 @@ def detect_edge_v2(
         composite = max(composite, 0.85 if is_high_conviction else 0.80)
         raw_edge = max(raw_edge, config.EDGE_THRESHOLD * 2.0)
 
-    # Composite threshold — sureshots get a small discount
-    min_composite = 0.60 if is_sureshot else 0.70
+    # Composite threshold — sureshots get a discount, use config value
+    min_composite = config.MIN_COMPOSITE_SCORE if is_sureshot else (config.MIN_COMPOSITE_SCORE + 0.10)
     if composite < min_composite:
         log.debug(f"[edge] REJECTED composite={composite:.3f} < {min_composite}")
         return None
