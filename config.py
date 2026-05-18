@@ -83,6 +83,7 @@ DB_PATH = os.getenv("DB_PATH", "/data/trades.db" if os.path.exists("/data") else
 
 # ─── Polymarket API ─────────────────────────────────────────────────────────
 POLYMARKET_HOST     = os.getenv("POLYMARKET_HOST", "https://clob.polymarket.com")
+POLYMARKET_WS_HOST  = os.getenv("POLYMARKET_WS_HOST", "wss://ws-subscriptions-clob.polymarket.com/ws/market")
 
 # ─── Trading Parameters ─────────────────────────────────────────────────────
 DRY_RUN             = os.getenv("DRY_RUN", "false").lower() == "true"
@@ -133,6 +134,7 @@ GEMINI_MODEL        = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 GROQ_MODEL          = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 NVIDIA_MODEL        = os.getenv("NVIDIA_MODEL", "nvidia/llama-3.3-nemotron-super-49b-v1")
 OPENAI_MODEL        = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+SCORING_MODEL       = os.getenv("SCORING_MODEL", "claude-sonnet-4-6-20250514")
 
 # ─── Consensus Settings (Multi-model ensemble per strategy guide) ─────────
 # Use 3 models with different prompts: analyst + skeptic + reflector
@@ -160,6 +162,15 @@ DYNAMIC_WEIGHT_RANGES = {
     "crowd":  (0.01, 0.05),  # crowd signal DISABLED (29% accuracy)
     "consensus": (0.05, 0.15),
 }
+
+# ─── Market Categories ──────────────────────────────────────────────────────
+MARKET_CATEGORIES   = [
+    "ai",
+    "technology",
+    "crypto",
+    "politics",
+    "science",
+]
 
 # ─── Market Filters ──────────────────────────────────────────────────────────
 SCAN_INTERVAL_MIN   = int(os.getenv("SCAN_INTERVAL_MIN", "1"))

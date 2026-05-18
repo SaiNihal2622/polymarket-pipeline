@@ -86,10 +86,35 @@ def match_news_to_markets_broad(
     max_matches: int = 5,
 ) -> list[Market]:
     """
-    Tightened broad matching. Headline + Summary keyword overlap.
-    No longer falls back to generic category matching as it causes hallucinations.
+    Broader matching using headline + summary text.
+    Falls back to category matching if keyword matching returns nothing.
     """
-    return match_news_to_markets(f"{headline} {summary}", markets, max_matches)
+    # Try keyword matching first (using strict word-boundary matching)
+    matches = match_news_to_markets(f"{headline} {summary}", markets, max_matches)
+    if matches:
+        return matches
+
+    # Fallback: match on category keywords in the headline+summary
+    combined = f"{headline} {summary}".lower()
+    category_keywords = {
+        "ai": ["ai", "openai", "gpt", "anthropic", "claude", "llm", "chatgpt", "gemini", "artificial intelligence"],
+        "crypto": ["bitcoin", "ethereum", "solana", "crypto", "blockchain", "defi", "token", "btc", "eth"],
+        "politics": ["trump", "biden", "congress", "senate", "election", "tariff", "fed", "white house"],
+        "technology": ["apple", "google", "microsoft", "nvidia", "tech", "software", "startup"],
+        "science": ["spacex", "nasa", "climate", "research", "discovery"],
+    }
+
+    matched_categories = set()
+    for cat, kws in category_keywords.items():
+        if any(kw in combined for kw in kws):
+            matched_categories.add(cat)
+
+    if not matched_categories:
+        return []
+
+    # Return markets in matching categories
+    category_matches = [m for m in markets if m.category in matched_categories]
+    return category_matches[:max_matches]
 
 
 

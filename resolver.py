@@ -103,21 +103,22 @@ def _get_token_id_for_trade(market_id: str) -> str | None:
 # ── Parse outcome from Gamma market dict ────────────────────────────────────
 
 def _parse_outcome(m: dict) -> float | None:
-    """Extract result from Gamma market dict. Returns 1.0 (YES) / 0.0 (NO) / None."""
-    # Check outcomePrices first (most reliable)
-    outcome_prices_raw = m.get("outcomePrices", "")
-    if outcome_prices_raw:
-        try:
-            prices = json.loads(outcome_prices_raw) if isinstance(outcome_prices_raw, str) else outcome_prices_raw
-            if len(prices) >= 2:
-                yes_price = float(prices[0])
-                no_price  = float(prices[1])
-                if yes_price >= 0.85:   return 1.0
-                if no_price  >= 0.85:   return 0.0
-        except (json.JSONDecodeError, ValueError):
-            pass
+    """Extract result from Gamma market dict. Returns 1.0 (YES) / 0.0 (NO) / None.
 
-    # Check resolutionPrice
+    IMPORTANT: Only returns a definitive result if the market is ACTUALLY resolved.
+    A market with YES price of 0.85 is NOT resolved — it just means 85% probability.
+    We check for explicit resolution indicators, not just price extremes.
+    """
+    # Check if market is explicitly marked as resolved
+    is_resolved = bool(m.get("resolved") or m.get("closed"))
+    # Check resolvedOutcome field FIRST — this is the most authoritative signal
+    resolved_outcome = m.get("resolvedOutcome")
+    if resolved_outcome:
+        ro = str(resolved_outcome).strip().lower()
+        if ro in ("yes", "true", "1"): return 1.0
+        if ro in ("no", "false", "0"): return 0.0
+
+    # Check resolutionPrice (explicit resolution price set by Polymarket)
     res_price = m.get("resolutionPrice")
     if res_price is not None:
         try:
@@ -127,12 +128,20 @@ def _parse_outcome(m: dict) -> float | None:
         except (ValueError, TypeError):
             pass
 
-    # Check resolvedOutcome field (some Gamma markets have this)
-    resolved_outcome = m.get("resolvedOutcome")
-    if resolved_outcome:
-        ro = str(resolved_outcome).strip().lower()
-        if ro in ("yes", "true", "1"): return 1.0
-        if ro in ("no", "false", "0"): return 0.0
+    # Check outcomePrices — ONLY if market is explicitly resolved/closed
+    # A market with YES=0.85 is NOT resolved, it just has high probability
+    outcome_prices_raw = m.get("outcomePrices", "")
+    if outcome_prices_raw and is_resolved:
+        try:
+            prices = json.loads(outcome_prices_raw) if isinstance(outcome_prices_raw, str) else outcome_prices_raw
+            if len(prices) >= 2:
+                yes_price = float(prices[0])
+                no_price  = float(prices[1])
+                # Use a HIGH threshold — 0.95+ means the market actually resolved
+                if yes_price >= 0.95:   return 1.0
+                if no_price  >= 0.95:   return 0.0
+        except (json.JSONDecodeError, ValueError):
+            pass
 
     # Check if market is closed and has clear winner via outcomes array
     outcomes = m.get("outcomes", "")
