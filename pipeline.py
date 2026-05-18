@@ -26,6 +26,16 @@ from market_watcher import MarketWatcher
 from matcher import match_news_to_markets
 from classifier import classify_async
 
+# New modules — market intelligence layer
+try:
+    import risk_manager
+    import arbitrage
+    import ml_predictor
+    import sentiment
+    HAS_ADVANCED_MODULES = True
+except ImportError:
+    HAS_ADVANCED_MODULES = False
+
 console = Console()
 log = logging.getLogger(__name__)
 
@@ -135,9 +145,23 @@ class PipelineV2:
                     log.warning(f"[pipeline] Signal detection error: {e}")
 
     async def _execute_signals(self):
-        """Execute trades from the signal queue."""
+        """Execute trades from the signal queue with risk management."""
         while True:
             signal: Signal = await self.signal_queue.get()
+
+            # Risk management gate
+            if HAS_ADVANCED_MODULES:
+                approved, reason, adjusted_amount = risk_manager.validate_trade(
+                    signal.bet_amount, signal.side, signal.market_question,
+                    composite_score=getattr(signal, 'composite_score', 0),
+                )
+                if not approved:
+                    console.print(f"  [red]RISK BLOCK[/red] {reason}")
+                    continue
+                if adjusted_amount < signal.bet_amount:
+                    signal.bet_amount = adjusted_amount
+                    console.print(f"  [yellow]SIZED[/yellow] {reason}")
+
             result = await execute_trade_async(signal)
             self.stats["trades_executed"] += 1
 

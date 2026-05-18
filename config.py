@@ -192,3 +192,26 @@ NEWS_LOOKBACK_HOURS = int(os.getenv("NEWS_LOOKBACK_HOURS", "48"))
 # ─── Paths ───────────────────────────────────────────────────────────────────
 PROJECT_ROOT        = Path(__file__).parent
 LOG_FILE            = PROJECT_ROOT / "polymarket_bot.log"
+
+# ── Risk Manager ─────────────────────────────────────────────
+MAX_SINGLE_EXPOSURE_PCT = float(os.getenv("MAX_SINGLE_EXPOSURE_PCT", "0.10"))
+MAX_SECTOR_EXPOSURE_PCT = float(os.getenv("MAX_SECTOR_EXPOSURE_PCT", "0.30"))
+MAX_CORRELATED_POSITIONS = int(os.getenv("MAX_CORRELATED_POSITIONS", "5"))
+CONSECUTIVE_LOSS_COOLDOWN = int(os.getenv("CONSECUTIVE_LOSS_COOLDOWN", "3"))
+
+# ── Arbitrage ─────────────────────────────────────────────────
+ARB_ENABLED = os.getenv("ARB_ENABLED", "true").lower() == "true"
+MIN_ARB_PROFIT_PCT = float(os.getenv("MIN_ARB_PROFIT_PCT", "0.015"))
+
+# ── ML Predictor ──────────────────────────────────────────────
+ML_ENABLED = os.getenv("ML_ENABLED", "false").lower() == "true"
+ML_MIN_TRAINING_SAMPLES = int(os.getenv("ML_MIN_TRAINING_SAMPLES", "50"))
+
+# ── Sentiment ─────────────────────────────────────────────────
+SENTIMENT_ENABLED = os.getenv("SENTIMENT_ENABLED", "true").lower() == "true"
+SENTIMENT_WEIGHT = float(os.getenv("SENTIMENT_WEIGHT", "0.15"))
+
+# ── Market Making ─────────────────────────────────────────────
+MM_ENABLED = os.getenv("MM_ENABLED", "false").lower() == "true"
+MM_SPREAD_TARGET = float(os.getenv("MM_SPREAD_TARGET", "0.04"))
+MM_MAX_POSITION_USD = float(os.getenv("MM_MAX_POSITION_USD", "50"))
