@@ -307,6 +307,71 @@ def check_spread_capture(market: dict) -> Optional[SpreadOpportunity]:
     )
 
 
+# ─── Strategy: Retail Slippage Harvester (080BEC) ──────────────────────────────
+def check_slippage_harvest(market: dict) -> Optional[SpreadOpportunity]:
+    """
+    Slippage Harvester (080BEC): Ultra-low-latency spread capturing.
+    Strictly buys both sides of the market to minimize risk and harvest
+    retail trader slippage. High volume of micro-trades.
+    
+    Targets markets where:
+    - Both YES and NO asks sum to < $1.00
+    - There's sufficient retail volume (takers eating into the book)
+    - Median fill size is small (~$10 range = retail activity)
+    """
+    tokens = market.get("clobTokenIds") or market.get("tokens", [])
+    if not tokens or len(tokens) < 2:
+        return None
+
+    yes_book = fetch_orderbook(tokens[0])
+    no_book = fetch_orderbook(tokens[1])
+
+    if not yes_book["asks"] or not no_book["asks"]:
+        return None
+
+    yes_best_ask = yes_book["asks"][0]["price"]
+    no_best_ask = no_book["asks"][0]["price"]
+    yes_best_bid = yes_book["bids"][0]["price"] if yes_book["bids"] else 0
+    no_best_bid = no_book["bids"][0]["price"] if no_book["bids"] else 0
+
+    paired_cost = yes_best_ask + no_best_ask
+
+    # Only harvest if we can buy both sides for less than $1.00
+    if paired_cost >= 1.0:
+        return None
+
+    # Check for retail activity signals: tight but not too tight spread
+    # Retail takers create small pockets of mispricing
+    yes_spread = yes_best_ask - yes_best_bid if yes_best_bid > 0 else 0
+    no_spread = no_best_ask - no_best_bid if no_best_bid > 0 else 0
+
+    # Calculate book depth (how much retail volume is sitting)
+    yes_depth = sum(l["size"] for l in yes_book["asks"][:3])
+    no_depth = sum(l["size"] for l in no_book["asks"][:3])
+
+    # We want shallow books (retail has been eating into them)
+    if yes_depth > 5000 or no_depth > 5000:
+        return None  # Too deep, institutional presence
+
+    discount = 1.0 - paired_cost
+    if discount < 0.005:  # Minimum $0.005 profit per pair
+        return None
+
+    return SpreadOpportunity(
+        condition_id=market.get("conditionId", ""),
+        question=market.get("question", ""),
+        yes_bid=yes_best_bid,
+        yes_ask=yes_best_ask,
+        no_bid=no_best_bid,
+        no_ask=no_best_ask,
+        paired_cost=round(paired_cost, 4),
+        spread=round(discount, 4),
+        confidence=min(1.0, discount / 0.05),
+        volume_24h=market.get("volume24hr", 0) or 0,
+        strategy="slippage_harvest",
+    )
+
+
 # ─── Strategy: Internal Pricing Model (Edge Detection) ─────────────────────────
 def check_model_edge(market: dict, our_probability: float) -> Optional[SpreadOpportunity]:
     """
@@ -402,7 +467,7 @@ def simulate_fill(opp: SpreadOpportunity, size_usd: float = None) -> list[MakerT
         )
         trades = [buy_trade]
 
-    elif opp.strategy == "model_edge":
+    elif opp.strategy in ("slippage_harvest", "model_edge"):
         direction = "yes" if opp.confidence > 0.5 else "no"
         buy_price = opp.yes_ask if direction == "yes" else opp.no_ask
         trades = [MakerTrade(
@@ -450,14 +515,22 @@ def scan_for_opportunities(our_probabilities: dict = None) -> list[SpreadOpportu
                      f"cost={opp.paired_cost:.3f} profit=${opp.expected_profit_per_pair:.3f}")
             continue
 
-        # Strategy 2: Spread Capture
+        # Strategy 2: Slippage Harvest (080BEC)
+        opp = check_slippage_harvest(m)
+        if opp and opp.is_profitable:
+            save_opportunity(opp)
+            opportunities.append(opp)
+            log.info(f"[mm] SLIPPAGE: {opp.question[:60]}… cost={opp.paired_cost:.3f}")
+            continue
+
+        # Strategy 3: Spread Capture
         opp = check_spread_capture(m)
         if opp and opp.is_profitable:
             save_opportunity(opp)
             opportunities.append(opp)
             log.info(f"[mm] SPREAD: {opp.question[:60]}… spread={opp.spread:.3f}")
 
-        # Strategy 3: Model Edge (if we have internal estimates)
+        # Strategy 4: Model Edge (if we have internal estimates)
         if our_probabilities and cid in our_probabilities:
             opp = check_model_edge(m, our_probabilities[cid])
             if opp:

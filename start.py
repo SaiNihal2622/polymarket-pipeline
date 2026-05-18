@@ -100,20 +100,49 @@ def _run_onchain_scanner():
 def _run_market_maker():
     """Background thread: periodically scan for spread-based market maker pairs."""
     try:
-        from market_maker import MarketMaker
+        from market_maker import run_maker_cycle
     except ImportError:
         print("[market_maker] Module not available, skipping.")
         return
-    mm = MarketMaker()
     while True:
         try:
-            result = mm.scan()
-            new_pairs = result.get("new_pairs", 0)
-            if new_pairs:
-                print(f"[market_maker] {new_pairs} new pairs found")
+            result = run_maker_cycle()
+            opps = result.get("opportunities", 0)
+            trades = result.get("trades_executed", 0)
+            if opps or trades:
+                print(f"[market_maker] {opps} opportunities, {trades} trades executed")
         except Exception as e:
             print(f"[market_maker] Error: {e}")
         time.sleep(600)  # Scan every 10 minutes
+
+
+def _run_sniper():
+    """Background thread: sniper execution engine — event-driven from on-chain alerts."""
+    try:
+        from sniper import run_sniper_cycle, monitor_positions
+        from onchain_scanner import scan_onchain
+    except ImportError:
+        print("[sniper] Module not available, skipping.")
+        return
+    while True:
+        try:
+            # First, get fresh on-chain data
+            scan_result = scan_onchain()
+            alerts = scan_result.get("alert_objects", [])
+
+            # Run sniper cycle with whale alerts as input
+            if alerts:
+                result = run_sniper_cycle(whale_alerts=alerts)
+                trades = result.get("trades_executed", 0)
+                signals = result.get("signals_total", 0)
+                if signals:
+                    print(f"[sniper] {signals} signals, {trades} trades executed")
+
+            # Monitor existing positions for stop-loss/safety-cut
+            # (In real mode, this would fetch live prices)
+        except Exception as e:
+            print(f"[sniper] Error: {e}")
+        time.sleep(120)  # Check every 2 minutes
 
 
 def _run_ai_insights():
@@ -150,6 +179,7 @@ def _start_background_modules():
     for name, target in [
         ("onchain_scanner", _run_onchain_scanner),
         ("market_maker", _run_market_maker),
+        ("sniper", _run_sniper),
         ("ai_insights", _run_ai_insights),
     ]:
         t = threading.Thread(target=target, name=name, daemon=True)

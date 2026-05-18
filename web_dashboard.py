@@ -861,19 +861,20 @@ def api_logs():
 def api_market_maker():
     """JSON API: market maker stats and open pairs."""
     try:
-        from market_maker import get_mm_summary
-        return jsonify(get_mm_summary())
+        from market_maker import get_maker_stats, _init_maker_table
+        _init_maker_table()
+        stats = get_maker_stats()
+        return jsonify(stats)
     except Exception as e:
-        return jsonify({"error": str(e), "total": 0})
+        return jsonify({"error": str(e), "total_trades": 0})
 
 
 @app.route("/api/market_maker/scan", methods=["POST"])
 def api_market_maker_scan():
     """Trigger a manual market maker scan."""
     try:
-        from market_maker import MarketMaker
-        mm = MarketMaker()
-        result = mm.scan()
+        from market_maker import run_maker_cycle
+        result = run_maker_cycle()
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)})
@@ -921,6 +922,69 @@ def api_insider_alerts_scan():
     try:
         from onchain_scanner import scan_onchain
         result = scan_onchain()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+
+# ── Sniper API Routes ──────────────────────────────────────────────────────
+
+@app.route("/api/sniper")
+def api_sniper():
+    """JSON API: sniper bot stats and recent signals."""
+    try:
+        from sniper import get_sniper_stats, _init_sniper_tables
+        _init_sniper_tables()
+        stats = get_sniper_stats()
+
+        # Also get recent signals from DB
+        import sqlite3 as _sql
+        signals = []
+        if Path(DB_PATH).is_file():
+            conn = _sql.connect(DB_PATH)
+            rows = conn.execute("""
+                SELECT question, signal_type, probability, source, direction,
+                       execution_status, expected_profit, actual_pnl, created_at
+                FROM sniper_signals ORDER BY id DESC LIMIT 20
+            """).fetchall()
+            conn.close()
+            signals = [
+                {
+                    "question": r[0], "signal_type": r[1], "probability": r[2],
+                    "source": r[3], "direction": r[4], "execution_status": r[5],
+                    "expected_profit": r[6], "actual_pnl": r[7], "time": r[8],
+                }
+                for r in rows
+            ]
+
+        # Get sniper config
+        config = {
+            "SNIPE_BANKROLL_PCT": os.getenv("SNIPE_BANKROLL_PCT", "2.5"),
+            "SNIPER_MAX_BET": os.getenv("SNIPER_MAX_BET", "50.0"),
+            "SNIPER_SLIPPAGE_TOLERANCE": os.getenv("SNIPER_SLIPPAGE_TOLERANCE", "3.0"),
+            "SNIPER_KILL_SWITCH_LOSSES": os.getenv("SNIPER_KILL_SWITCH_LOSSES", "5"),
+            "SNIPER_DAILY_LOSS_LIMIT_PCT": os.getenv("SNIPER_DAILY_LOSS_LIMIT_PCT", "15.0"),
+            "REAL_TRADES_ENABLED": os.getenv("REAL_TRADES_ENABLED", "false"),
+        }
+
+        return jsonify({"stats": stats, "signals": signals, "config": config})
+    except Exception as e:
+        return jsonify({"error": str(e), "stats": {}, "signals": []})
+
+
+@app.route("/api/sniper/scan", methods=["POST"])
+def api_sniper_scan():
+    """Trigger a manual sniper scan using latest on-chain data."""
+    try:
+        from sniper import run_sniper_cycle
+        from onchain_scanner import scan_onchain
+
+        # Get fresh on-chain data
+        scan_result = scan_onchain()
+        alerts = scan_result.get("alert_objects", [])
+
+        # Run sniper cycle
+        result = run_sniper_cycle(whale_alerts=alerts)
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)})
@@ -1289,6 +1353,39 @@ TEMPLATE = r"""<!DOCTYPE html>
     </table>
   </div>
 
+  <!-- Sniper Bot -->
+  <div class="section" id="sniper-section">
+    <h2>🎯 Sniper Bot <span id="sniper-count" class="chip">loading...</span>
+      <button onclick="triggerSniperScan()" style="margin-left:auto;padding:4px 12px;border-radius:6px;background:var(--red);color:#fff;border:none;font-size:11px;cursor:pointer;font-weight:700">🎯 Snipe Now</button>
+    </h2>
+    <div class="flex" style="margin-bottom:12px">
+      <div class="card" id="sniper-trades">
+        <h3>Sniper Trades</h3>
+        <div class="v" style="font-size:18px">—</div>
+      </div>
+      <div class="card" id="sniper-pnl">
+        <h3>Sniper PnL</h3>
+        <div class="v" style="font-size:18px">—</div>
+      </div>
+      <div class="card" id="sniper-winrate">
+        <h3>Win Rate</h3>
+        <div class="v" style="font-size:18px">—</div>
+      </div>
+      <div class="card" id="sniper-streak">
+        <h3>Loss Streak</h3>
+        <div class="v" style="font-size:18px">—</div>
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr><th>Question</th><th>Signal</th><th>Source</th><th>Prob</th><th>Dir</th><th>Expected $</th><th>Actual PnL</th><th>Status</th><th>Time</th></tr>
+      </thead>
+      <tbody id="sniper-body">
+        <tr><td colspan="9" style="text-align:center;color:var(--muted)">Loading sniper signals...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
   <!-- Config -->
   <div class="section">
     <h2>⚙️ Configuration</h2>
@@ -1398,21 +1495,26 @@ async function loadMarketMaker() {
   const spent = document.getElementById('mm-spent');
   const pnl = document.getElementById('mm-pnl');
   if (!data || data.error) { body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted)">No market maker data</td></tr>'; count.textContent='0'; return; }
-  const openPairs = data.open_pairs || [];
-  count.textContent = openPairs.length + ' pairs';
-  pairs.querySelector('.v').textContent = data.stats ? data.stats.open_pairs : openPairs.length;
-  spent.querySelector('.v').textContent = data.stats ? '$'+data.stats.total_spent.toFixed(2) : '—';
-  pnl.querySelector('.v').textContent = data.stats ? '$'+data.stats.realized_pnl.toFixed(2) : '—';
-  if (openPairs.length === 0) { body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted)">No open market maker pairs</td></tr>'; return; }
-  body.innerHTML = openPairs.map(p => `<tr>
-    <td>${(p.question||'').substring(0,50)}</td>
-    <td>${p.yes_price!=null?'$'+p.yes_price.toFixed(3):'—'}</td>
-    <td>${p.no_price!=null?'$'+p.no_price.toFixed(3):'—'}</td>
-    <td class="${(p.spread||0)>0.02?'green':''}">${p.spread!=null?p.spread.toFixed(3):'—'}</td>
-    <td>$${(p.capital||0).toFixed(2)}</td>
-    <td><span class="pill ${p.status==='open'?'yes':'pending'}">${p.status||'—'}</span></td>
-    <td>${p.created_at||'—'}</td>
-  </tr>`).join('');
+  const totalTrades = data.total_trades || 0;
+  const wins = data.wins || 0;
+  const marketsTraded = data.markets_traded || 0;
+  const opps = data.opportunities_found || 0;
+  count.textContent = opps + ' opportunities';
+  pairs.querySelector('.v').textContent = marketsTraded + ' markets';
+  spent.querySelector('.v').textContent = totalTrades + ' trades';
+  pnl.querySelector('.v').textContent = '$' + (data.total_pnl||0).toFixed(2);
+  pnl.querySelector('.v').className = 'v ' + ((data.total_pnl||0) >= 0 ? 'green' : 'red');
+  // Update header card labels
+  pairs.querySelector('h3').textContent = 'Markets Traded';
+  spent.querySelector('h3').textContent = 'Total Trades';
+  body.innerHTML = `<tr>
+    <td colspan="2"><strong>Total Trades:</strong> ${totalTrades}</td>
+    <td><strong>Wins:</strong> <span class="green">${wins}</span></td>
+    <td><strong>Losses:</strong> <span class="red">${data.losses||0}</span></td>
+    <td><strong>Avg Spread:</strong> ${(data.avg_spread||0).toFixed(4)}</td>
+    <td><strong>Avg Paired Cost:</strong> ${(data.avg_paired_cost||0).toFixed(4)}</td>
+    <td><strong>Opportunities:</strong> ${opps}</td>
+  </tr>`;
 }
 
 async function loadInsiderAlerts() {
@@ -1487,6 +1589,50 @@ async function triggerAIGenerate() {
   } catch(e) { alert('Generation failed: ' + e); }
 }
 
+async function loadSniper() {
+  const data = await fetchJSON('/api/sniper');
+  const body = document.getElementById('sniper-body');
+  const count = document.getElementById('sniper-count');
+  const trades = document.getElementById('sniper-trades');
+  const pnl = document.getElementById('sniper-pnl');
+  const winrate = document.getElementById('sniper-winrate');
+  const streak = document.getElementById('sniper-streak');
+  if (!data || data.error) { body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted)">No sniper data</td></tr>'; count.textContent='0'; return; }
+  const stats = data.stats || {};
+  const sigs = data.signals || [];
+  const total = stats.total_trades || 0;
+  const wins = stats.wins || 0;
+  const lossStreak = stats.consecutive_losses || 0;
+  count.textContent = sigs.length + ' signals';
+  trades.querySelector('.v').textContent = total;
+  pnl.querySelector('.v').textContent = '$' + (stats.total_pnl||0).toFixed(2);
+  pnl.querySelector('.v').className = 'v ' + ((stats.total_pnl||0) >= 0 ? 'green' : 'red');
+  winrate.querySelector('.v').textContent = stats.win_rate ? (stats.win_rate*100).toFixed(0)+'%' : (total>0?(wins/total*100).toFixed(0)+'%':'—');
+  streak.querySelector('.v').textContent = lossStreak + ' / ' + (stats.max_consecutive_losses||5);
+  streak.querySelector('.v').className = 'v ' + (lossStreak >= 3 ? 'red' : 'green');
+  if (sigs.length === 0) { body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted)">No sniper signals yet. Click Snipe Now to scan.</td></tr>'; return; }
+  body.innerHTML = sigs.map(s => `<tr>
+    <td>${(s.question||'').substring(0,50)}</td>
+    <td><span class="chip">${s.signal_type||'—'}</span></td>
+    <td>${s.source||'—'}</td>
+    <td class="blue">${s.probability!=null?(s.probability*100).toFixed(1)+'%':'—'}</td>
+    <td><span class="pill ${s.direction==='yes'?'yes':'no'}">${(s.direction||'—').toUpperCase()}</span></td>
+    <td>${s.expected_profit!=null?'$'+Number(s.expected_profit).toFixed(2):'—'}</td>
+    <td class="${(s.actual_pnl||0)>=0?'green':'red'}">${s.actual_pnl!=null?'$'+Number(s.actual_pnl).toFixed(2):'—'}</td>
+    <td><span class="pill ${s.execution_status==='executed'?'yes':'pending'}">${s.execution_status||'—'}</span></td>
+    <td>${s.time||'—'}</td>
+  </tr>`).join('');
+}
+
+async function triggerSniperScan() {
+  try {
+    const r = await fetch('/api/sniper/scan', {method:'POST'});
+    const data = await r.json();
+    alert('Sniper scan complete: ' + (data.signals_total||0) + ' signals, ' + (data.trades_executed||0) + ' trades');
+    loadSniper();
+  } catch(e) { alert('Sniper scan failed: ' + e); }
+}
+
 // Load all dynamic sections
 loadPositions();
 loadCashouts();
@@ -1495,8 +1641,9 @@ loadNews();
 loadMarketMaker();
 loadInsiderAlerts();
 loadAIInsights();
+loadSniper();
 // Auto-refresh every 60 seconds
-setInterval(() => { loadPositions(); loadCashouts(); loadPipeline(); loadNews(); loadMarketMaker(); loadInsiderAlerts(); loadAIInsights(); }, 60000);
+setInterval(() => { loadPositions(); loadCashouts(); loadPipeline(); loadNews(); loadMarketMaker(); loadInsiderAlerts(); loadAIInsights(); loadSniper(); }, 60000);
 </script>
 </div>
 </body>
