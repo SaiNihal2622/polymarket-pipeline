@@ -399,60 +399,10 @@ def scan_and_trade() -> dict:
         all_candidates = day_markets
 
     # ── Hard Blocklist ────────────────────────────────────────────────────────
-    # Proven untradeable patterns: stock tickers, crypto exact prices, esports
-    HARD_SKIP = [
-        # ── Stock tickers (AI can't predict daily stock movements) ──
-        "(aapl)", "(tsla)", "(nvda)", "(amzn)", "(googl)", "(meta)", "(nflx)", "(pltr)", "(coin)",
-        "(hood)", "(mstr)",
-        "s&p 500 close", "nasdaq close", "dow jones close",
-        "stock close", "stock price", "share price",
-        # ── Crypto exact price ranges (AI can't predict precise price levels) ──
-        "be between $", "be above $", "be below $",
-        "price of bitcoin", "price of ethereum", "price of solana",
-        "close above $", "close below $",
-        # ── Esports (pure luck/skill — 0% AI edge) ──
-        "(bo1)", "(bo3)", "(bo5)", "map 1 winner", "map 2 winner", "map 3 winner",
-        "first blood", "first tower", "first baron", "quadra kill", "penta kill",
-        "dragon soul", "inhibitor",
-        "dota 2", "valorant", "counter-strike", "league of legends", " lol:", " lol ",
-        "league of legends european championship", "lck 2026", "lcs 2026", "msi 2026",
-        "cblol 2026",
-        "call of duty", "cdl", "overwatch", "rainbow six",
-        # ── Over/Under markets (random coin flips, no informational edge) ──
-        "o/u ", "o/u", "over/under", "over under",
-        # ── Short-window crypto price (15-min Bitcoin windows = coin flip) ──
-        "bitcoin up or down", "ethereum up or down", "sol up or down",
-        "btc up or down", "eth up or down",
-        # ── Player props (0% accuracy historically — proven money drain) ──
-        "anytime goalscorer", "anytime scorer", "first goalscorer",
-        "first scorer", "last scorer", "to score first",
-        "player props", "player to score",
-        "win by ko", "win by tko", "win by submission",
-        "ko or tko", "tko or ko", "knockdown", "knock out",
-        "fight to go the distance", "go the distance",
-        "round betting", "method of victory",
-        # ── Exact score props (proven noise) ──
-        "correct score", "exact score",
-        # ── WEATHER MARKETS (coin flips — AI has NO edge on temperature) ──
-        "highest temperature", "lowest temperature", "temperature in",
-        "weather in", "rain in", "snow in", "humidity in",
-        "wind speed", "heat wave", "cold snap",
-        # ── COMMODITY PRICE TARGETS (AI can't predict exact price levels) ──
-        "hit (high)", "hit (low)", "natural gas (ng)", "wti crude oil",
-        "crude oil", "gold (gc)", "silver (si)", "copper (hg)",
-        # ── GAMING SPEEDRUNS (pure skill/luck, no informational edge) ──
-        "speedrun", "xqc", "forsen", "minecraft speedrun",
-        # ── POLITICAL NOMINATIONS (too uncertain, low signal) ──
-        "republican nominee", "democratic nominee",
-        # ── ICEMAN / NICHE SHOW PROPS (no reliable data) ──
-        "iceman", "be said on",
-        # ── DRAW / TIE MARKETS (unpredictable, low hit rate) ──
-        " will draw", " end in a draw", "match drawn", "tie or draw",
-        # ── MULTI-OUTCOME (AI can't rank 3+ outcomes reliably) ──
-        "who will win the",  # too broad when combined with multiple teams
-        # ── STREAMER/CONTENT CREATOR PROPS (no reliable data) ──
-        "stream", "twitch", "kick.com", "youtube live",
-    ]
+    # REMOVED: The reference pipeline has no blocklist — AI handles all market types.
+    # The AI classifier evaluates relevance for each market; pre-filtering was
+    # blocking too many valid markets and reducing trade volume.
+    HARD_SKIP = []
 
     from price_feeds import verify_crypto_market, get_all_crypto_prices
     from whale import bulk_whale_signals
@@ -554,13 +504,7 @@ def scan_and_trade() -> dict:
         analyzed += 1
         q_lower   = market.question.lower()
 
-        matched_pat = next((pat for pat in HARD_SKIP if pat in q_lower), None)
-        if matched_pat:
-            _skip("hard_blocklist")
-            log.info(f"  [blocklist] #{market.condition_id[:8]} matched '{matched_pat}' → \"{market.question[:60]}\"")
-            continue
-        # Regex blocklist patterns — REMOVED "will X win" (too broad, blocks legit markets)
-        # The hard blocklist above covers the truly untradeable ones
+        # Blocklist check disabled — AI handles all market types
 
         hours_left = _hours_left(market)
         price      = market.yes_price

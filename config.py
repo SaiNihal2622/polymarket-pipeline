@@ -6,6 +6,14 @@ V3: Hardened thresholds for accuracy — materiality ≠ probability.
 import os
 from pathlib import Path
 
+# Load .env file — ensures env vars are available even when config.py
+# is imported directly (not via start.py or polymarket_bot.py)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 # ─── API Keys ────────────────────────────────────────────────────────────────
 POLY_API_KEY        = os.getenv("POLY_API_KEY", "")
 POLY_SECRET         = os.getenv("POLY_SECRET", "")

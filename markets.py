@@ -6,6 +6,11 @@ import httpx
 
 import config
 
+# SSL-agnostic client: verify=False handles proxy/firewall cert issues
+# On Railway (Linux) this still works fine
+_TRANSPORT = httpx.HTTPTransport(verify=False)
+_CLIENT = httpx.Client(transport=_TRANSPORT, timeout=30)
+
 GAMMA_API = "https://gamma-api.polymarket.com"
 
 
@@ -43,7 +48,7 @@ def fetch_active_markets(limit: int = 50) -> list[Market]:
     for attempt in range(max_retries):
         try:
             headers = {"User-Agent": random.choice(user_agents)}
-            resp = httpx.get(
+            resp = _CLIENT.get(
                 f"{GAMMA_API}/markets",
                 params={
                     "limit": limit,
@@ -143,7 +148,7 @@ def _fetch_from_clob(limit: int) -> list[Market]:
     """Fallback: fetch from CLOB API directly."""
     markets = []
     try:
-        resp = httpx.get(
+        resp = _CLIENT.get(
             f"{config.POLYMARKET_HOST}/markets",
             params={"limit": limit, "active": True},
             timeout=15,
