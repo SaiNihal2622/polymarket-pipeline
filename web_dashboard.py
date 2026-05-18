@@ -706,7 +706,7 @@ def api_positions():
     try:
         rows = _q(
             "SELECT id, market_question, side, entry_price, bet_amount, token_id, "
-            "composite_score, edge, created_at "
+            "composite_score, edge, created_at, close_time, close_hours "
             "FROM demo_trades WHERE result IS NULL OR result = '' OR result = 'pending' "
             "ORDER BY id DESC LIMIT 50"
         )
@@ -755,6 +755,34 @@ def api_positions():
             pos["unrealized_pnl"] = round(pnl, 2)
             pos["pnl_pct"] = round(pnl_pct, 1)
             pos["position_status"] = "open"
+            # Est. Completion — compute from close_time or close_hours
+            close_hours = pos.get("close_hours")
+            close_time = pos.get("close_time")
+            est_str = "—"
+            try:
+                if close_time:
+                    from datetime import datetime as _dt, timezone as _tz
+                    ct = _dt.fromisoformat(close_time.replace("Z", "+00:00"))
+                    now = _dt.now(_tz.utc)
+                    secs_left = (ct - now).total_seconds()
+                    if secs_left <= 0:
+                        est_str = "closed"
+                    elif secs_left < 3600:
+                        est_str = f"{int(secs_left / 60)}m"
+                    elif secs_left < 86400:
+                        est_str = f"{int(secs_left / 3600)}h {int((secs_left % 3600) / 60)}m"
+                    else:
+                        est_str = f"{int(secs_left / 86400)}d {int((secs_left % 86400) / 3600)}h"
+                elif close_hours and close_hours > 0:
+                    if close_hours < 1:
+                        est_str = f"{int(close_hours * 60)}m"
+                    elif close_hours < 24:
+                        est_str = f"{close_hours:.0f}h"
+                    else:
+                        est_str = f"{close_hours / 24:.1f}d"
+            except Exception:
+                pass
+            pos["est_completion"] = est_str
             enriched.append(pos)
         return jsonify({"positions": enriched, "count": len(enriched)})
     except Exception as e:
@@ -1205,7 +1233,7 @@ TEMPLATE = r"""<!DOCTYPE html>
     <h2>🎯 Live Positions <span id="positions-count" class="chip">loading...</span></h2>
     <table>
       <thead>
-        <tr><th>Market</th><th>Side</th><th>Entry</th><th>Current</th><th>Bid/Ask</th><th>P&L</th><th>P&L %</th><th>Status</th></tr>
+        <tr><th>Market</th><th>Side</th><th>Entry</th><th>Current</th><th>Bid/Ask</th><th>P&L</th><th>P&L %</th><th>Est. Completion</th><th>Status</th></tr>
       </thead>
       <tbody id="positions-body">
         <tr><td colspan="8" style="text-align:center;color:var(--muted)">Loading positions...</td></tr>
@@ -1416,10 +1444,10 @@ async function loadPositions() {
   const data = await fetchJSON('/api/positions');
   const body = document.getElementById('positions-body');
   const count = document.getElementById('positions-count');
-  if (!data || !data.positions) { body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted)">No active positions</td></tr>'; count.textContent='0'; return; }
+  if (!data || !data.positions) { body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted)">No active positions</td></tr>'; count.textContent='0'; return; }
   const pos = data.positions;
   count.textContent = pos.length;
-  if (pos.length === 0) { body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted)">No active positions</td></tr>'; return; }
+  if (pos.length === 0) { body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted)">No active positions</td></tr>'; return; }
   body.innerHTML = pos.map(p => `<tr>
     <td>${(p.market_question||'').substring(0,50)}</td>
     <td>${p.side||''}</td>
@@ -1428,6 +1456,7 @@ async function loadPositions() {
     <td>${p.bid!=null?'$'+p.bid.toFixed(3):'—'} / ${p.ask!=null?'$'+p.ask.toFixed(3):'—'}</td>
     <td class="${(p.unrealized_pnl||0)>=0?'green':'red'}">${p.unrealized_pnl!=null?'$'+p.unrealized_pnl.toFixed(2):'—'}</td>
     <td class="${(p.pnl_pct||0)>=0?'green':'red'}">${p.pnl_pct!=null?p.pnl_pct.toFixed(1)+'%':'—'}</td>
+    <td>${p.est_completion||'—'}</td>
     <td>${p.position_status||'open'}</td>
   </tr>`).join('');
 }

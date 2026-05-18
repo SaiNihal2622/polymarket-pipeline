@@ -139,14 +139,30 @@ def _log_demo_trade(signal, token_id: str = "", strategy: str = "",
     """Log a demo trade to the database. Returns the trade ID."""
     run_id = f"demo_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     now = datetime.now(timezone.utc).isoformat()
+
+    # Extract market close time for Est. Completion display
+    close_time = None
+    close_hours = 0.0
+    close_str = getattr(signal.market, "end_date_iso", None) or getattr(signal.market, "end_date", None)
+    if close_str:
+        try:
+            close_dt = datetime.fromisoformat(close_str.replace("Z", "+00:00")) if isinstance(close_str, str) else close_str
+            close_time = close_dt.isoformat()
+            now_dt = datetime.now(timezone.utc)
+            delta_hours = (close_dt - now_dt).total_seconds() / 3600.0
+            close_hours = max(0.0, round(delta_hours, 1))
+        except Exception:
+            pass
+
     con = _db()
     cur = con.execute("""
         INSERT INTO demo_trades (
             run_id, market_id, market_question, market_slug, side, entry_price,
             bet_amount, win_amount, result, pnl, reasoning, news_source, model,
             confidence, market_outcome, created_at, token_id, strategy,
-            materiality, edge, composite_score, news_context, signals_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            materiality, edge, composite_score, news_context, signals_json,
+            close_time, close_hours
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         run_id,
         signal.market.condition_id,
@@ -171,6 +187,8 @@ def _log_demo_trade(signal, token_id: str = "", strategy: str = "",
         signal.composite_score,
         news_context,
         json.dumps(signals or {}),
+        close_time,
+        close_hours,
     ))
     trade_id = cur.lastrowid
     con.commit()
