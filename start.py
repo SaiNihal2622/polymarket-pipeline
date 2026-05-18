@@ -4,12 +4,14 @@ One-click startup script for Polymarket Pipeline.
 - Checks Ollama is running and model is loaded
 - Auto-upgrades to gemma3:12b if available
 - Runs pipeline with auto-restart on crash
+- Launches background modules: on-chain scanner, market maker, AI insights
 """
 import subprocess
 import sys
 import time
 import os
 import signal
+import threading
 
 # Ensure we're in the right directory
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -74,11 +76,97 @@ def check_ollama():
     return True
 
 
+# ── Background Modules ──────────────────────────────────────────────────────
+
+def _run_onchain_scanner():
+    """Background thread: periodically scan on-chain whale activity."""
+    try:
+        from onchain_scanner import scan_onchain
+    except ImportError:
+        print("[onchain_scanner] Module not available, skipping.")
+        return
+    while True:
+        try:
+            result = scan_onchain()
+            alerts = result.get("new_alerts", 0)
+            flows = result.get("order_flows", 0)
+            if alerts or flows:
+                print(f"[onchain_scanner] {alerts} new alerts, {flows} order flows")
+        except Exception as e:
+            print(f"[onchain_scanner] Error: {e}")
+        time.sleep(300)  # Scan every 5 minutes
+
+
+def _run_market_maker():
+    """Background thread: periodically scan for spread-based market maker pairs."""
+    try:
+        from market_maker import MarketMaker
+    except ImportError:
+        print("[market_maker] Module not available, skipping.")
+        return
+    mm = MarketMaker()
+    while True:
+        try:
+            result = mm.scan()
+            new_pairs = result.get("new_pairs", 0)
+            if new_pairs:
+                print(f"[market_maker] {new_pairs} new pairs found")
+        except Exception as e:
+            print(f"[market_maker] Error: {e}")
+        time.sleep(600)  # Scan every 10 minutes
+
+
+def _run_ai_insights():
+    """Background thread: periodically generate AI probability estimates."""
+    try:
+        from ai_insights import generate_batch_insights
+        import httpx
+    except ImportError:
+        print("[ai_insights] Module not available, skipping.")
+        return
+    while True:
+        try:
+            with httpx.Client(timeout=15) as client:
+                resp = client.get(
+                    "https://gamma-api.polymarket.com/markets",
+                    params={
+                        "limit": 10, "active": "true", "closed": "false",
+                        "order": "volume", "ascending": "false",
+                    }
+                )
+                resp.raise_for_status()
+                markets = resp.json()
+            insights = generate_batch_insights(markets)
+            if insights:
+                print(f"[ai_insights] Generated {len(insights)} probability estimates")
+        except Exception as e:
+            print(f"[ai_insights] Error: {e}")
+        time.sleep(900)  # Generate every 15 minutes
+
+
+def _start_background_modules():
+    """Start all background modules as daemon threads."""
+    threads = []
+    for name, target in [
+        ("onchain_scanner", _run_onchain_scanner),
+        ("market_maker", _run_market_maker),
+        ("ai_insights", _run_ai_insights),
+    ]:
+        t = threading.Thread(target=target, name=name, daemon=True)
+        t.start()
+        threads.append(t)
+        print(f"  [+] Background module started: {name}")
+    return threads
+
+
 def run_pipeline(mode="watch"):
     """Run the pipeline with auto-restart on crash."""
     max_restarts = 10
     restart_count = 0
     cooldown = 5
+
+    # Start background modules
+    _start_background_modules()
 
     while restart_count < max_restarts:
         print(f"\n{'='*60}")

@@ -856,6 +856,113 @@ def api_logs():
     return jsonify({"logs": lines})
 
 
+# ── New Module APIs: Market Maker, On-Chain Scanner, AI Insights ─────────────
+@app.route("/api/market_maker")
+def api_market_maker():
+    """JSON API: market maker stats and open pairs."""
+    try:
+        from market_maker import get_mm_summary
+        return jsonify(get_mm_summary())
+    except Exception as e:
+        return jsonify({"error": str(e), "total": 0})
+
+
+@app.route("/api/market_maker/scan", methods=["POST"])
+def api_market_maker_scan():
+    """Trigger a manual market maker scan."""
+    try:
+        from market_maker import MarketMaker
+        mm = MarketMaker()
+        result = mm.scan()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+
+@app.route("/api/insider_alerts")
+def api_insider_alerts():
+    """JSON API: on-chain whale alerts and order flow data."""
+    try:
+        from onchain_scanner import get_recent_alerts
+        from logger import DB_PATH as _dbp
+        import sqlite3 as _sql
+        # Get alerts
+        alerts = get_recent_alerts(50)
+        # Get order flow summaries
+        flows = []
+        if Path(_dbp).is_file():
+            conn = _sql.connect(_dbp)
+            rows = conn.execute("""
+                SELECT condition_id, question, total_volume, large_trades,
+                       unique_wallets, yes_pressure, no_pressure,
+                       whale_count, whale_total_usd, anomaly_score, created_at
+                FROM order_flow ORDER BY id DESC LIMIT 30
+            """).fetchall()
+            conn.close()
+            flows = [
+                {
+                    "condition_id": r[0], "question": r[1],
+                    "total_volume": r[2], "large_trades": r[3],
+                    "unique_wallets": r[4], "yes_pressure": r[5],
+                    "no_pressure": r[6], "whale_count": r[7],
+                    "whale_total_usd": r[8], "anomaly_score": r[9],
+                    "time": r[10],
+                }
+                for r in rows
+            ]
+        return jsonify({"alerts": alerts, "flows": flows, "total_alerts": len(alerts)})
+    except Exception as e:
+        return jsonify({"error": str(e), "alerts": [], "flows": []})
+
+
+@app.route("/api/insider_alerts/scan", methods=["POST"])
+def api_insider_alerts_scan():
+    """Trigger a manual on-chain scan."""
+    try:
+        from onchain_scanner import scan_onchain
+        result = scan_onchain()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+
+@app.route("/api/ai_insights")
+def api_ai_insights():
+    """JSON API: AI directional probability insights."""
+    try:
+        from ai_insights import get_insights_summary
+        return jsonify(get_insights_summary())
+    except Exception as e:
+        return jsonify({"error": str(e), "total": 0})
+
+
+@app.route("/api/ai_insights/generate", methods=["POST"])
+def api_ai_insights_generate():
+    """Trigger AI insight generation for top markets."""
+    try:
+        from ai_insights import generate_batch_insights
+        import httpx
+        # Fetch active markets
+        with httpx.Client(timeout=15) as client:
+            resp = client.get(
+                "https://gamma-api.polymarket.com/markets",
+                params={
+                    "limit": 20, "active": "true", "closed": "false",
+                    "order": "volume", "ascending": "false",
+                }
+            )
+            resp.raise_for_status()
+            markets = resp.json()
+
+        insights = generate_batch_insights(markets)
+        return jsonify({
+            "generated": len(insights),
+            "markets": [i.question[:60] for i in insights],
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+
 @app.route("/live")
 def live_dashboard():
     """Serve the live dashboard HTML file."""
@@ -1109,6 +1216,79 @@ TEMPLATE = r"""<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- Market Maker -->
+  <div class="section" id="mm-section">
+    <h2>🏦 Market Maker <span id="mm-count" class="chip">loading...</span>
+      <button onclick="triggerMMScan()" style="margin-left:auto;padding:4px 12px;border-radius:6px;background:var(--accent);color:var(--bg);border:none;font-size:11px;cursor:pointer">🔄 Scan Now</button>
+    </h2>
+    <div class="flex" style="margin-bottom:12px">
+      <div class="card" id="mm-pairs">
+        <h3>Open Pairs</h3>
+        <div class="v" style="font-size:18px">—</div>
+      </div>
+      <div class="card" id="mm-spent">
+        <h3>Capital Deployed</h3>
+        <div class="v" style="font-size:18px">—</div>
+      </div>
+      <div class="card" id="mm-pnl">
+        <h3>Realized PnL</h3>
+        <div class="v" style="font-size:18px">—</div>
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr><th>Question</th><th>Yes Price</th><th>No Price</th><th>Spread</th><th>Capital</th><th>Status</th><th>Time</th></tr>
+      </thead>
+      <tbody id="mm-body">
+        <tr><td colspan="7" style="text-align:center;color:var(--muted)">Loading market maker data...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- On-Chain / Insider Alerts -->
+  <div class="section" id="insider-section">
+    <h2>🐋 On-Chain Alerts <span id="insider-count" class="chip">loading...</span>
+      <button onclick="triggerOnchainScan()" style="margin-left:auto;padding:4px 12px;border-radius:6px;background:var(--purple);color:var(--bg);border:none;font-size:11px;cursor:pointer">🔍 Scan Now</button>
+    </h2>
+    <div class="flex" style="margin-bottom:12px">
+      <div class="card" id="insider-whales">
+        <h3>Whale Trades</h3>
+        <div class="v" style="font-size:18px">—</div>
+      </div>
+      <div class="card" id="insider-flows">
+        <h3>Order Flows</h3>
+        <div class="v" style="font-size:18px">—</div>
+      </div>
+      <div class="card" id="insider-anomalies">
+        <h3>Anomalies</h3>
+        <div class="v" style="font-size:18px">—</div>
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr><th>Question</th><th>Total Volume</th><th>Large Trades</th><th>Whale Count</th><th>Whale $</th><th>Yes/No Pressure</th><th>Anomaly</th><th>Time</th></tr>
+      </thead>
+      <tbody id="insider-body">
+        <tr><td colspan="8" style="text-align:center;color:var(--muted)">Loading on-chain data...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- AI Insights -->
+  <div class="section" id="ai-section">
+    <h2>🤖 AI Probability Insights <span id="ai-count" class="chip">loading...</span>
+      <button onclick="triggerAIGenerate()" style="margin-left:auto;padding:4px 12px;border-radius:6px;background:var(--green);color:var(--bg);border:none;font-size:11px;cursor:pointer">🧠 Generate</button>
+    </h2>
+    <table>
+      <thead>
+        <tr><th>Question</th><th>AI Probability</th><th>Market Price</th><th>Edge</th><th>Confidence</th><th>Reasoning</th><th>Time</th></tr>
+      </thead>
+      <tbody id="ai-body">
+        <tr><td colspan="7" style="text-align:center;color:var(--muted)">Loading AI insights...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
   <!-- Config -->
   <div class="section">
     <h2>⚙️ Configuration</h2>
@@ -1210,13 +1390,113 @@ async function loadNews() {
   </tr>`).join('');
 }
 
+async function loadMarketMaker() {
+  const data = await fetchJSON('/api/market_maker');
+  const body = document.getElementById('mm-body');
+  const count = document.getElementById('mm-count');
+  const pairs = document.getElementById('mm-pairs');
+  const spent = document.getElementById('mm-spent');
+  const pnl = document.getElementById('mm-pnl');
+  if (!data || data.error) { body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted)">No market maker data</td></tr>'; count.textContent='0'; return; }
+  const openPairs = data.open_pairs || [];
+  count.textContent = openPairs.length + ' pairs';
+  pairs.querySelector('.v').textContent = data.stats ? data.stats.open_pairs : openPairs.length;
+  spent.querySelector('.v').textContent = data.stats ? '$'+data.stats.total_spent.toFixed(2) : '—';
+  pnl.querySelector('.v').textContent = data.stats ? '$'+data.stats.realized_pnl.toFixed(2) : '—';
+  if (openPairs.length === 0) { body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted)">No open market maker pairs</td></tr>'; return; }
+  body.innerHTML = openPairs.map(p => `<tr>
+    <td>${(p.question||'').substring(0,50)}</td>
+    <td>${p.yes_price!=null?'$'+p.yes_price.toFixed(3):'—'}</td>
+    <td>${p.no_price!=null?'$'+p.no_price.toFixed(3):'—'}</td>
+    <td class="${(p.spread||0)>0.02?'green':''}">${p.spread!=null?p.spread.toFixed(3):'—'}</td>
+    <td>$${(p.capital||0).toFixed(2)}</td>
+    <td><span class="pill ${p.status==='open'?'yes':'pending'}">${p.status||'—'}</span></td>
+    <td>${p.created_at||'—'}</td>
+  </tr>`).join('');
+}
+
+async function loadInsiderAlerts() {
+  const data = await fetchJSON('/api/insider_alerts');
+  const body = document.getElementById('insider-body');
+  const count = document.getElementById('insider-count');
+  const whales = document.getElementById('insider-whales');
+  const flows = document.getElementById('insider-flows');
+  const anomalies = document.getElementById('insider-anomalies');
+  if (!data || data.error) { body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted)">No on-chain data</td></tr>'; count.textContent='0'; return; }
+  const of = data.flows || [];
+  count.textContent = (data.total_alerts||0) + ' alerts';
+  whales.querySelector('.v').textContent = of.reduce((s,f) => s + (f.whale_count||0), 0);
+  flows.querySelector('.v').textContent = of.length;
+  anomalies.querySelector('.v').textContent = of.filter(f => (f.anomaly_score||0) > 0.7).length;
+  if (of.length === 0) { body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted)">No order flow data yet</td></tr>'; return; }
+  body.innerHTML = of.map(f => `<tr>
+    <td>${(f.question||f.condition_id||'').toString().substring(0,50)}</td>
+    <td>$${(f.total_volume||0).toFixed(0)}</td>
+    <td>${f.large_trades||0}</td>
+    <td>${f.whale_count||0}</td>
+    <td>$${(f.whale_total_usd||0).toFixed(0)}</td>
+    <td class="green">${(f.yes_pressure||0).toFixed(2)} / <span class="red">${(f.no_pressure||0).toFixed(2)}</span></td>
+    <td class="${(f.anomaly_score||0)>0.7?'red':''}">${(f.anomaly_score||0).toFixed(2)}</td>
+    <td>${f.time||'—'}</td>
+  </tr>`).join('');
+}
+
+async function loadAIInsights() {
+  const data = await fetchJSON('/api/ai_insights');
+  const body = document.getElementById('ai-body');
+  const count = document.getElementById('ai-count');
+  if (!data || data.error) { body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted)">No AI insights yet</td></tr>'; count.textContent='0'; return; }
+  const ins = data.insights || [];
+  count.textContent = (data.total||0) + ' insights';
+  if (ins.length === 0) { body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted)">No AI insights generated yet. Click Generate to create.</td></tr>'; return; }
+  body.innerHTML = ins.map(i => `<tr>
+    <td>${(i.question||'').substring(0,50)}</td>
+    <td class="blue">${i.ai_probability!=null?(i.ai_probability*100).toFixed(1)+'%':'—'}</td>
+    <td>${i.market_price!=null?'$'+i.market_price.toFixed(3):'—'}</td>
+    <td class="${(i.edge||0)>0?'green':'red'}">${i.edge!=null?i.edge.toFixed(3):'—'}</td>
+    <td>${i.confidence!=null?(i.confidence*100).toFixed(0)+'%':'—'}</td>
+    <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${i.reasoning||'—'}</td>
+    <td>${i.created_at||'—'}</td>
+  </tr>`).join('');
+}
+
+async function triggerMMScan() {
+  try {
+    const r = await fetch('/api/market_maker/scan', {method:'POST'});
+    const data = await r.json();
+    alert('Market Maker scan complete: ' + JSON.stringify(data));
+    loadMarketMaker();
+  } catch(e) { alert('Scan failed: ' + e); }
+}
+
+async function triggerOnchainScan() {
+  try {
+    const r = await fetch('/api/insider_alerts/scan', {method:'POST'});
+    const data = await r.json();
+    alert('On-chain scan complete: ' + JSON.stringify(data));
+    loadInsiderAlerts();
+  } catch(e) { alert('Scan failed: ' + e); }
+}
+
+async function triggerAIGenerate() {
+  try {
+    const r = await fetch('/api/ai_insights/generate', {method:'POST'});
+    const data = await r.json();
+    alert('AI insights generated: ' + (data.generated||0) + ' markets');
+    loadAIInsights();
+  } catch(e) { alert('Generation failed: ' + e); }
+}
+
 // Load all dynamic sections
 loadPositions();
 loadCashouts();
 loadPipeline();
 loadNews();
+loadMarketMaker();
+loadInsiderAlerts();
+loadAIInsights();
 // Auto-refresh every 60 seconds
-setInterval(() => { loadPositions(); loadCashouts(); loadPipeline(); loadNews(); }, 60000);
+setInterval(() => { loadPositions(); loadCashouts(); loadPipeline(); loadNews(); loadMarketMaker(); loadInsiderAlerts(); loadAIInsights(); }, 60000);
 </script>
 </div>
 </body>
