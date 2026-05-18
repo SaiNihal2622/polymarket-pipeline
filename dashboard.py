@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Polymarket Pipeline V3 — Live Terminal Dashboard
-Shows: news feed, matched markets, classifications, signals, trade log, accuracy stats.
+Shows: news feed, matched markets, classifications, signals, trade log, accuracy stats,
+       and a market scanner panel (AI confidence vs market odds).
 """
 from __future__ import annotations
 
@@ -41,16 +42,17 @@ def make_layout() -> Layout:
         Layout(name="footer", size=3),
     )
     layout["body"].split_row(
-        Layout(name="left", ratio=2),
-        Layout(name="right", ratio=3),
+        Layout(name="left", ratio=1),
+        Layout(name="right", ratio=2),
     )
     layout["left"].split_column(
-        Layout(name="status", ratio=2),
-        Layout(name="accuracy", ratio=3),
+        Layout(name="status", ratio=1),
+        Layout(name="accuracy", ratio=1),
     )
     layout["right"].split_column(
-        Layout(name="news_feed", ratio=2),
-        Layout(name="trades", ratio=3),
+        Layout(name="scanner", ratio=2),
+        Layout(name="news_feed", ratio=1),
+        Layout(name="trades", ratio=2),
     )
     return layout
 
@@ -126,10 +128,10 @@ def render_accuracy() -> Panel:
     if total_resolved > 0:
         acc_style = WIN if acc >= 70 else (WARN if acc >= 50 else LOSS)
         live_status = (
-            f"[{WIN}]✅ READY FOR LIVE[/{WIN}]" if demo["ready_for_live"]
+            f"[{WIN}]READY FOR LIVE[/{WIN}]" if demo["ready_for_live"]
             else f"[{WARN}]need {max(0, 10 - decisive)} more + 70%[/{WARN}]"
         )
-        table.add_row("[bold]── Demo Accuracy ──[/bold]", "")
+        table.add_row("[bold]-- Demo Accuracy --[/bold]", "")
         table.add_row("Resolved Trades", str(total_resolved))
         table.add_row("Wins / Losses", f"[{WIN}]{demo['wins']}W[/{WIN}] / [{LOSS}]{demo['losses']}L[/{LOSS}] / {demo['pushes']}P")
         table.add_row("Accuracy", f"[{acc_style}]{acc:.1f}%[/{acc_style}]  (threshold: 70%)")
@@ -138,9 +140,9 @@ def render_accuracy() -> Panel:
     else:
         by_status = stats.get("by_status", {})
         demo_logged = by_status.get("demo", 0) + by_status.get("dry_run", 0)
-        table.add_row("[bold]── Demo Accuracy ──[/bold]", "")
+        table.add_row("[bold]-- Demo Accuracy --[/bold]", "")
         table.add_row("Demo Trades Logged", f"[{WARN}]{demo_logged}[/{WARN}]")
-        table.add_row("Resolved", f"[{DIM}]0 — waiting for markets to close[/{DIM}]")
+        table.add_row("Resolved", f"[{DIM}]0 - waiting for markets to close[/{DIM}]")
         table.add_row("", "")
         table.add_row(f"[{DIM}]Markets resolve within[/{DIM}]", "")
         table.add_row(f"[{DIM}]24h of being logged.[/{DIM}]", "")
@@ -148,17 +150,80 @@ def render_accuracy() -> Panel:
     # ── Calibration breakdown (secondary) ────────────────────────────────────
     if cal["total"] > 0:
         table.add_row("", "")
-        table.add_row("[bold]── By Direction ──[/bold]", "")
+        table.add_row("[bold]-- By Direction --[/bold]", "")
         for cls, pct in cal.get("by_classification", {}).items():
             style = WIN if pct >= 60 else (WARN if pct >= 45 else LOSS)
             table.add_row(f"  {cls}", f"[{style}]{pct:.1f}%[/{style}]")
 
-        table.add_row("[bold]── By Source ──[/bold]", "")
+        table.add_row("[bold]-- By Source --[/bold]", "")
         for src, pct in cal.get("by_source", {}).items():
             style = WIN if pct >= 60 else (WARN if pct >= 45 else LOSS)
             table.add_row(f"  {src}", f"[{style}]{pct:.1f}%[/{style}]")
 
     return Panel(table, title="[bold]DEMO ACCURACY & PERFORMANCE[/bold]", border_style=CYAN, box=box.ROUNDED)
+
+
+def render_scanner() -> Panel:
+    """Market Scanner — AI confidence vs market odds for each scanned market.
+    Mirrors the reference repo's scanner panel from brodyautomates."""
+    content = Table(show_header=True, box=box.SIMPLE_HEAD, expand=True, padding=(0, 1))
+    content.add_column("Market", max_width=40)
+    content.add_column("Mkt$", justify="right", width=5)
+    content.add_column("AI", justify="right", width=6, style=ACCENT)
+    content.add_column("Edge", justify="right", width=6)
+    content.add_column("Dir", justify="center", width=5)
+    content.add_column("Side", justify="center", width=5)
+    content.add_column("Bet", justify="right", width=7)
+    content.add_column("Status", justify="center", width=9)
+
+    # Pull latest trades from logger — they contain market_price, claude_score, edge, side
+    trades = logger.get_recent_trades(limit=20)
+    if not trades:
+        content.add_row(f"[{DIM}]Waiting for first scan cycle...[/{DIM}]", "", "", "", "", "", "", "")
+        return Panel(content, title="[bold]MARKET SCANNER[/bold]  .  AI Confidence vs Market Odds", border_style="bright_green", box=box.ROUNDED)
+
+    seen_questions = set()
+    for t in trades[:10]:
+        question = t.get("market_question", "?")[:40]
+        if question in seen_questions:
+            continue
+        seen_questions.add(question)
+
+        market_price = t.get("market_price", 0)
+        ai_score = t.get("claude_score", 0)
+        edge = t.get("edge", 0)
+        classification = t.get("classification", "?")
+        side = t.get("side", "?")
+        amount = t.get("amount_usd", 0)
+        status = t.get("status", "?")
+
+        dir_style = WIN if classification == "bullish" else (LOSS if classification == "bearish" else DIM)
+        side_style = WIN if side == "YES" else "bright_magenta"
+        edge_style = WIN if edge > 0 else DIM
+
+        if status == "dry_run":
+            status_str = f"[{WARN}]DRY RUN[/{WARN}]"
+        elif status == "executed":
+            status_str = f"[{WIN}]FILLED[/{WIN}]"
+        elif status.startswith("error"):
+            status_str = f"[{LOSS}]ERROR[/{LOSS}]"
+        elif "limit" in status:
+            status_str = f"[{LOSS}]LIMIT[/{LOSS}]"
+        else:
+            status_str = f"[{DIM}]{status[:9]}[/{DIM}]"
+
+        content.add_row(
+            question,
+            f"{market_price:.2f}",
+            f"{ai_score:.2f}",
+            f"[{edge_style}]{edge:.0%}[/{edge_style}]",
+            f"[{dir_style}]{classification[:5]}[/{dir_style}]",
+            f"[{side_style}]{side}[/{side_style}]",
+            f"${amount:.0f}",
+            status_str,
+        )
+
+    return Panel(content, title="[bold]MARKET SCANNER[/bold]  .  AI Confidence vs Market Odds", border_style="bright_green", box=box.ROUNDED)
 
 
 def render_news_feed() -> Panel:
@@ -191,7 +256,7 @@ def render_news_feed() -> Panel:
 
             table.add_row(time_str, source, headline, lat_str)
 
-    return Panel(table, title="[bold]NEWS FEED[/bold]  ·  Latest headlines matched to markets", border_style=ACCENT, box=box.ROUNDED)
+    return Panel(table, title="[bold]NEWS FEED[/bold]  .  Latest headlines matched to markets", border_style=ACCENT, box=box.ROUNDED)
 
 
 def render_trades() -> Panel:
@@ -208,7 +273,7 @@ def render_trades() -> Panel:
     table.add_column("Status", justify="center", width=8)
 
     if not trades:
-        table.add_row(f"[{DIM}]No signals yet — pipeline classifying...[/{DIM}]", "", "", "", "", "", "", "")
+        table.add_row(f"[{DIM}]No signals yet - pipeline classifying...[/{DIM}]", "", "", "", "", "", "", "")
     else:
         for t in trades:
             ts = t.get("created_at", "")[:8]
@@ -246,7 +311,7 @@ def render_trades() -> Panel:
                 status_str,
             )
 
-    return Panel(table, title="[bold]SIGNALS & TRADES[/bold]  ·  Consensus-filtered signals", border_style=CYAN, box=box.ROUNDED)
+    return Panel(table, title="[bold]SIGNALS & TRADES[/bold]  .  Consensus-filtered signals", border_style=CYAN, box=box.ROUNDED)
 
 
 def render_footer() -> Panel:
@@ -268,7 +333,7 @@ def render_footer() -> Panel:
 
 
 def run_dashboard():
-    """Launch the live monitoring dashboard. Reads from SQLite — no pipeline execution."""
+    """Launch the live monitoring dashboard. Reads from SQLite - no pipeline execution."""
     layout = make_layout()
 
     try:
@@ -277,6 +342,7 @@ def run_dashboard():
                 layout["header"].update(render_header())
                 layout["status"].update(render_status())
                 layout["accuracy"].update(render_accuracy())
+                layout["scanner"].update(render_scanner())
                 layout["news_feed"].update(render_news_feed())
                 layout["trades"].update(render_trades())
                 layout["footer"].update(render_footer())
