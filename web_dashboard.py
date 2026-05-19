@@ -1678,6 +1678,47 @@ setInterval(() => { loadPositions(); loadCashouts(); loadPipeline(); loadNews();
 </body>
 </html>"""
 
+# ── Table Initialization ────────────────────────────────────────────────────
+def _init_all_tables():
+    """Ensure all required tables exist before serving requests."""
+    import sqlite3 as _sql
+    if not Path(DB_PATH).is_file():
+        # Touch the DB file so tables can be created
+        _conn = _sql.connect(DB_PATH)
+        _conn.close()
+    try:
+        from onchain_scanner import _init_onchain_tables
+        _init_onchain_tables()
+        print("[init] onchain tables (whale_alerts, order_flow) created")
+    except Exception as e:
+        print(f"[init] onchain tables skipped: {e}")
+    try:
+        from sniper import _init_sniper_tables
+        _init_sniper_tables()
+        print("[init] sniper tables (sniper_signals, sniper_trades, sniper_positions) created")
+    except Exception as e:
+        print(f"[init] sniper tables skipped: {e}")
+    try:
+        from ai_insights import _init_insights_table
+        _init_insights_table()
+        print("[init] ai_insights table created")
+    except Exception as e:
+        print(f"[init] ai_insights table skipped: {e}")
+    try:
+        from logger import init_db
+        init_db()
+        print("[init] core tables (trades, outcomes, pipeline_runs, etc.) created")
+    except Exception as e:
+        print(f"[init] core tables skipped: {e}")
+    try:
+        from market_maker import _init_maker_table
+        _init_maker_table()
+        print("[init] market_maker table created")
+    except Exception as e:
+        print(f"[init] market_maker table skipped: {e}")
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    _init_all_tables()
     app.run(host=CLI_ARGS.bind, port=CLI_ARGS.port, debug=False)
