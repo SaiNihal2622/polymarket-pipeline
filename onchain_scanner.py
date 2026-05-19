@@ -21,7 +21,7 @@ from datetime import datetime, timezone, timedelta
 
 import httpx
 
-from config import DB_FILE
+from config import DB_PATH as DB_FILE
 
 log = logging.getLogger("onchain")
 

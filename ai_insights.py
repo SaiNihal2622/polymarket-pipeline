@@ -20,7 +20,9 @@ from typing import Optional
 
 import httpx
 
-from config import DB_FILE, USE_MIMO, MIMO_BASE, MIMO_KEY, MIMO_MODEL
+from config import DB_PATH as DB_FILE, MIMO_API_KEY as MIMO_KEY, MIMO_BASE_URL as MIMO_BASE, MIMO_MODEL
+
+USE_MIMO = bool(MIMO_KEY)
 
 log = logging.getLogger("ai_insights")
 

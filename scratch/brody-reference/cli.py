@@ -16,11 +16,6 @@ Usage:
     python cli.py markets              # Browse all active markets
     python cli.py trades               # View trade log
     python cli.py stats                # Performance statistics
-    python cli.py sentiment <query>    # Sentiment analysis
-    python cli.py ml [--train]         # ML predictor
-    python cli.py arb                  # Arbitrage scanner
-    python cli.py onchain              # On-chain whale scanner
-    python cli.py scan                 # Live market scanner
 """
 
 import argparse
@@ -87,18 +82,18 @@ def cmd_calibrate(args):
 
     report = get_report()
 
-    console.print(Panel("[bold]CALIBRATION REPORT[/bold]", style="bright_cyan"))
+    console.print(Panel(f"[bold]CALIBRATION REPORT[/bold]", style="bright_cyan"))
     console.print(f"  Total resolved: {report.total}")
     console.print(f"  Accuracy: {report.accuracy:.1f}%")
 
     if report.by_source:
-        console.print("\n  [bold]By Source:[/bold]")
+        console.print(f"\n  [bold]By Source:[/bold]")
         for source, acc in report.by_source.items():
             color = "bright_green" if acc >= 55 else ("yellow" if acc >= 45 else "red")
             console.print(f"    {source}: [{color}]{acc:.1f}%[/{color}]")
 
     if report.by_classification:
-        console.print("\n  [bold]By Classification:[/bold]")
+        console.print(f"\n  [bold]By Classification:[/bold]")
         for cls, acc in report.by_classification.items():
             color = "bright_green" if acc >= 55 else ("yellow" if acc >= 45 else "red")
             console.print(f"    {cls}: [{color}]{acc:.1f}%[/{color}]")
@@ -139,22 +134,6 @@ def cmd_niche(args):
     console.print(table)
 
 
-def cmd_demo(args):
-    """Demo mode: paper-trade 1-day markets, track accuracy, unlock live at 70%%."""
-    from demo_runner import main as demo_main
-
-    old_argv = sys.argv
-    sys.argv = ["demo_runner.py"]
-    if args.once:
-        sys.argv.append("--once")
-    if args.report:
-        sys.argv.append("--report")
-    if args.resolve:
-        sys.argv.append("--resolve")
-    demo_main()
-    sys.argv = old_argv
-
-
 def cmd_dashboard(args):
     from dashboard import run_dashboard
     run_dashboard(scan_interval=args.speed)
@@ -185,7 +164,7 @@ def cmd_verify(args):
             deps_ok = False
             all_good = False
     if deps_ok:
-        console.print("  [bright_green]PASS[/bright_green]  All dependencies installed")
+        console.print(f"  [bright_green]PASS[/bright_green]  All dependencies installed")
 
     # 3. .env exists
     import os
@@ -207,12 +186,12 @@ def cmd_verify(args):
                 max_tokens=10,
                 messages=[{"role": "user", "content": "Say OK"}],
             )
-            console.print("  [bright_green]PASS[/bright_green]  Anthropic API key (verified)")
+            console.print(f"  [bright_green]PASS[/bright_green]  Anthropic API key (verified)")
         except Exception as e:
             console.print(f"  [red]FAIL[/red]  Anthropic API key — {type(e).__name__}: {e}")
             all_good = False
     else:
-        console.print("  [red]FAIL[/red]  Anthropic API key not set")
+        console.print(f"  [red]FAIL[/red]  Anthropic API key not set")
         all_good = False
 
     # 5. News scraper (RSS)
@@ -226,16 +205,16 @@ def cmd_verify(args):
     # 6. Twitter API (optional)
     has_twitter = bool(config.TWITTER_BEARER_TOKEN)
     if has_twitter:
-        console.print("  [bright_green]PASS[/bright_green]  Twitter bearer token set")
+        console.print(f"  [bright_green]PASS[/bright_green]  Twitter bearer token set")
     else:
-        console.print("  [dim]SKIP[/dim]  Twitter API (optional — enables real-time news stream)")
+        console.print(f"  [dim]SKIP[/dim]  Twitter API (optional — enables real-time news stream)")
 
     # 7. Telegram (optional)
     has_telegram = bool(config.TELEGRAM_BOT_TOKEN)
     if has_telegram:
-        console.print("  [bright_green]PASS[/bright_green]  Telegram bot token set")
+        console.print(f"  [bright_green]PASS[/bright_green]  Telegram bot token set")
     else:
-        console.print("  [dim]SKIP[/dim]  Telegram bot (optional — enables channel monitoring)")
+        console.print(f"  [dim]SKIP[/dim]  Telegram bot (optional — enables channel monitoring)")
 
     # 8. Polymarket API
     try:
@@ -258,14 +237,14 @@ def cmd_verify(args):
     # 10. Polymarket trading credentials (optional)
     has_poly = bool(config.POLYMARKET_API_KEY)
     if has_poly:
-        console.print("  [bright_green]PASS[/bright_green]  Polymarket trading credentials set")
+        console.print(f"  [bright_green]PASS[/bright_green]  Polymarket trading credentials set")
     else:
-        console.print("  [dim]SKIP[/dim]  Polymarket trading credentials (optional — needed for --live)")
+        console.print(f"  [dim]SKIP[/dim]  Polymarket trading credentials (optional — needed for --live)")
 
     # 11. SQLite
     try:
         import logger as _
-        console.print("  [bright_green]PASS[/bright_green]  SQLite database (V2 schema)")
+        console.print(f"  [bright_green]PASS[/bright_green]  SQLite database (V2 schema)")
     except Exception as e:
         console.print(f"  [red]FAIL[/red]  SQLite — {e}")
         all_good = False
@@ -380,172 +359,27 @@ def cmd_stats(args):
     latency = logger.get_latency_stats()
     cal = logger.get_calibration_stats()
 
-    console.print("\n[bold]Pipeline Statistics[/bold]\n")
+    console.print(f"\n[bold]Pipeline Statistics[/bold]\n")
     console.print(f"  Total signals: {stats['total_trades']}")
     console.print(f"  Daily exposure: ${abs(daily):.2f}")
-    console.print("  By status:")
+    console.print(f"  By status:")
     for status, count in stats["by_status"].items():
         console.print(f"    {status}: {count}")
 
     if latency["count"] > 0:
-        console.print("\n  [bold]Latency:[/bold]")
+        console.print(f"\n  [bold]Latency:[/bold]")
         console.print(f"    Avg total: {latency['avg_total_ms']}ms")
         console.print(f"    Avg news: {latency['avg_news_ms']}ms")
         console.print(f"    Avg classification: {latency['avg_class_ms']}ms")
 
     if cal["total"] > 0:
-        console.print("\n  [bold]Calibration:[/bold]")
+        console.print(f"\n  [bold]Calibration:[/bold]")
         console.print(f"    Accuracy: {cal['accuracy']:.1f}% ({cal['total']} resolved)")
-
-
-def cmd_sentiment(args):
-    """Analyze sentiment from Reddit, Twitter, Telegram, and Polymarket comments."""
-    try:
-        from rich.panel import Panel
-        from sentiment import SentimentAggregator
-        aggregator = SentimentAggregator()
-        results = aggregator.aggregate(args.query)
-
-        console.print(Panel(f"[bold]SENTIMENT ANALYSIS: {args.query}[/bold]", style="bright_cyan"))
-
-        if not results:
-            console.print("[yellow]No sentiment data found for this query.[/yellow]")
-            return
-
-        table = Table(show_header=True, header_style="bold cyan")
-        table.add_column("Source", width=12)
-        table.add_column("Sentiment", justify="right", width=10)
-        table.add_column("Confidence", justify="right", width=10)
-        table.add_column("Sample", max_width=50)
-
-        for r in results[:15]:
-            color = "green" if r.sentiment > 0.1 else ("red" if r.sentiment < -0.1 else "yellow")
-            table.add_row(
-                r.source[:12],
-                f"[{color}]{r.sentiment:+.2f}[/{color}]",
-                f"{r.confidence:.2f}",
-                (r.text or "")[:50],
-            )
-        console.print(table)
-    except ImportError:
-        console.print("[red]Sentiment module not installed. Run: pip install textblob vaderSentiment[/red]")
-
-
-def cmd_ml(args):
-    """ML predictor status and training."""
-    try:
-        from rich.panel import Panel
-        import ml_predictor
-        if args.train:
-            console.print("[bold]Training ML predictor on historical trades...[/bold]")
-            ml_predictor.train_model()
-            console.print("[bright_green]Training complete.[/bright_green]")
-        else:
-            status = ml_predictor.get_model_status()
-            console.print(Panel("[bold]ML PREDICTOR STATUS[/bold]", style="bright_cyan"))
-            console.print(f"  Model trained: {status.get('trained', False)}")
-            console.print(f"  Training samples: {status.get('samples', 0)}")
-            console.print(f"  Accuracy: {status.get('accuracy', 0):.1%}")
-            console.print(f"  Features: {status.get('features', 'N/A')}")
-    except ImportError:
-        console.print("[red]ML predictor module not available.[/red]")
-
-
-def cmd_arb(args):
-    """Scan for arbitrage opportunities across Polymarket markets."""
-    try:
-        import arbitrage
-        from markets import fetch_active_markets
-
-        console.print("[bold]Scanning for arbitrage opportunities...[/bold]")
-        markets = fetch_active_markets(limit=args.max)
-        opportunities = arbitrage.find_opportunities(markets)
-
-        if not opportunities:
-            console.print("[yellow]No arbitrage opportunities found.[/yellow]")
-            return
-
-        console.print(f"\n[bold]{len(opportunities)} arbitrage opportunities:[/bold]\n")
-        table = Table(show_header=True, header_style="bold cyan")
-        table.add_column("Market", max_width=40)
-        table.add_column("Profit %", justify="right", width=10)
-        table.add_column("Strategy", width=15)
-        table.add_column("Details", max_width=30)
-
-        for opp in opportunities[:20]:
-            color = "bright_green" if opp.get("profit_pct", 0) > 0.05 else "yellow"
-            table.add_row(
-                opp.get("market", "")[:40],
-                f"[{color}]{opp.get('profit_pct', 0):.2%}[/{color}]",
-                opp.get("strategy", "")[:15],
-                opp.get("details", "")[:30],
-            )
-        console.print(table)
-    except ImportError:
-        console.print("[red]Arbitrage module not available.[/red]")
-
-
-def cmd_onchain(args):
-    """Scan on-chain whale activity for signal augmentation."""
-    try:
-        import onchain_scanner
-        from markets import fetch_active_markets
-
-        console.print("[bold]Scanning on-chain whale activity...[/bold]")
-        markets = fetch_active_markets(limit=args.max)
-
-        signals = []
-        for m in markets[:10]:
-            result = onchain_scanner.scan_onchain(m)
-            if result:
-                signals.extend(result)
-
-        if not signals:
-            console.print("[yellow]No on-chain signals detected.[/yellow]")
-            return
-
-        console.print(f"\n[bold]{len(signals)} on-chain signals:[/bold]\n")
-        table = Table(show_header=True, header_style="bold cyan")
-        table.add_column("Market", max_width=40)
-        table.add_column("Signal", width=12)
-        table.add_column("Amount", justify="right", width=12)
-        table.add_column("Details", max_width=30)
-
-        for sig in signals[:15]:
-            table.add_row(
-                sig.get("market", "")[:40],
-                sig.get("signal_type", "")[:12],
-                f"${sig.get('amount', 0):,.0f}",
-                sig.get("details", "")[:30],
-            )
-        console.print(table)
-    except ImportError:
-        console.print("[red]On-chain scanner module not available.[/red]")
-
-
-def cmd_scan(args):
-    """Live market scanner — detect price movements and opportunities."""
-    try:
-        import live_scanner
-        console.print("[bold]Running live market scan...[/bold]")
-        live_scanner.scan_live_markets()
-        console.print("[bright_green]Scan complete. Check logs for signals.[/bright_green]")
-    except ImportError:
-        console.print("[red]Live scanner module not available.[/red]")
-    except Exception as e:
-        console.print(f"[red]Scanner error: {e}[/red]")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Polymarket Pipeline V2")
     sub = parser.add_subparsers(dest="command")
-
-    # demo
-    p_demo = sub.add_parser("demo", help="Paper-trade 1-day markets, track accuracy")
-    p_demo.add_argument("--once", action="store_true", help="Single scan then exit")
-    p_demo.add_argument("--report", action="store_true", help="Show accuracy report only")
-    p_demo.add_argument("--resolve", action="store_true", help="Run resolution check only")
-    p_demo.set_defaults(func=cmd_demo)
 
     # watch (V2)
     p_watch = sub.add_parser("watch", help="V2: Event-driven pipeline (real-time)")
@@ -602,30 +436,6 @@ def main():
     # stats
     p_stats = sub.add_parser("stats", help="Performance statistics")
     p_stats.set_defaults(func=cmd_stats)
-
-    # sentiment
-    p_sent = sub.add_parser("sentiment", help="Analyze sentiment from Reddit, Twitter, Telegram")
-    p_sent.add_argument("query", type=str, help="Search query for sentiment analysis")
-    p_sent.set_defaults(func=cmd_sentiment)
-
-    # ml
-    p_ml = sub.add_parser("ml", help="ML predictor status and training")
-    p_ml.add_argument("--train", action="store_true", help="Train ML predictor on historical data")
-    p_ml.set_defaults(func=cmd_ml)
-
-    # arb
-    p_arb = sub.add_parser("arb", help="Scan for arbitrage opportunities")
-    p_arb.add_argument("--max", type=int, default=100, help="Max markets to scan")
-    p_arb.set_defaults(func=cmd_arb)
-
-    # onchain
-    p_onchain = sub.add_parser("onchain", help="Scan on-chain whale activity")
-    p_onchain.add_argument("--max", type=int, default=50, help="Max markets to scan")
-    p_onchain.set_defaults(func=cmd_onchain)
-
-    # scan
-    p_scan = sub.add_parser("scan", help="Live market scanner, detect price movements")
-    p_scan.set_defaults(func=cmd_scan)
 
     args = parser.parse_args()
     if not args.command:

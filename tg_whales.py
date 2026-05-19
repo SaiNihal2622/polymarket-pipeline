@@ -52,4 +52,5 @@ async def main():
 
     await client.disconnect()
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

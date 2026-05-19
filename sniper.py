@@ -22,7 +22,7 @@ from dataclasses import dataclass, field, asdict
 from typing import Optional
 from datetime import datetime, timezone
 
-from config import DB_FILE, get_clob_client
+from config import DB_PATH as DB_FILE
 
 log = logging.getLogger("sniper")
 

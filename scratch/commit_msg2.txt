@@ -1,0 +1,12 @@
+feat: add market intelligence modules - sentiment, risk, arb, ML, market making
+
+New modules based on trading bot tutorials and advanced strategy:
+- sentiment.py: Multi-source social sentiment with NLP scoring
+- risk_manager.py: Portfolio risk management with position limits and kelly criterion
+- arbitrage.py: Cross-market arbitrage detection
+- ml_predictor.py: ML price prediction with feature engineering
+- market_maker.py: Liquidity provision mode for spread capture
+- correlation.py: Cross-market correlation detection
+- multitimeframe.py: 1h/4h/24h trend analysis for entry timing
+
+Pipeline integration: risk management gate on all trades, new config settings.

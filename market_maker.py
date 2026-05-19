@@ -139,3 +139,151 @@ def size_mm_order(opp: MarketMakingOpportunity, bankroll_usd: float) -> float:
         max_position *= 0.5
 
     return round(max_position, 2)
+
+
+# ─── Database & Dashboard Integration ──────────────────────────────────────────
+import sqlite3
+from datetime import datetime, timezone
+
+from config import DB_PATH
+
+
+def _init_maker_table():
+    """Create market_maker tables if they don't exist."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS maker_cycles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL DEFAULT (datetime('now')),
+            markets_scanned INTEGER DEFAULT 0,
+            opportunities_found INTEGER DEFAULT 0,
+            orders_placed INTEGER DEFAULT 0,
+            total_spread REAL DEFAULT 0,
+            details TEXT DEFAULT ''
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def get_maker_stats() -> dict:
+    """Get market maker statistics for the dashboard."""
+    _init_maker_table()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        row = conn.execute("""
+            SELECT markets_scanned, opportunities_found, orders_placed, total_spread, ts
+            FROM maker_cycles ORDER BY id DESC LIMIT 1
+        """).fetchone()
+        total_cycles = conn.execute("SELECT COUNT(*) FROM maker_cycles").fetchone()[0]
+        total_opps = conn.execute("SELECT COALESCE(SUM(opportunities_found),0) FROM maker_cycles").fetchone()[0]
+        total_orders = conn.execute("SELECT COALESCE(SUM(orders_placed),0) FROM maker_cycles").fetchone()[0]
+    except Exception:
+        row = None
+        total_cycles = total_opps = total_orders = 0
+    finally:
+        conn.close()
+
+    return {
+        "last_scan": {
+            "markets_scanned": row[0] if row else 0,
+            "opportunities": row[1] if row else 0,
+            "orders_placed": row[2] if row else 0,
+            "avg_spread": round(row[3], 4) if row and row[3] else 0,
+            "time": row[4] if row else None,
+        },
+        "total_cycles": total_cycles,
+        "total_opportunities": total_opps,
+        "total_orders": total_orders,
+    }
+
+
+def run_maker_cycle(markets: list = None) -> dict:
+    """
+    Run one market-making scan cycle.
+    Fetches markets, analyzes spreads, logs results.
+    Returns summary dict for dashboard.
+    """
+    _init_maker_table()
+
+    # Fetch markets if not provided
+    if not markets:
+        try:
+            with httpx.Client(timeout=15) as client:
+                resp = client.get(
+                    "https://gamma-api.polymarket.com/markets",
+                    params={
+                        "limit": 100,
+                        "active": "true",
+                        "closed": "false",
+                        "order": "volume24hr",
+                        "ascending": "false",
+                    }
+                )
+                resp.raise_for_status()
+                raw = resp.json()
+                markets = raw if isinstance(raw, list) else raw.get("data", raw.get("markets", []))
+        except Exception as e:
+            log.warning(f"[market_maker] Failed to fetch markets: {e}")
+            return {"error": str(e)}
+
+    # Build token_id -> market mapping
+    token_markets = []
+    for m in markets:
+        cid = m.get("conditionId", m.get("condition_id", ""))
+        question = m.get("question", m.get("title", ""))
+        tokens = m.get("clobTokenIds", "")
+        if isinstance(tokens, str):
+            tokens = [t.strip() for t in tokens.split(",") if t.strip()] if tokens else []
+        elif not isinstance(tokens, list):
+            tokens = []
+        for tid in tokens:
+            token_markets.append((tid, question))
+
+    # Analyze spreads
+    opportunities = []
+    total_spread = 0.0
+    for tid, question in token_markets:
+        opp = analyze_spread(tid, question)
+        if opp and opp.spread_pct >= MIN_SPREAD_PCT:
+            opportunities.append(opp)
+            total_spread += opp.spread_pct
+
+    opportunities.sort(key=lambda o: o.spread, reverse=True)
+    top = opportunities[:10]
+
+    # Log cycle to DB
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("""
+        INSERT INTO maker_cycles (markets_scanned, opportunities_found, orders_placed, total_spread, details)
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        len(markets),
+        len(opportunities),
+        0,  # We don't auto-place orders yet — just scanning
+        round(total_spread, 4),
+        str([{"question": o.market_question, "spread": round(o.spread_pct, 4), "bid": o.recommended_bid} for o in top[:5]])
+    ))
+    conn.commit()
+    conn.close()
+
+    log.info(f"[market_maker] Cycle complete: {len(markets)} markets, "
+             f"{len(opportunities)} opportunities found")
+
+    return {
+        "markets_scanned": len(markets),
+        "tokens_checked": len(token_markets),
+        "opportunities_found": len(opportunities),
+        "avg_spread": round(total_spread / len(opportunities), 4) if opportunities else 0,
+        "top_opportunities": [
+            {
+                "question": o.market_question,
+                "spread_pct": round(o.spread_pct * 100, 2),
+                "best_bid": o.best_bid,
+                "best_ask": o.best_ask,
+                "recommended_bid": o.recommended_bid,
+                "risk_score": round(o.risk_score, 2),
+            }
+            for o in top
+        ],
+    }

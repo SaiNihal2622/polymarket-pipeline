@@ -7,7 +7,9 @@ import sqlite3, os, httpx, json
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
-db = Path(os.getenv("DB_PATH", "/data/trades.db"))
+db = os.getenv("DB_PATH", "/data/trades.db")
+if not os.path.exists(db):
+    db = "trades.db"
 conn = sqlite3.connect(db)
 conn.row_factory = sqlite3.Row
 
