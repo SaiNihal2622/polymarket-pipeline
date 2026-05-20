@@ -1064,6 +1064,128 @@ def live_dashboard():
     return "dashboard_live.html not found", 404
 
 
+@app.route("/api/revert-incorrect", methods=["POST"])
+def revert_incorrect_resolutions():
+    """Revert trades that were incorrectly marked as resolved.
+    
+    Accepts JSON body with either:
+      - {"trade_ids": [1,2,3]} to revert specific trades
+      - {"check_all": true} to check all resolved trades against Gamma API
+    
+    Reverts by deleting the outcomes row so the trade goes back to pending.
+    """
+    try:
+        if not Path(DB_PATH).exists():
+            return jsonify({"status": "no_db", "message": "Database not found"}), 404
+        
+        body = request.get_json(force=True, silent=True) or {}
+        trade_ids = body.get("trade_ids", [])
+        check_all = body.get("check_all", False)
+        
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        
+        reverted = []
+        kept = []
+        
+        if check_all:
+            # Check ALL resolved trades against Gamma to see if they're actually resolved
+            rows = conn.execute("""
+                SELECT t.id, t.market_id, t.market_question, t.side, o.result, o.pnl
+                FROM trades t
+                JOIN outcomes o ON t.id = o.trade_id
+                WHERE t.status IN ('demo', 'dry_run')
+                ORDER BY t.id
+            """).fetchall()
+            
+            import httpx as _httpx
+            GAMMA = "https://gamma-api.polymarket.com"
+            
+            for row in rows:
+                market_id = row["market_id"]
+                question = row["market_question"]
+                
+                # Check Gamma for actual resolution
+                actually_resolved = False
+                try:
+                    r = _httpx.get(f"{GAMMA}/markets",
+                        params={"slug": market_id, "limit": 1},
+                        timeout=10, verify=False)
+                    if r.status_code == 200:
+                        data = r.json()
+                        items = data if isinstance(data, list) else data.get("data", [])
+                        for m in items:
+                            if m.get("resolved"):
+                                actually_resolved = True
+                                break
+                except Exception:
+                    pass
+                
+                if not actually_resolved:
+                    # Market is NOT actually resolved — revert it
+                    conn.execute("DELETE FROM outcomes WHERE trade_id = ?", (row["id"],))
+                    conn.execute("DELETE FROM calibration WHERE trade_id = ?", (row["id"],))
+                    reverted.append({
+                        "id": row["id"],
+                        "question": question[:60],
+                        "side": row["side"],
+                        "was_result": row["result"],
+                        "was_pnl": row["pnl"],
+                    })
+                else:
+                    kept.append({
+                        "id": row["id"],
+                        "question": question[:60],
+                        "result": row["result"],
+                    })
+            
+            conn.commit()
+        
+        elif trade_ids:
+            # Revert specific trades
+            for tid in trade_ids:
+                row = conn.execute(
+                    "SELECT o.result, o.pnl FROM outcomes o WHERE o.trade_id = ?",
+                    (tid,)
+                ).fetchone()
+                if row:
+                    conn.execute("DELETE FROM outcomes WHERE trade_id = ?", (tid,))
+                    conn.execute("DELETE FROM calibration WHERE trade_id = ?", (tid,))
+                    reverted.append({
+                        "id": tid,
+                        "was_result": row["result"],
+                        "was_pnl": row["pnl"],
+                    })
+            conn.commit()
+        
+        conn.close()
+        
+        return jsonify({
+            "status": "ok",
+            "reverted_count": len(reverted),
+            "reverted": reverted,
+            "kept_count": len(kept),
+            "kept": kept,
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({"status": "error", "message": str(e),
+                        "trace": traceback.format_exc()}), 500
+
+
+@app.route("/api/revert-incorrect")
+def revert_incorrect_info():
+    """Info page for the revert endpoint (GET request)."""
+    return jsonify({
+        "usage": "POST /api/revert-incorrect",
+        "body_options": {
+            "trade_ids": "List of trade IDs to revert",
+            "check_all": "Boolean — check all resolved trades against Gamma API"
+        },
+        "example": {"check_all": True}
+    })
+
+
 @app.route("/reset_db", methods=["POST", "GET"])
 def reset_db():
     """Reset the database — delete all demo_trades for a fresh start."""

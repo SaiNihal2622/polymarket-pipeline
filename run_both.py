@@ -15,6 +15,94 @@ from logger import DB_PATH
 Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 
 
+def _startup_revert_bad_resolutions():
+    """Auto-revert trades that were incorrectly resolved by the old resolver.
+
+    The old resolver treated closed=true as resolved — but many Polymarket
+    markets close (stop trading) long before they actually resolve (outcome
+    determined). On startup we check every 'resolved' trade against the
+    Gamma API. If the market is NOT actually resolved, we delete its
+    outcomes/calibration rows so it goes back to 'pending'.
+    """
+    import sqlite3
+    import urllib.request
+    import json as _json
+
+    if not Path(DB_PATH).exists():
+        return
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+
+    # Find all trades that have outcomes but may be incorrectly resolved
+    rows = conn.execute("""
+        SELECT t.id, t.market_id, t.market_question, t.side,
+               o.result, o.pnl, o.method
+        FROM trades t
+        JOIN outcomes o ON t.id = o.trade_id
+        WHERE t.status IN ('demo', 'dry_run')
+        ORDER BY t.id
+    """).fetchall()
+
+    if not rows:
+        conn.close()
+        return
+
+    GAMMA = "https://gamma-api.polymarket.com"
+    reverted = []
+    checked = 0
+
+    for row in rows:
+        market_id = row["market_id"]
+        if not market_id:
+            continue
+
+        checked += 1
+        actually_resolved = False
+
+        try:
+            # Try slug first, then condition_id
+            url = f"{GAMMA}/markets?slug={market_id}&limit=1"
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = _json.loads(resp.read())
+                items = data if isinstance(data, list) else data.get("data", [])
+                for m in items:
+                    if m.get("resolved"):
+                        actually_resolved = True
+                        break
+
+            if not actually_resolved:
+                # Also try by condition_id
+                url2 = f"{GAMMA}/markets?condition_id={market_id}&limit=1"
+                req2 = urllib.request.Request(url2)
+                with urllib.request.urlopen(req2, timeout=8) as resp2:
+                    data2 = _json.loads(resp2.read())
+                    items2 = data2 if isinstance(data2, list) else data2.get("data", [])
+                    for m in items2:
+                        if m.get("resolved"):
+                            actually_resolved = True
+                            break
+        except Exception:
+            # Network error — don't revert, keep existing resolution
+            continue
+
+        if not actually_resolved:
+            conn.execute("DELETE FROM outcomes WHERE trade_id = ?", (row["id"],))
+            conn.execute("DELETE FROM calibration WHERE trade_id = ?", (row["id"],))
+            reverted.append(f"#{row['id']} {row['market_question'][:50]}... (was {row['result']})")
+
+    conn.commit()
+    conn.close()
+
+    if reverted:
+        print(f"🔄 Startup revert: {len(reverted)}/{checked} trades reverted to pending (market not yet resolved):", flush=True)
+        for r in reverted:
+            print(f"   ↩ {r}", flush=True)
+    else:
+        print(f"✅ Startup check: all {checked} resolved trades verified against Gamma API", flush=True)
+
+
 def _run_pipeline():
     try:
         from demo_runner import run_loop
@@ -26,15 +114,8 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
-    # ── FRESH START: wipe all old trades if requested ──
-    wipe_env = os.getenv("WIPE_ON_START", "false").lower()
-    if wipe_env == "true":
-        print("🔄 WIPE_ON_START=true — clearing all old trades for fresh start", flush=True)
-        try:
-            from demo_runner import _wipe_all_trades
-            _wipe_all_trades()
-        except Exception as e:
-            print(f"⚠️  Wipe failed: {e}", file=sys.stderr, flush=True)
+    # Startup: revert any trades incorrectly resolved by old resolver bug
+    _startup_revert_bad_resolutions()
 
     # Pipeline in background thread
     print("🤖 Starting Trading Pipeline in background...", flush=True)

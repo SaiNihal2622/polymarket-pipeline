@@ -110,7 +110,9 @@ def _parse_outcome(m: dict) -> float | None:
     We check for explicit resolution indicators, not just price extremes.
     """
     # Check if market is explicitly marked as resolved
-    is_resolved = bool(m.get("resolved") or m.get("closed"))
+    # IMPORTANT: "closed" alone is NOT enough — closed just means trading stopped,
+    # the market may still be waiting for resolution. We need "resolved" explicitly.
+    is_resolved = bool(m.get("resolved"))
     # Check resolvedOutcome field FIRST — this is the most authoritative signal
     resolved_outcome = m.get("resolvedOutcome")
     if resolved_outcome:
@@ -631,6 +633,11 @@ def _resolve_via_price_expiry(trade: dict) -> float | None:
                         data = r.json()
                         items = data if isinstance(data, list) else data.get("data", [])
                 for m in items:
+                    # SAFETY: Only resolve if market is actually closed/resolved on Gamma
+                    m_resolved = bool(m.get("resolved"))
+                    m_closed = bool(m.get("closed"))
+                    if not m_resolved and not m_closed:
+                        continue  # Market still open — don't resolve by price
                     outcome_prices = m.get("outcomePrices")
                     if outcome_prices:
                         prices = json.loads(outcome_prices) if isinstance(outcome_prices, str) else outcome_prices
