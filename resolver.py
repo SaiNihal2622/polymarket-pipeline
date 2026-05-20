@@ -69,9 +69,17 @@ def _conn() -> sqlite3.Connection:
 
 def get_pending_demo_trades() -> list[dict]:
     conn = _conn()
-    rows = conn.execute("""
+    # Get available columns to include close_time if it exists
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(trades)").fetchall()}
+    extra_cols = ""
+    if "close_time" in cols:
+        extra_cols = ", t.close_time"
+    if "end_date_iso" in cols:
+        extra_cols += ", t.end_date_iso"
+    rows = conn.execute(f"""
         SELECT t.id, t.market_id, t.market_question, t.side, t.amount_usd,
                t.claude_score, t.market_price, t.edge, t.created_at, t.token_id
+               {extra_cols}
         FROM trades t
         LEFT JOIN outcomes o ON t.id = o.trade_id
         WHERE t.status IN ('demo', 'dry_run')
@@ -658,6 +666,22 @@ def _resolve_via_price_expiry(trade: dict) -> float | None:
     return None
 
 
+def _is_market_past_close(trade: dict) -> bool:
+    """Check if the market's close_time has passed. Returns False if no close_time."""
+    close_str = trade.get("close_time") or trade.get("end_date_iso") or trade.get("market_end_date") or ""
+    if not close_str:
+        return True  # No close time → allow resolution
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+        close_dt = _dt.fromisoformat(close_str.replace("Z", "+00:00"))
+        if close_dt.tzinfo is None:
+            close_dt = close_dt.replace(tzinfo=_tz.utc)
+        now = _dt.now(_tz.utc)
+        return now >= close_dt
+    except Exception:
+        return True  # Parse error → allow resolution
+
+
 def check_market_resolution(trade: dict) -> float | None:
     """
     Try all resolution strategies for a trade.
@@ -666,6 +690,11 @@ def check_market_resolution(trade: dict) -> float | None:
     """
     market_id = trade.get("market_id", "")
     tid       = trade.get("token_id")
+
+    # SAFETY: Block resolution before market close_time
+    if not _is_market_past_close(trade):
+        log.info(f"[resolver] Skipping — market not past close_time: {trade.get('market_question', '')[:50]}")
+        return None
 
     if not tid:
         tid = _get_token_id_for_trade(market_id)
