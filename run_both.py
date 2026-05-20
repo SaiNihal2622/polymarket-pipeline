@@ -37,7 +37,7 @@ def _startup_revert_bad_resolutions():
     # Find all trades that have outcomes but may be incorrectly resolved
     rows = conn.execute("""
         SELECT t.id, t.market_id, t.market_question, t.side,
-               o.result, o.pnl, o.method
+               o.result, o.pnl
         FROM trades t
         JOIN outcomes o ON t.id = o.trade_id
         WHERE t.status IN ('demo', 'dry_run')
