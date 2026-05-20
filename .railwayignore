@@ -11,7 +11,7 @@ __pycache__/
 *.bat
 *.pdf
 *.log
-*.txt
+requirements.txt
 README.md
 CONTEXT_HANDOFF.md
 MIMO_SETUP.md
