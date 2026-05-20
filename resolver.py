@@ -312,7 +312,7 @@ def _resolve_via_gamma_slug(trade: dict) -> float | None:
                             if sim > best_sim:
                                 best_sim = sim
                                 best_match = m
-                        if best_match and best_sim >= 0.45:
+                        if best_match and best_sim >= 0.80:
                             log.info(f"[resolver] Gamma keyword match sim={best_sim:.2f}: {best_match.get('question','')[:60]}")
                             result = _parse_outcome(best_match)
                             if result is not None:
@@ -340,7 +340,7 @@ def _resolve_via_gamma_slug(trade: dict) -> float | None:
                         if sim > best_sim:
                             best_sim = sim
                             best_match = m
-                    if best_match and best_sim >= 0.40:
+                    if best_match and best_sim >= 0.80:
                         log.info(f"[resolver] Gamma proper-noun match sim={best_sim:.2f}: {best_match.get('question','')[:60]}")
                         result = _parse_outcome(best_match)
                         if result is not None:
