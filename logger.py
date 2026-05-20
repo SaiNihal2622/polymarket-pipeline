@@ -128,15 +128,17 @@ def _migrate_v2_columns(conn):
 
 
 def _backup_trades_to_json():
-    """Dump every trade + outcome to a JSON file so data survives redeployments."""
+    """Dump every trade + outcome + calibration to a JSON file so data survives redeployments."""
     try:
         conn = _conn()
         trades = conn.execute("SELECT * FROM trades ORDER BY id").fetchall()
         outcomes = conn.execute("SELECT * FROM outcomes ORDER BY id").fetchall()
+        calibration = conn.execute("SELECT * FROM calibration ORDER BY id").fetchall()
         conn.close()
         data = {
             "trades": [dict(r) for r in trades],
             "outcomes": [dict(r) for r in outcomes],
+            "calibration": [dict(r) for r in calibration],
             "backed_up_at": datetime.now(timezone.utc).isoformat(),
         }
         BACKUP_PATH.write_text(_json.dumps(data, indent=2, default=str), encoding="utf-8")
@@ -173,6 +175,15 @@ def _restore_trades_from_json():
             vals = [o[c] for c in cols]
             try:
                 conn.execute(f"INSERT INTO outcomes ({col_names}) VALUES ({placeholders})", vals)
+            except Exception:
+                pass
+        for cal in data.get("calibration", []):
+            cols = [k for k in cal.keys() if k != "id"]
+            placeholders = ", ".join(["?"] * len(cols))
+            col_names = ", ".join(cols)
+            vals = [cal[cn] for cn in cols]
+            try:
+                conn.execute(f"INSERT INTO calibration ({col_names}) VALUES ({placeholders})", vals)
             except Exception:
                 pass
         conn.commit()
@@ -281,6 +292,8 @@ def log_calibration(
     )
     conn.commit()
     conn.close()
+    # Persist calibration + outcome data to JSON backup
+    _backup_trades_to_json()
 
 
 def log_run_start() -> int:

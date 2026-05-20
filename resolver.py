@@ -771,6 +771,14 @@ def resolve_trade(trade_id: int, market_result: float, side: str, amount_usd: fl
     """, (market_result, market_result, 1 if won else 0, now, trade_id))
     conn.commit()
     conn.close()
+
+    # Persist resolution data to JSON backup so it survives redeploys
+    try:
+        from logger import _backup_trades_to_json
+        _backup_trades_to_json()
+    except Exception:
+        pass
+
     return result_str, pnl
 
 
