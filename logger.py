@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json as _json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+import logging
 
 import os
 _db_env = os.getenv("DB_PATH", "")
@@ -17,6 +19,9 @@ else:
     else:
         DB_PATH = (Path(__file__).parent / "trades.db").absolute()
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+# JSON backup path — lives next to the DB so it's on the same persistent volume.
+BACKUP_PATH = DB_PATH.parent / "trades_backup.json"
 
 
 def _conn() -> sqlite3.Connection:
@@ -122,6 +127,64 @@ def _migrate_v2_columns(conn):
     conn.commit()
 
 
+def _backup_trades_to_json():
+    """Dump every trade + outcome to a JSON file so data survives redeployments."""
+    try:
+        conn = _conn()
+        trades = conn.execute("SELECT * FROM trades ORDER BY id").fetchall()
+        outcomes = conn.execute("SELECT * FROM outcomes ORDER BY id").fetchall()
+        conn.close()
+        data = {
+            "trades": [dict(r) for r in trades],
+            "outcomes": [dict(r) for r in outcomes],
+            "backed_up_at": datetime.now(timezone.utc).isoformat(),
+        }
+        BACKUP_PATH.write_text(_json.dumps(data, indent=2, default=str), encoding="utf-8")
+    except Exception as exc:
+        logging.getLogger(__name__).warning("JSON backup failed: %s", exc)
+
+
+def _restore_trades_from_json():
+    """If the trades table is empty but a JSON backup exists, restore from it."""
+    try:
+        if not BACKUP_PATH.exists():
+            return
+        conn = _conn()
+        count = conn.execute("SELECT COUNT(*) as c FROM trades").fetchone()["c"]
+        if count > 0:
+            conn.close()
+            return  # DB already has data — don't overwrite
+        data = _json.loads(BACKUP_PATH.read_text(encoding="utf-8"))
+        restored = 0
+        for t in data.get("trades", []):
+            cols = [k for k in t.keys() if k != "id"]  # let AUTOINCREMENT assign id
+            placeholders = ", ".join(["?"] * len(cols))
+            col_names = ", ".join(cols)
+            vals = [t[c] for c in cols]
+            try:
+                conn.execute(f"INSERT INTO trades ({col_names}) VALUES ({placeholders})", vals)
+                restored += 1
+            except Exception:
+                pass
+        for o in data.get("outcomes", []):
+            cols = [k for k in o.keys() if k != "id"]
+            placeholders = ", ".join(["?"] * len(cols))
+            col_names = ", ".join(cols)
+            vals = [o[c] for c in cols]
+            try:
+                conn.execute(f"INSERT INTO outcomes ({col_names}) VALUES ({placeholders})", vals)
+            except Exception:
+                pass
+        conn.commit()
+        conn.close()
+        if restored:
+            logging.getLogger(__name__).info(
+                "Restored %d trades from JSON backup (%s)", restored, BACKUP_PATH
+            )
+    except Exception as exc:
+        logging.getLogger(__name__).warning("JSON restore failed: %s", exc)
+
+
 def log_trade(
     market_id: str,
     market_question: str,
@@ -170,6 +233,8 @@ def log_trade(
     trade_id = cur.lastrowid
     conn.commit()
     conn.close()
+    # Persist every trade to JSON backup so data survives Railway redeploys
+    _backup_trades_to_json()
     return trade_id
 
 
@@ -369,3 +434,5 @@ def get_pending_market_ids() -> set:
 
 
 init_db()
+# Restore trades from JSON backup if DB was wiped (e.g. Railway redeploy)
+_restore_trades_from_json()
