@@ -70,10 +70,27 @@ def _conn() -> sqlite3.Connection:
     return conn
 
 
-def ensure_cashout_columns():
-    """Add cashout tracking columns to trades table if they don't exist."""
+def _table_exists(conn, name: str) -> bool:
+    """Check if a table exists in the database."""
+    row = conn.execute(
+        "SELECT COUNT(*) as c FROM sqlite_master WHERE type='table' AND name=?", (name,)
+    ).fetchone()
+    return row["c"] > 0
+
+
+def _get_trade_table() -> str:
+    """Return the primary trade table name: 'demo_trades' or 'trades'."""
     conn = _conn()
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(trades)").fetchall()}
+    exists = _table_exists(conn, "demo_trades")
+    conn.close()
+    return "demo_trades" if exists else "trades"
+
+
+def ensure_cashout_columns():
+    """Add cashout tracking columns to the primary trade table if they don't exist."""
+    conn = _conn()
+    tbl = "demo_trades" if _table_exists(conn, "demo_trades") else "trades"
+    cols = {r[1] for r in conn.execute(f"PRAGMA table_info({tbl})").fetchall()}
     
     new_cols = {
         "peak_price": "REAL",        # Highest price seen while holding (for trailing stop)
@@ -86,8 +103,8 @@ def ensure_cashout_columns():
     
     for col_name, col_type in new_cols.items():
         if col_name not in cols:
-            conn.execute(f"ALTER TABLE trades ADD COLUMN {col_name} {col_type}")
-            log.info(f"[cashout] Added column: {col_name}")
+            conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col_name} {col_type}")
+            log.info(f"[cashout] Added column: {col_name} to {tbl}")
     
     conn.commit()
     conn.close()
@@ -96,10 +113,28 @@ def ensure_cashout_columns():
 def get_open_positions() -> list[dict]:
     """Get all open demo/dry_run trades that haven't been cashed out."""
     conn = _conn()
-    
-    # Check if position_status column exists
+
+    # PRIMARY: Read from demo_trades (where demo_runner stores trades)
+    if _table_exists(conn, "demo_trades"):
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(demo_trades)").fetchall()}
+        pos_col = "t.position_status" if "position_status" in cols else "'open'"
+        pk_col = "t.peak_price" if "peak_price" in cols else "NULL as peak_price"
+        rows = conn.execute(f"""
+            SELECT t.id, t.market_id, t.market_question, t.side, t.bet_amount as amount_usd,
+                   t.entry_price as market_price, t.confidence as claude_score, t.edge,
+                   t.created_at, t.token_id, {pk_col}, {pos_col} as position_status
+            FROM demo_trades t
+            WHERE t.result = 'pending'
+              AND t.token_id IS NOT NULL
+              AND t.token_id != ''
+            ORDER BY t.created_at ASC
+        """).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    # FALLBACK: Legacy trades table
     cols = {r[1] for r in conn.execute("PRAGMA table_info(trades)").fetchall()}
-    
+
     if "position_status" in cols:
         rows = conn.execute("""
             SELECT t.id, t.market_id, t.market_question, t.side, t.amount_usd,
@@ -311,7 +346,8 @@ def should_cashout(position: dict, price_data: dict) -> dict:
 def update_peak_price(trade_id: int, current_price: float, side: str):
     """Update the peak price seen for a trade (for trailing stop)."""
     conn = _conn()
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(trades)").fetchall()}
+    tbl = "demo_trades" if _table_exists(conn, "demo_trades") else "trades"
+    cols = {r[1] for r in conn.execute(f"PRAGMA table_info({tbl})").fetchall()}
     if "peak_price" not in cols:
         conn.close()
         return
@@ -322,12 +358,12 @@ def update_peak_price(trade_id: int, current_price: float, side: str):
         track_price = 1.0 - current_price
     
     current_peak = conn.execute(
-        "SELECT peak_price FROM trades WHERE id=?", (trade_id,)
+        f"SELECT peak_price FROM {tbl} WHERE id=?", (trade_id,)
     ).fetchone()
     
     if current_peak is None or current_peak["peak_price"] is None or track_price > float(current_peak["peak_price"]):
         conn.execute(
-            "UPDATE trades SET peak_price=?, unrealized_pnl=? WHERE id=?",
+            f"UPDATE {tbl} SET peak_price=?, unrealized_pnl=? WHERE id=?",
             (track_price, None, trade_id)
         )
         conn.commit()
@@ -354,38 +390,48 @@ def execute_cashout(position: dict, reason: str, price_data: dict) -> dict:
     # Record the cashout
     now = datetime.now(timezone.utc).isoformat()
     conn = _conn()
-    
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(trades)").fetchall()}
-    
-    # Update trade record with cashout info
-    if "cashout_price" in cols:
-        conn.execute("""
-            UPDATE trades SET 
-                cashout_price=?, cashout_reason=?, cashout_at=?,
-                position_status='cashout'
-            WHERE id=?
-        """, (sell_price, reason, now, position["id"]))
-    
-    # Record as resolved outcome
+    tbl = "demo_trades" if _table_exists(conn, "demo_trades") else "trades"
+
+    cols = {r[1] for r in conn.execute(f"PRAGMA table_info({tbl})").fetchall()}
+
     pnl = pnl_info["pnl"]
     result_str = "win" if pnl > 0 else ("loss" if pnl < 0 else "push")
-    
-    conn.execute("""
-        INSERT OR IGNORE INTO outcomes (trade_id, resolved_at, result, pnl)
-        VALUES (?, ?, ?, ?)
-    """, (position["id"], now, result_str, pnl))
-    
-    # Calibration record
-    conn.execute("""
-        INSERT OR REPLACE INTO calibration
-          (trade_id, classification, materiality, entry_price, exit_price,
-           actual_direction, correct, resolved_at)
-        SELECT id, side, edge, market_price, ?,
-               CASE WHEN ? = 1.0 THEN 'YES' ELSE 'NO' END,
-               CASE WHEN ? THEN 1 ELSE 0 END, ?
-        FROM trades WHERE id = ?
-    """, (sell_price, 1.0 if pnl > 0 else 0.0, 1 if pnl > 0 else 0, now, position["id"]))
-    
+    outcome = "yes" if pnl > 0 else "no"
+
+    if tbl == "demo_trades":
+        # PRIMARY: Update demo_trades table directly
+        conn.execute("""
+            UPDATE demo_trades SET
+                result=?, pnl=?, resolved_at=?, market_outcome=?
+            WHERE id=?
+        """, (result_str, pnl, now, outcome, position["id"]))
+    else:
+        # Update trade record with cashout info
+        if "cashout_price" in cols:
+            conn.execute("""
+                UPDATE trades SET 
+                    cashout_price=?, cashout_reason=?, cashout_at=?,
+                    position_status='cashout'
+                WHERE id=?
+            """, (sell_price, reason, now, position["id"]))
+
+        # Record as resolved outcome
+        conn.execute("""
+            INSERT OR IGNORE INTO outcomes (trade_id, resolved_at, result, pnl)
+            VALUES (?, ?, ?, ?)
+        """, (position["id"], now, result_str, pnl))
+
+        # Calibration record
+        conn.execute("""
+            INSERT OR REPLACE INTO calibration
+              (trade_id, classification, materiality, entry_price, exit_price,
+               actual_direction, correct, resolved_at)
+            SELECT id, side, edge, market_price, ?,
+                   CASE WHEN ? = 1.0 THEN 'YES' ELSE 'NO' END,
+                   CASE WHEN ? THEN 1 ELSE 0 END, ?
+            FROM trades WHERE id = ?
+        """, (sell_price, 1.0 if pnl > 0 else 0.0, 1 if pnl > 0 else 0, now, position["id"]))
+
     conn.commit()
     conn.close()
     
