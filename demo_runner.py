@@ -134,11 +134,70 @@ def _db():
 
 # ── Trade Logging ────────────────────────────────────────────────────────────
 
+def _place_clob_order(token_id: str, side: str, price: float, size_usd: float) -> dict:
+    """Place a real order on Polymarket CLOB. Returns {"order_id": str, "status": str}."""
+    try:
+        from py_clob_client.client import ClobClient
+        from py_clob_client.clob_types import OrderArgs, OrderType
+
+        api_key = config.POLYMARKET_API_KEY or config.POLY_API_KEY
+        priv_key = config.POLYMARKET_PRIVATE_KEY
+        if not api_key or not priv_key:
+            return {"order_id": None, "status": "error_no_keys"}
+
+        client = ClobClient(
+            host=config.POLYMARKET_HOST,
+            key=priv_key,
+            chain_id=137,
+            funder=priv_key,
+        )
+        client.set_api_creds(client.create_or_derive_api_creds())
+
+        # Clamp price to valid range
+        price = max(0.01, min(0.99, price))
+
+        order_args = OrderArgs(
+            price=price,
+            size=size_usd,
+            side="BUY",
+            token_id=token_id,
+        )
+        signed_order = client.create_order(order_args)
+        resp = client.post_order(signed_order, OrderType.GTC)
+
+        order_id = resp.get("orderID", resp.get("id", "unknown"))
+        return {"order_id": order_id, "status": "executed"}
+
+    except ImportError:
+        log.warning("[LIVE] py_clob_client not installed — cannot place real orders")
+        return {"order_id": None, "status": "error_no_clob_client"}
+    except Exception as e:
+        log.warning(f"[LIVE] CLOB order failed: {e}")
+        return {"order_id": None, "status": f"error_{type(e).__name__}"}
+
+
 def _log_demo_trade(signal, token_id: str = "", strategy: str = "",
                     news_context: str = "", signals: dict | None = None) -> int:
-    """Log a demo trade to the database. Returns the trade ID."""
+    """Log a demo trade (and optionally place a real CLOB order). Returns the trade ID."""
     run_id = f"demo_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     now = datetime.now(timezone.utc).isoformat()
+
+    # ── LIVE TRADING: place real order when DRY_RUN=false ──
+    order_id = None
+    order_status = "dry_run"
+    if not config.DRY_RUN and token_id:
+        order_result = _place_clob_order(
+            token_id=token_id,
+            side=signal.side,
+            price=signal.market_price,
+            size_usd=signal.bet_amount,
+        )
+        order_id = order_result.get("order_id")
+        order_status = order_result.get("status", "error_unknown")
+        if order_status == "executed":
+            print(f"  🔥 LIVE ORDER #{order_id} | {signal.side} ${signal.bet_amount:.2f} on {signal.market.question[:50]}")
+        else:
+            print(f"  ⚠️  ORDER FAILED [{order_status}] | {signal.side} ${signal.bet_amount:.2f} on {signal.market.question[:50]}")
 
     # Extract market close time for Est. Completion display
     close_time = None
@@ -172,7 +231,7 @@ def _log_demo_trade(signal, token_id: str = "", strategy: str = "",
         signal.market_price,
         signal.bet_amount,
         round(signal.bet_amount * (1.0 / signal.market_price - 1.0) if signal.market_price > 0 else 0, 2),
-        "pending",
+        order_status,  # dry_run or executed (will be resolved later)
         0.0,
         signal.reasoning,
         signal.news_source,
