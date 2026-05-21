@@ -625,6 +625,43 @@ def api_summary():
     return jsonify(_get_summary())
 
 
+@app.route("/api/archive_demo", methods=["POST"])
+def api_archive_demo():
+    """Archive old dry_run/demo trades to demo_trades_archive table."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+    if "demo_trades" not in tables:
+        conn.close()
+        return jsonify({"error": "no demo_trades table"}), 404
+    count = conn.execute("SELECT COUNT(*) FROM demo_trades").fetchone()[0]
+    if count == 0:
+        conn.close()
+        return jsonify({"message": "demo_trades already empty", "archived": 0})
+    if "demo_trades_archive" in tables:
+        conn.execute("DROP TABLE demo_trades_archive")
+    conn.execute("ALTER TABLE demo_trades RENAME TO demo_trades_archive")
+    # Recreate empty demo_trades
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS demo_trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL,
+            market_id TEXT NOT NULL, market_question TEXT NOT NULL,
+            market_slug TEXT DEFAULT '', side TEXT NOT NULL DEFAULT 'YES',
+            entry_price REAL NOT NULL, bet_amount REAL NOT NULL DEFAULT 1.00,
+            win_amount REAL NOT NULL DEFAULT 0.00, result TEXT DEFAULT 'pending',
+            pnl REAL DEFAULT 0.0, reasoning TEXT DEFAULT '', news_source TEXT DEFAULT '',
+            model TEXT DEFAULT '', confidence REAL DEFAULT 0.0, market_outcome TEXT DEFAULT '',
+            created_at TEXT NOT NULL, resolved_at TEXT, token_id TEXT DEFAULT '',
+            strategy TEXT DEFAULT '', materiality REAL DEFAULT 0.0, edge REAL DEFAULT 0.0,
+            composite_score REAL DEFAULT 0.0, news_context TEXT DEFAULT '',
+            signals_json TEXT DEFAULT '{}', close_time TEXT, close_hours REAL DEFAULT 0.0
+        )
+    """)
+    conn.commit()
+    conn.close()
+    return jsonify({"message": "archived old trades", "archived": count})
+
+
 @app.route("/api/trades")
 def api_trades():
     """JSON API: recent trades."""
