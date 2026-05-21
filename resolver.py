@@ -67,43 +67,88 @@ def _conn() -> sqlite3.Connection:
     return conn
 
 
+def _table_exists(conn, name: str) -> bool:
+    """Check if a table exists in the database."""
+    row = conn.execute(
+        "SELECT COUNT(*) as c FROM sqlite_master WHERE type='table' AND name=?", (name,)
+    ).fetchone()
+    return row["c"] > 0
+
+
 def get_pending_demo_trades() -> list[dict]:
     conn = _conn()
-    # Get available columns to include close_time if it exists
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(trades)").fetchall()}
-    extra_cols = ""
-    if "close_time" in cols:
-        extra_cols = ", t.close_time"
-    if "end_date_iso" in cols:
-        extra_cols += ", t.end_date_iso"
-    rows = conn.execute(f"""
-        SELECT t.id, t.market_id, t.market_question, t.side, t.amount_usd,
-               t.claude_score, t.market_price, t.edge, t.created_at, t.token_id
-               {extra_cols}
-        FROM trades t
-        LEFT JOIN outcomes o ON t.id = o.trade_id
-        WHERE t.status IN ('demo', 'dry_run')
-          AND o.id IS NULL
-          AND t.market_id != ''
-        ORDER BY t.created_at ASC
-    """).fetchall()
+    trades_exist = _table_exists(conn, "trades")
+    demo_exist = _table_exists(conn, "demo_trades")
+
+    # PRIMARY: Read from demo_trades (where demo_runner logs trades)
+    if demo_exist:
+        rows = conn.execute("""
+            SELECT dt.id, dt.market_id, dt.market_question, dt.side,
+                   dt.bet_amount as amount_usd,
+                   dt.confidence as claude_score,
+                   dt.entry_price as market_price,
+                   dt.edge, dt.created_at, dt.token_id,
+                   dt.close_time, dt.market_id as end_date_iso
+            FROM demo_trades dt
+            WHERE dt.result = 'pending'
+              AND dt.market_id IS NOT NULL
+              AND dt.market_id != ''
+            ORDER BY dt.created_at ASC
+        """).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    # FALLBACK: Read from legacy trades table
+    if trades_exist:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(trades)").fetchall()}
+        extra_cols = ""
+        if "close_time" in cols:
+            extra_cols = ", t.close_time"
+        if "end_date_iso" in cols:
+            extra_cols += ", t.end_date_iso"
+        rows = conn.execute(f"""
+            SELECT t.id, t.market_id, t.market_question, t.side, t.amount_usd,
+                   t.claude_score, t.market_price, t.edge, t.created_at, t.token_id
+                   {extra_cols}
+            FROM trades t
+            LEFT JOIN outcomes o ON t.id = o.trade_id
+            WHERE t.status IN ('demo', 'dry_run')
+              AND o.id IS NULL
+              AND t.market_id != ''
+            ORDER BY t.created_at ASC
+        """).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
     conn.close()
-    return [dict(r) for r in rows]
+    return []
 
 
 def _get_token_id_for_trade(market_id: str) -> str | None:
     try:
         conn = _conn()
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(trades)").fetchall()}
-        if "token_id" not in cols:
-            conn.close()
-            return None
-        row = conn.execute(
-            "SELECT token_id FROM trades WHERE market_id=? AND token_id IS NOT NULL LIMIT 1",
-            (market_id,)
-        ).fetchone()
+        # Check demo_trades first (primary table)
+        if _table_exists(conn, "demo_trades"):
+            row = conn.execute(
+                "SELECT token_id FROM demo_trades WHERE market_id=? AND token_id IS NOT NULL AND token_id != '' LIMIT 1",
+                (market_id,)
+            ).fetchone()
+            if row:
+                conn.close()
+                return row["token_id"]
+        # Fallback to legacy trades table
+        if _table_exists(conn, "trades"):
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(trades)").fetchall()}
+            if "token_id" in cols:
+                row = conn.execute(
+                    "SELECT token_id FROM trades WHERE market_id=? AND token_id IS NOT NULL LIMIT 1",
+                    (market_id,)
+                ).fetchone()
+                if row:
+                    conn.close()
+                    return row["token_id"]
         conn.close()
-        return row["token_id"] if row else None
+        return None
     except Exception:
         return None
 
@@ -756,19 +801,34 @@ def resolve_trade(trade_id: int, market_result: float, side: str, amount_usd: fl
 
     now = datetime.now(timezone.utc).isoformat()
     conn = _conn()
+
+    # PRIMARY: Update demo_trades table (where demo_runner stores trades)
+    if _table_exists(conn, "demo_trades"):
+        outcome = "yes" if market_result == 1.0 else "no"
+        conn.execute("""
+            UPDATE demo_trades
+            SET result = ?, pnl = ?, resolved_at = ?, market_outcome = ?
+            WHERE id = ?
+        """, (result_str, pnl, now, outcome, trade_id))
+        conn.commit()
+        conn.close()
+        return result_str, pnl
+
+    # FALLBACK: Legacy trades + outcomes tables
     conn.execute("""
         INSERT OR IGNORE INTO outcomes (trade_id, resolved_at, result, pnl)
         VALUES (?, ?, ?, ?)
     """, (trade_id, now, result_str, pnl))
-    conn.execute("""
-        INSERT OR REPLACE INTO calibration
-          (trade_id, classification, materiality, entry_price, exit_price,
-           actual_direction, correct, resolved_at)
-        SELECT id, side, edge, market_price, ?,
-               CASE WHEN ? = 1.0 THEN 'YES' ELSE 'NO' END,
-               CASE WHEN ? THEN 1 ELSE 0 END, ?
-        FROM trades WHERE id = ?
-    """, (market_result, market_result, 1 if won else 0, now, trade_id))
+    if _table_exists(conn, "calibration"):
+        conn.execute("""
+            INSERT OR REPLACE INTO calibration
+              (trade_id, classification, materiality, entry_price, exit_price,
+               actual_direction, correct, resolved_at)
+            SELECT id, side, edge, market_price, ?,
+                   CASE WHEN ? = 1.0 THEN 'YES' ELSE 'NO' END,
+                   CASE WHEN ? THEN 1 ELSE 0 END, ?
+            FROM trades WHERE id = ?
+        """, (market_result, market_result, 1 if won else 0, now, trade_id))
     conn.commit()
     conn.close()
 
@@ -797,10 +857,19 @@ def _void_stuck_trades(pending: list[dict], max_pending_hours: float = 720.0) ->
             pass
     if void_ids:
         conn = _conn()
-        conn.execute(
-            f"UPDATE trades SET status='voided' WHERE id IN ({','.join('?'*len(void_ids))})",
-            void_ids
-        )
+        # Update demo_trades (primary) or legacy trades table
+        if _table_exists(conn, "demo_trades"):
+            placeholders = ','.join('?'*len(void_ids))
+            conn.execute(
+                f"UPDATE demo_trades SET result='void' WHERE id IN ({placeholders})",
+                void_ids
+            )
+        else:
+            placeholders = ','.join('?'*len(void_ids))
+            conn.execute(
+                f"UPDATE trades SET status='voided' WHERE id IN ({placeholders})",
+                void_ids
+            )
         conn.commit()
         conn.close()
         print(f"[resolver] Voided {len(void_ids)} stuck trades")
