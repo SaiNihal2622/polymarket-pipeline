@@ -519,14 +519,19 @@ def scan_and_trade() -> dict:
         console.print(f"  [dim]Signal accuracy: building... (need {8} resolved trades per signal)[/dim]")
     console.print(f"  [dim]Dynamic weights: pf={dyn_weights.get('pf',0):.2f} ai={dyn_weights.get('ai',0):.2f} copy={dyn_weights.get('copy',0):.2f} whale={dyn_weights.get('whale',0):.2f} crowd={dyn_weights.get('crowd',0):.2f}[/dim]")
 
-    # Build token map
-    token_map = {}
+    # Build token map — stores BOTH YES and NO token IDs per market
+    token_map = {}  # {condition_id: {"YES": token_id, "NO": token_id}}
     for m in all_candidates:
         if m.tokens and isinstance(m.tokens, list) and m.tokens:
-            t = m.tokens[0]
-            tid = t.get("token_id") if isinstance(t, dict) else str(t)
-            if tid:
-                token_map[m.condition_id] = tid
+            market_tokens = {}
+            for t in m.tokens:
+                if isinstance(t, dict):
+                    outcome = t.get("outcome", "").upper()
+                    tid = t.get("token_id", "")
+                    if tid and outcome in ("YES", "NO"):
+                        market_tokens[outcome] = tid
+            if market_tokens:
+                token_map[m.condition_id] = market_tokens
 
     # Pre-match news headlines to markets (keyword overlap → LLM context)
     news_map: dict[str, list[str]] = {}
@@ -601,7 +606,7 @@ def scan_and_trade() -> dict:
 
         hours_left = _hours_left(market)
         price      = market.yes_price
-        tok        = token_map.get(market.condition_id)
+        tok_dict   = token_map.get(market.condition_id)
 
         # ── TIME FILTER: skip markets too far out ──
         if hours_left > config.MAX_HOURS_TO_CLOSE:
@@ -935,7 +940,9 @@ def scan_and_trade() -> dict:
                 classification=("bullish" if strat_side=="YES" else "bearish"),
                 materiality=gem_mat, composite_score=rrf_score,
             )
-            trade_id = _log_demo_trade(sig, token_id=tok,
+            # Extract the correct token_id for the trade side (YES or NO)
+            trade_token_id = tok_dict.get(strat_side) if tok_dict else None
+            trade_id = _log_demo_trade(sig, token_id=trade_token_id,
                                        signals=signals_record, strategy=strat_name)
             already_logged.add(combo_key)
             signals_found.append(sig)
