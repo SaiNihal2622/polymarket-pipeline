@@ -18,7 +18,6 @@ MIMO_SETUP.md
 SETUP_GUIDE.pdf
 TECHNICAL_DOC.md
 backtest.py
-demo_runner.py
 arb_itrage.py
 market_maker.py
 multitimeframe.py
