@@ -147,11 +147,15 @@ def _place_clob_order(token_id: str, side: str, price: float, size_usd: float) -
 
         client = ClobClient(
             host=config.POLYMARKET_HOST,
-            key=priv_key,
+            key=api_key,
             chain_id=137,
             funder=priv_key,
         )
-        client.set_api_creds(client.create_or_derive_api_creds())
+        client.set_api_creds({
+            "apiKey": api_key,
+            "secret": config.POLYMARKET_API_SECRET,
+            "passphrase": config.POLYMARKET_API_PASSPHRASE,
+        })
 
         # Clamp price to valid range
         price = max(0.01, min(0.99, price))
