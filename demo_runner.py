@@ -147,7 +147,7 @@ def _place_clob_order(token_id: str, side: str, price: float, size_usd: float) -
 
         client = ClobClient(
             host=config.POLYMARKET_HOST,
-            key=api_key,
+            key=priv_key,
             chain_id=137,
             funder=priv_key,
         )
