@@ -586,12 +586,14 @@ def scan_and_trade() -> dict:
     # ★ HIGH THROUGHPUT: 600 markets per scan — maximum coverage
     MAX_MARKETS = config.MAX_MARKETS_PER_SCAN
 
-    # Get already-logged market IDs to avoid duplicates (ALL trades, not just pending)
+    # Get already-logged market IDs to avoid duplicates
+    # Only skip markets that have SUCCESSFUL orders (executed or pending or dry_run)
+    # Allow re-try on markets that errored out
     already_logged: set[str] = set()
     try:
         con = _db()
         rows = con.execute(
-            "SELECT DISTINCT market_id FROM demo_trades"
+            "SELECT DISTINCT market_id FROM demo_trades WHERE result NOT LIKE 'error_%'"
         ).fetchall()
         con.close()
         already_logged = {r["market_id"] for r in rows}
