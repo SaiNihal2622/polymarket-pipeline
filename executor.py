@@ -33,14 +33,22 @@ def _execute_live(signal: Signal, token_id: str | None) -> dict:
         from py_clob_client.client import ClobClient
         from py_clob_client.clob_types import OrderArgs, OrderType
 
+        priv_key = config.POLYMARKET_PRIVATE_KEY
+        if priv_key and not priv_key.startswith("0x"):
+            priv_key = "0x" + priv_key
+
         client = ClobClient(
             host=config.POLYMARKET_HOST,
-            key=config.POLYMARKET_API_KEY,
+            key=priv_key,
             chain_id=137,
-            funder=config.POLYMARKET_PRIVATE_KEY,
+            funder=priv_key,
         )
 
-        client.set_api_creds(client.create_or_derive_api_creds())
+        client.set_api_creds({
+            "apiKey": config.POLYMARKET_API_KEY,
+            "secret": config.POLYMARKET_API_SECRET,
+            "passphrase": config.POLYMARKET_API_PASSPHRASE,
+        })
 
         # token_id already passed in
         if not token_id:
