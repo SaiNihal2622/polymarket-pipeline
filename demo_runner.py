@@ -520,16 +520,28 @@ def scan_and_trade() -> dict:
     console.print(f"  [dim]Dynamic weights: pf={dyn_weights.get('pf',0):.2f} ai={dyn_weights.get('ai',0):.2f} copy={dyn_weights.get('copy',0):.2f} whale={dyn_weights.get('whale',0):.2f} crowd={dyn_weights.get('crowd',0):.2f}[/dim]")
 
     # Build token map — stores BOTH YES and NO token IDs per market
+    # For Polymarket binary markets: first token = YES, second = NO
     token_map = {}  # {condition_id: {"YES": token_id, "NO": token_id}}
     for m in all_candidates:
-        if m.tokens and isinstance(m.tokens, list) and m.tokens:
+        if m.tokens and isinstance(m.tokens, list) and len(m.tokens) >= 1:
             market_tokens = {}
+            # Try outcome-name matching first
             for t in m.tokens:
                 if isinstance(t, dict):
-                    outcome = t.get("outcome", "").upper()
+                    outcome = str(t.get("outcome", "")).upper()
                     tid = t.get("token_id", "")
                     if tid and outcome in ("YES", "NO"):
                         market_tokens[outcome] = tid
+            # Fallback: position-based (first=YES, second=NO) for binary markets
+            if not market_tokens and len(m.tokens) >= 2:
+                t0 = m.tokens[0]
+                t1 = m.tokens[1]
+                tid0 = t0.get("token_id", "") if isinstance(t0, dict) else ""
+                tid1 = t1.get("token_id", "") if isinstance(t1, dict) else ""
+                if tid0:
+                    market_tokens["YES"] = tid0
+                if tid1:
+                    market_tokens["NO"] = tid1
             if market_tokens:
                 token_map[m.condition_id] = market_tokens
 
