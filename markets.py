@@ -101,6 +101,7 @@ def fetch_active_markets(limit: int = 50) -> list[Market]:
                     tokens = []
 
             # Build token list for order execution
+            # Try multiple sources for token IDs
             clob_token_ids = m.get("clobTokenIds", "")
             if isinstance(clob_token_ids, str):
                 import json
@@ -110,7 +111,20 @@ def fetch_active_markets(limit: int = 50) -> list[Market]:
                     clob_token_ids = []
 
             token_list = []
-            outcomes = ["Yes", "No"]
+            outcomes_raw = m.get("outcomes", "")
+            if isinstance(outcomes_raw, str):
+                try:
+                    outcomes_parsed = json.loads(outcomes_raw) if outcomes_raw else ["Yes", "No"]
+                except (json.JSONDecodeError, NameError):
+                    outcomes_parsed = ["Yes", "No"]
+            elif isinstance(outcomes_raw, list):
+                outcomes_parsed = outcomes_raw
+            else:
+                outcomes_parsed = ["Yes", "No"]
+
+            outcomes = outcomes_parsed if outcomes_parsed else ["Yes", "No"]
+
+            # Source 1: clobTokenIds from Gamma
             for i, tid in enumerate(clob_token_ids if isinstance(clob_token_ids, list) else []):
                 token_list.append({
                     "token_id": tid,
@@ -118,12 +132,38 @@ def fetch_active_markets(limit: int = 50) -> list[Market]:
                     "price": yes_price if i == 0 else no_price,
                 })
 
+            # Source 2: tokens array from Gamma (may have token_id inside)
+            if not token_list:
+                gamma_tokens = m.get("tokens", [])
+                if isinstance(gamma_tokens, str):
+                    try:
+                        gamma_tokens = json.loads(gamma_tokens)
+                    except (json.JSONDecodeError, NameError):
+                        gamma_tokens = []
+                for i, t in enumerate(gamma_tokens if isinstance(gamma_tokens, list) else []):
+                    if isinstance(t, dict):
+                        tid = t.get("token_id", t.get("tokenId", ""))
+                        if tid:
+                            token_list.append({
+                                "token_id": tid,
+                                "outcome": t.get("outcome", outcomes[i] if i < len(outcomes) else f"Outcome_{i}"),
+                                "price": float(t.get("price", yes_price if i == 0 else no_price)),
+                            })
+
             vol = float(m.get("volume", m.get("volumeNum", 0)) or 0)
             question = m.get("question", "")
 
             # Skip resolved or low-info markets
             if yes_price in (0.0, 1.0) and vol == 0:
                 continue
+
+            # Debug: log first few markets' token status
+            if len(markets) < 3:
+                import logging as _log
+                _log.getLogger("markets").info(
+                    f"[DEBUG] {question[:40]} clob_ids={clob_token_ids[:2] if isinstance(clob_token_ids, list) else clob_token_ids} "
+                    f"token_list_len={len(token_list)} conditionId={m.get('conditionId','')[:20]}"
+                )
 
             markets.append(Market(
                 condition_id=m.get("conditionId", m.get("condition_id", m.get("id", ""))),

@@ -137,6 +137,11 @@ def _db():
 def _place_clob_order(token_id: str, side: str, price: float, size_usd: float) -> dict:
     """Place a real order on Polymarket CLOB. Returns {"order_id": str, "status": str}."""
     try:
+        # Validate token_id
+        if not token_id or len(str(token_id).strip()) < 5:
+            log.warning(f"[LIVE] Invalid token_id: '{token_id}' — cannot place order")
+            return {"order_id": None, "status": "error_no_token_id"}
+
         from py_clob_client.client import ClobClient
         from py_clob_client.clob_types import OrderArgs, OrderType
 
@@ -162,23 +167,26 @@ def _place_clob_order(token_id: str, side: str, price: float, size_usd: float) -
         # Clamp price to valid range
         price = max(0.01, min(0.99, price))
 
+        log.info(f"[LIVE] Placing order: {side} ${size_usd:.2f} @ {price:.3f} token={str(token_id)[:20]}...")
+
         order_args = OrderArgs(
             price=price,
             size=size_usd,
             side="BUY",
-            token_id=token_id,
+            token_id=str(token_id),
         )
         signed_order = client.create_order(order_args)
         resp = client.post_order(signed_order, OrderType.GTC)
 
         order_id = resp.get("orderID", resp.get("id", "unknown"))
+        log.info(f"[LIVE] Order placed: {order_id}")
         return {"order_id": order_id, "status": "executed"}
 
     except ImportError:
         log.warning("[LIVE] py_clob_client not installed — cannot place real orders")
         return {"order_id": None, "status": "error_no_clob_client"}
     except Exception as e:
-        log.warning(f"[LIVE] CLOB order failed: {e}")
+        log.warning(f"[LIVE] CLOB order failed: {type(e).__name__}: {e}")
         return {"order_id": None, "status": f"error_{type(e).__name__}"}
 
 
