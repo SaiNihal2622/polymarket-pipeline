@@ -520,9 +520,10 @@ def scan_and_trade() -> dict:
     # Build token map — stores BOTH YES and NO token IDs per market
     # For Polymarket binary markets: first token = YES, second = NO
     token_map = {}  # {condition_id: {"YES": token_id, "NO": token_id}}
+    markets_with_tokens = 0
     for m in all_candidates:
+        market_tokens = {}
         if m.tokens and isinstance(m.tokens, list) and len(m.tokens) >= 1:
-            market_tokens = {}
             # Try outcome-name matching first
             for t in m.tokens:
                 if isinstance(t, dict):
@@ -540,8 +541,18 @@ def scan_and_trade() -> dict:
                     market_tokens["YES"] = tid0
                 if tid1:
                     market_tokens["NO"] = tid1
-            if market_tokens:
-                token_map[m.condition_id] = market_tokens
+        if market_tokens:
+            token_map[m.condition_id] = market_tokens
+            markets_with_tokens += 1
+    log.info(f"[tokens] {markets_with_tokens}/{len(all_candidates)} markets have token IDs")
+    # Log a few missing ones for debugging
+    missing_count = 0
+    for m in all_candidates[:20]:
+        if m.condition_id not in token_map and missing_count < 3:
+            log.warning(f"[tokens] MISSING: {m.question[:50]} cond_id={m.condition_id[:20]} tokens_len={len(m.tokens)}")
+            if m.tokens:
+                log.warning(f"  tokens[0]={m.tokens[0]}")
+            missing_count += 1
 
     # Pre-match news headlines to markets (keyword overlap → LLM context)
     news_map: dict[str, list[str]] = {}

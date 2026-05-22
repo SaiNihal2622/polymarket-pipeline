@@ -158,12 +158,26 @@ def fetch_active_markets(limit: int = 50) -> list[Market]:
                 continue
 
             # Debug: log first few markets' token status
-            if len(markets) < 3:
+            if len(markets) < 5:
                 import logging as _log
                 _log.getLogger("markets").info(
                     f"[DEBUG] {question[:40]} clob_ids={clob_token_ids[:2] if isinstance(clob_token_ids, list) else clob_token_ids} "
                     f"token_list_len={len(token_list)} conditionId={m.get('conditionId','')[:20]}"
                 )
+                if token_list:
+                    _log.getLogger("markets").info(
+                        f"  token_list[0] keys={list(token_list[0].keys())} values={token_list[0]}"
+                    )
+                if not token_list:
+                    # Log raw tokens for debugging
+                    raw_tok = m.get("tokens", [])
+                    _log.getLogger("markets").info(
+                        f"  raw tokens type={type(raw_tok).__name__} len={len(raw_tok) if isinstance(raw_tok, list) else '?'}"
+                    )
+                    if isinstance(raw_tok, list) and raw_tok:
+                        _log.getLogger("markets").info(
+                            f"  raw tokens[0]={raw_tok[0]}"
+                        )
 
             markets.append(Market(
                 condition_id=m.get("conditionId", m.get("condition_id", m.get("id", ""))),
