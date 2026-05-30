@@ -150,13 +150,14 @@ def _place_clob_order(token_id: str, side: str, price: float, size_usd: float) -
         if not api_key or not priv_key:
             return {"order_id": None, "status": "error_no_keys"}
 
-        # Strip 0x prefix — py_clob_client/eth-account expects raw hex
-        clean_key = priv_key.replace("0x", "").replace("0X", "")
+        # Ensure key has 0x prefix for ClobClient
+        if not priv_key.startswith("0x"):
+            priv_key = "0x" + priv_key
         client = ClobClient(
             host=config.POLYMARKET_HOST,
-            key=clean_key,
+            key=priv_key,
             chain_id=137,
-            funder=clean_key,
+            funder=priv_key,
         )
         client.set_api_creds({
             "apiKey": api_key,
