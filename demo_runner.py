@@ -145,9 +145,8 @@ def _place_clob_order(token_id: str, side: str, price: float, size_usd: float) -
         from py_clob_client.client import ClobClient
         from py_clob_client.clob_types import OrderArgs, OrderType
 
-        api_key = config.POLYMARKET_API_KEY or config.POLY_API_KEY
         priv_key = config.POLYMARKET_PRIVATE_KEY
-        if not api_key or not priv_key:
+        if not priv_key:
             return {"order_id": None, "status": "error_no_keys"}
 
         # Ensure key has 0x prefix for ClobClient
@@ -157,19 +156,37 @@ def _place_clob_order(token_id: str, side: str, price: float, size_usd: float) -
         from eth_account import Account as EthAccount
         _acct = EthAccount.from_key(priv_key)
         wallet_addr = _acct.address
-        client = ClobClient(
-            host=config.POLYMARKET_HOST,
-            key=priv_key,
-            chain_id=137,
-            funder=wallet_addr,
-        )
-        from py_clob_client.clob_types import ApiCreds
-        creds = ApiCreds(
-            api_key=api_key,
-            api_secret=config.POLYMARKET_API_SECRET,
-            api_passphrase=config.POLYMARKET_API_PASSPHRASE,
-        )
-        client.set_api_creds(creds)
+
+        api_key = config.POLYMARKET_API_KEY or config.POLY_API_KEY
+        api_secret = config.POLYMARKET_API_SECRET
+        api_passphrase = config.POLYMARKET_API_PASSPHRASE
+
+        if api_key and api_secret and api_passphrase:
+            # Use pre-existing API credentials
+            client = ClobClient(
+                host=config.POLYMARKET_HOST,
+                key=priv_key,
+                chain_id=137,
+                funder=wallet_addr,
+            )
+            from py_clob_client.clob_types import ApiCreds
+            creds = ApiCreds(
+                api_key=api_key,
+                api_secret=api_secret,
+                api_passphrase=api_passphrase,
+            )
+            client.set_api_creds(creds)
+        else:
+            # Derive API creds from private key (creates new API key on Polymarket)
+            client = ClobClient(
+                host=config.POLYMARKET_HOST,
+                key=priv_key,
+                chain_id=137,
+                funder=wallet_addr,
+            )
+            creds = client.derive_api_key()
+            client.set_api_creds(creds)
+            log.info(f"[LIVE] Derived new API creds: {creds.api_key[:8]}...")
 
         # Clamp price to valid range
         price = max(0.01, min(0.99, price))
