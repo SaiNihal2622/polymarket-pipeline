@@ -128,8 +128,8 @@ MAX_VOLUME_USD      = float(os.getenv("MAX_VOLUME_USD", "5000000"))
 
 # ─── LLM Settings ────────────────────────────────────────────────────────────
 # NVIDIA primary (largest quota, best model), Groq fast fallback, MiMo secondary
-LLM_PROVIDER        = os.getenv("LLM_PROVIDER", "nvidia")
-CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "nvidia/llama-3.3-nemotron-super-49b-v1")
+LLM_PROVIDER        = os.getenv("LLM_PROVIDER", "mimo")
+CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "mimo-v2.5-pro")
 GEMINI_MODEL        = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 GROQ_MODEL          = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 NVIDIA_MODEL        = os.getenv("NVIDIA_MODEL", "nvidia/llama-3.3-nemotron-super-49b-v1")
