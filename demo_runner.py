@@ -161,7 +161,7 @@ def _place_clob_order(token_id: str, side: str, price: float, size_usd: float) -
         api_secret = config.POLYMARKET_API_SECRET
         api_passphrase = config.POLYMARKET_API_PASSPHRASE
 
-        if api_key and api_secret and api_passphrase:
+        if api_key and api_key != "derive" and api_secret and api_secret != "derive" and api_passphrase and api_passphrase != "derive":
             # Use pre-existing API credentials
             client = ClobClient(
                 host=config.POLYMARKET_HOST,
