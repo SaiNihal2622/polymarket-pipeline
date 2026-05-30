@@ -87,11 +87,11 @@ POLYMARKET_WS_HOST  = os.getenv("POLYMARKET_WS_HOST", "wss://ws-subscriptions-cl
 
 # ─── Trading Parameters ─────────────────────────────────────────────────────
 DRY_RUN             = os.getenv("DRY_RUN", "false").lower() == "true"
-BANKROLL_USD        = float(os.getenv("BANKROLL_USD", "100"))
-MAX_BET_USD         = float(os.getenv("MAX_BET_USD", "2.0"))
+BANKROLL_USD        = float(os.getenv("BANKROLL_USD", "32"))
+MAX_BET_USD         = float(os.getenv("MAX_BET_USD", "1.50"))
 MIN_BET_USD         = 0.50
 TRADES_PER_DAY      = int(os.getenv("TRADES_PER_DAY", "100"))
-DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "20"))
+DAILY_LOSS_LIMIT_USD = float(os.getenv("DAILY_LOSS_LIMIT_USD", "10"))
 
 # ─── Edge / Scoring Thresholds (BALANCED: accuracy + opportunity) ────────────
 # These thresholds balance quality (accuracy) with opportunity (trade volume).
@@ -106,12 +106,12 @@ MIN_STRATEGY_SCORE  = float(os.getenv("MIN_STRATEGY_SCORE", "0.50"))
 # YES: buy at ≤0.65 (≥54% ROI, realistic probability range)
 # NO: buy when YES ≥0.35 (NO at ≤0.65, ≥54% ROI)
 # AVOID extremes: <0.10 (lottery) and >0.85 (too expensive)
-MAX_BUY_PRICE       = float(os.getenv("MAX_BUY_PRICE", "0.65"))
-MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.65"))
-MIN_YES_ENTRY_PRICE = float(os.getenv("MIN_YES_ENTRY_PRICE", "0.10"))
-MIN_NO_ENTRY_PRICE  = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.35"))
-MAX_NO_ENTRY_PRICE  = float(os.getenv("MAX_NO_ENTRY_PRICE", "0.90"))
-MAX_NO_BUY_PRICE    = float(os.getenv("MAX_NO_BUY_PRICE", "0.65"))
+MAX_BUY_PRICE       = float(os.getenv("MAX_BUY_PRICE", "0.50"))
+MAX_YES_ENTRY_PRICE = float(os.getenv("MAX_YES_ENTRY_PRICE", "0.60"))
+MIN_YES_ENTRY_PRICE = float(os.getenv("MIN_YES_ENTRY_PRICE", "0.05"))
+MIN_NO_ENTRY_PRICE  = float(os.getenv("MIN_NO_ENTRY_PRICE", "0.40"))
+MAX_NO_ENTRY_PRICE  = float(os.getenv("MAX_NO_ENTRY_PRICE", "0.95"))
+MAX_NO_BUY_PRICE    = float(os.getenv("MAX_NO_BUY_PRICE", "0.50"))
 
 # Dead-zone: skip markets where YES price is between these values (uncertain)
 # Brody uses 0.40-0.60 — we widen slightly to catch more opportunities
