@@ -163,11 +163,13 @@ def _place_clob_order(token_id: str, side: str, price: float, size_usd: float) -
             chain_id=137,
             funder=wallet_addr,
         )
-        client.set_api_creds({
-            "apiKey": api_key,
-            "secret": config.POLYMARKET_API_SECRET,
-            "passphrase": config.POLYMARKET_API_PASSPHRASE,
-        })
+        from py_clob_client.clob_types import ApiCreds
+        creds = ApiCreds(
+            api_key=api_key,
+            api_secret=config.POLYMARKET_API_SECRET,
+            api_passphrase=config.POLYMARKET_API_PASSPHRASE,
+        )
+        client.set_api_creds(creds)
 
         # Clamp price to valid range
         price = max(0.01, min(0.99, price))
