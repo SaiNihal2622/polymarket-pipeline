@@ -145,6 +145,12 @@ def _place_clob_order(token_id: str, side: str, price: float, size_usd: float) -
         from py_clob_client.client import ClobClient
         from py_clob_client.clob_types import OrderArgs, OrderType
 
+        # Use US proxy if configured to bypass geoblocking
+        clob_proxy = os.getenv("CLOB_PROXY", "")
+        if clob_proxy:
+            os.environ["HTTPS_PROXY"] = clob_proxy
+            os.environ["HTTP_PROXY"] = clob_proxy
+
         priv_key = config.POLYMARKET_PRIVATE_KEY
         if not priv_key:
             return {"order_id": None, "status": "error_no_keys"}
