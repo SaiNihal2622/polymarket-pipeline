@@ -9,7 +9,11 @@ aiohttp>=3.9.0
 google-genai>=0.8.0
 groq>=0.9.0
 flask>=3.0.0
-py-clob-client>=0.34.0
+py-clob-client==0.34.6
 eth-account==0.13.7
+eth-utils==6.0.0
+py-order-utils==0.3.2
+poly-eip712-structs==0.0.1
+py-builder-signing-sdk==0.0.2
 ddgs>=6.0.0
 urllib3>=2.0.0
