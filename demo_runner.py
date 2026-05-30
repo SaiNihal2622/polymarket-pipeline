@@ -153,11 +153,15 @@ def _place_clob_order(token_id: str, side: str, price: float, size_usd: float) -
         # Ensure key has 0x prefix for ClobClient
         if not priv_key.startswith("0x"):
             priv_key = "0x" + priv_key
+        # Derive wallet address from private key for funder
+        from eth_account import Account as EthAccount
+        _acct = EthAccount.from_key(priv_key)
+        wallet_addr = _acct.address
         client = ClobClient(
             host=config.POLYMARKET_HOST,
             key=priv_key,
             chain_id=137,
-            funder=priv_key,
+            funder=wallet_addr,
         )
         client.set_api_creds({
             "apiKey": api_key,
