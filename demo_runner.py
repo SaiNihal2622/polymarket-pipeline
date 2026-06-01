@@ -30,6 +30,12 @@ from datetime import datetime, timezone, timedelta
 import asyncio
 
 import config
+
+# Apply Polymarket CLOB V2 patches (domain version + order body)
+try:
+    import patch_clob_v2
+except Exception as e:
+    print(f"[startup] CLOB V2 patch failed: {e}")
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
@@ -145,12 +151,7 @@ def _place_clob_order(token_id: str, side: str, price: float, size_usd: float) -
         from py_clob_client.client import ClobClient
         from py_clob_client.clob_types import OrderArgs, OrderType
 
-        # Use US proxy if configured to bypass geoblocking
-        clob_proxy = os.getenv("CLOB_PROXY", "")
-        if clob_proxy:
-            os.environ["HTTPS_PROXY"] = clob_proxy
-            os.environ["HTTP_PROXY"] = clob_proxy
-
+        log.info(f"[LIVE] CLOB host: {config.POLYMARKET_HOST}")
         priv_key = config.POLYMARKET_PRIVATE_KEY
         if not priv_key:
             return {"order_id": None, "status": "error_no_keys"}

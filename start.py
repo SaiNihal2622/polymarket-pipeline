@@ -19,6 +19,12 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 from dotenv import load_dotenv
 load_dotenv()
 
+# Apply Polymarket CLOB V2 patches (domain version + order body)
+try:
+    import patch_clob_v2
+except Exception as e:
+    print(f"[startup] CLOB V2 patch failed: {e}")
+
 
 def check_ollama():
     """Ensure Ollama is running and model is available."""
