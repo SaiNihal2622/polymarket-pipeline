@@ -21,4 +21,5 @@ bot.db
 polycool_market.session  
 session_b64.txt  
 polycool_session.session  
-*.session 
+*.session
+CONTEXT_FULL_LOCAL.md
