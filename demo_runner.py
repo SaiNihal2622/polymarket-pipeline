@@ -36,6 +36,12 @@ try:
     import patch_clob_v2
 except Exception as e:
     print(f"[startup] CLOB V2 patch failed: {e}")
+
+# Apply residential proxy patch (routes CLOB traffic through residential IP)
+try:
+    import patch_clob_proxy
+except Exception as e:
+    print(f"[startup] CLOB proxy patch failed: {e}")
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel

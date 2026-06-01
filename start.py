@@ -25,6 +25,12 @@ try:
 except Exception as e:
     print(f"[startup] CLOB V2 patch failed: {e}")
 
+# Apply residential proxy patch (routes CLOB traffic through residential IP)
+try:
+    import patch_clob_proxy
+except Exception as e:
+    print(f"[startup] CLOB proxy patch failed: {e}")
+
 
 def check_ollama():
     """Ensure Ollama is running and model is available."""
