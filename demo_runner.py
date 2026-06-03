@@ -453,13 +453,12 @@ def run_resolution_check(verbose: bool = False) -> dict:
 # ── Market Fetching ──────────────────────────────────────────────────────────
 
 def _fetch_day_markets():
-    """Fetch markets closing within the demo window."""
+    """Fetch markets closing within the demo window. Excludes already-expired."""
     from markets import fetch_active_markets, filter_by_categories
     from datetime import datetime, timezone
 
     all_markets = fetch_active_markets(limit=500)
 
-    # Filter by closing time
     now = datetime.now(timezone.utc)
     window_markets = []
     for m in all_markets:
@@ -468,12 +467,15 @@ def _fetch_day_markets():
             if close_str:
                 close_dt = datetime.fromisoformat(close_str.replace("Z", "+00:00"))
                 hours_left = (close_dt - now).total_seconds() / 3600
-                if 0 < hours_left <= DEMO_HOURS_WINDOW:
+                if hours_left <= 0:
+                    continue  # already expired — skip
+                if hours_left <= DEMO_HOURS_WINDOW:
                     window_markets.append(m)
         except Exception:
             pass
 
-    # Also include markets without close dates (might be active)
+    # Include markets WITHOUT close dates — they may be active.
+    # _hours_left() returns -1 for unknown dates so the scan loop will skip them.
     for m in all_markets:
         if not (getattr(m, "end_date_iso", None) or getattr(m, "end_date", None)):
             window_markets.append(m)
@@ -482,15 +484,16 @@ def _fetch_day_markets():
 
 
 def _hours_left(market) -> float:
-    """Calculate hours until market closes."""
+    """Calculate hours until market closes. Returns -1 if already expired or unknown."""
     try:
         close_str = getattr(market, "end_date_iso", None) or getattr(market, "end_date", None)
         if close_str:
             close_dt = datetime.fromisoformat(close_str.replace("Z", "+00:00"))
-            return max(0, (close_dt - datetime.now(timezone.utc)).total_seconds() / 3600)
+            hours = (close_dt - datetime.now(timezone.utc)).total_seconds() / 3600
+            return hours  # can be negative if already expired
     except Exception:
         pass
-    return DEMO_HOURS_WINDOW  # default to window if unknown
+    return -1  # unknown end date → treat as expired (skip)
 
 
 # ── Scan & Trade ─────────────────────────────────────────────────────────────
@@ -673,7 +676,10 @@ def scan_and_trade() -> dict:
         price      = market.yes_price
         tok_dict   = token_map.get(market.condition_id)
 
-        # ── TIME FILTER: skip markets too far out ──
+        # ── TIME FILTER: skip expired and too-far-out markets ──
+        if hours_left <= 0:
+            _skip("expired_or_unknown")
+            continue
         if hours_left > config.MAX_HOURS_TO_CLOSE:
             _skip("too_far_out")
             continue
