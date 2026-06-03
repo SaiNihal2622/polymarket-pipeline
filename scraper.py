@@ -107,9 +107,15 @@ def scrape_newsapi(query: str, lookback_hours: int) -> list[NewsItem]:
 
 def scrape_reddit(subreddits: list[str], lookback_hours: int) -> list[NewsItem]:
     """
-    Scrape Reddit's JSON API (no auth required).
-    Returns top/new posts from specified subreddits.
+    Scrape Reddit via RSS/Atom feeds (no auth required).
+    Reddit's .json API returns 403 but .rss still works.
     """
+    try:
+        import feedparser
+    except ImportError:
+        log.warning("[reddit] feedparser not installed — skipping Reddit")
+        return []
+
     items = []
     cutoff = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
     headers = {"User-Agent": "polymarket-pipeline/3.0 (research bot)"}
@@ -118,34 +124,42 @@ def scrape_reddit(subreddits: list[str], lookback_hours: int) -> list[NewsItem]:
         for sort in ("new", "hot"):
             try:
                 resp = httpx.get(
-                    f"https://www.reddit.com/r/{sub}/{sort}.json",
-                    params={"limit": 25, "t": "day"},
+                    f"https://www.reddit.com/r/{sub}/{sort}.rss",
+                    params={"limit": 25},
                     headers=headers,
                     timeout=10,
                     follow_redirects=True,
                 )
                 if resp.status_code != 200:
                     continue
-                data = resp.json()
-                posts = data.get("data", {}).get("children", [])
-                for post in posts:
-                    p = post.get("data", {})
-                    # Skip self-posts without meaningful titles, stickied posts
-                    if p.get("stickied") or p.get("is_meta"):
-                        continue
-                    title = p.get("title", "").strip()
+                feed = feedparser.parse(resp.text)
+                for entry in feed.entries:
+                    title = entry.get("title", "").strip()
                     if not title or len(title) < 15:
                         continue
-                    created = p.get("created_utc", 0)
-                    published = datetime.fromtimestamp(created, tz=timezone.utc)
+                    # Parse published date
+                    published = None
+                    if hasattr(entry, "published_parsed") and entry.published_parsed:
+                        published = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
+                    elif hasattr(entry, "updated_parsed") and entry.updated_parsed:
+                        published = datetime(*entry.updated_parsed[:6], tzinfo=timezone.utc)
+                    else:
+                        published = datetime.now(timezone.utc)
                     if published < cutoff:
                         continue
+                    link = entry.get("link", "")
+                    summary = ""
+                    if hasattr(entry, "summary"):
+                        summary = entry.summary[:300]
+                    # Strip HTML tags from summary
+                    import re
+                    summary = re.sub(r'<[^>]+>', '', summary).strip()
                     items.append(NewsItem(
                         headline=title,
                         source=f"Reddit/r/{sub}",
-                        url=f"https://reddit.com{p.get('permalink', '')}",
+                        url=link,
                         published_at=published,
-                        summary=p.get("selftext", "")[:300],
+                        summary=summary,
                     ))
                 time.sleep(0.3)
             except Exception as e:
