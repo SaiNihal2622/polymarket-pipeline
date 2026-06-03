@@ -1,0 +1,35 @@
+"""Test order with neg_risk flag."""
+import sys
+for m in list(sys.modules.keys()):
+    if 'py_order_utils' in m or 'py_clob_client' in m:
+        del sys.modules[m]
+
+import os
+from dotenv import load_dotenv
+load_dotenv()
+from py_clob_client.client import ClobClient
+from py_clob_client.clob_types import OrderArgs, OrderType
+from eth_account import Account as EthAccount
+
+priv = os.getenv('POLYMARKET_PRIVATE_KEY')
+if not priv.startswith('0x'): priv = '0x'+priv
+wallet = EthAccount.from_key(priv).address
+proxy = 'https://vercel-proxy-nine-rose.vercel.app'
+
+# Test with neg_risk=True and neg_risk=False
+for neg in [True, False]:
+    print(f"\n--- neg_risk={neg} ---")
+    try:
+        c = ClobClient(host=proxy, key=priv, chain_id=137, funder=wallet, neg_risk=neg)
+        cr = c.derive_api_key()
+        c.set_api_creds(cr)
+        o = OrderArgs(price=0.10, size=0.50, side='BUY', token_id='74636610772409469817718475200152067076720965641263785464662938420699072982790')
+        s = c.create_order(o)
+        # Check the order body
+        from py_clob_client.utilities import order_to_json
+        body = order_to_json(s, cr.api_key, OrderType.GTC, False)
+        print(f"Exchange used: {c.builder._get_domain_separator(137, c.exchange_address).verifyingContract if hasattr(c, 'exchange_address') else 'N/A'}")
+        r = c.post_order(s, OrderType.GTC)
+        print(f'SUCCESS: {r}')
+    except Exception as e:
+        print(f'ERROR: {type(e).__name__}: {str(e)[:200]}')

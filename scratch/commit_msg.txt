@@ -1,1 +1,6 @@
-tighten cashout and trade window  
+fix: block premature resolution before market close_time
+
+- Add _is_market_past_close guard in check_market_resolution
+- Prevents AI search fallback from resolving markets days before close
+- Update get_pending_demo_trades to include close_time in query
+- Update .railwayignore to exclude venv

@@ -1,69 +1,73 @@
-"""Check local bot.db for trade data."""
+#!/usr/bin/env python3
+"""Check local DB for trades and resolution status."""
 import sqlite3
+import json
+import sys
+sys.path.insert(0, ".")
+from logger import DB_PATH
 
-conn = sqlite3.connect('bot.db')
-cursor = conn.cursor()
+print(f"DB_PATH: {DB_PATH}")
+print(f"EXISTS: {DB_PATH.exists()}")
 
-# List tables
-cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-tables = [t[0] for t in cursor.fetchall()]
-print(f"Tables: {tables}")
+conn = sqlite3.connect(str(DB_PATH))
+conn.row_factory = sqlite3.Row
 
-for table in tables:
-    cursor.execute(f"SELECT COUNT(*) FROM {table}")
-    count = cursor.fetchone()[0]
-    print(f"  {table}: {count} rows")
+# Check tables
+tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+print(f"Tables: {[t[0] for t in tables]}")
 
 # Check trades table
-if 'trades' in tables:
-    cursor.execute("SELECT COUNT(*) FROM trades")
-    total = cursor.fetchone()[0]
-    print(f"\nTotal trades in local DB: {total}")
-    
-    # Get schema
-    cursor.execute("PRAGMA table_info(trades)")
-    cols = [c[1] for c in cursor.fetchall()]
-    print(f"Columns: {cols}")
-    
-    # Group by result
-    cursor.execute("SELECT result, COUNT(*), SUM(pnl), SUM(amount_usd) FROM trades GROUP BY result")
-    rows = cursor.fetchall()
-    print("\nBy result:")
+try:
+    rows = conn.execute("SELECT * FROM trades ORDER BY id DESC LIMIT 10").fetchall()
+    print(f"\ntrades table: {len(rows)} rows")
     for r in rows:
-        print(f"  {r[0]}: {r[1]} trades, P&L: {r[2]}, Wagered: {r[3]}")
-    
-    # Total P&L
-    cursor.execute("SELECT SUM(pnl), SUM(amount_usd) FROM trades")
-    row = cursor.fetchone()
-    print(f"\nTotal P&L: {row[0]}, Total Wagered: {row[1]}")
-    
-    # By strategy
-    cursor.execute("SELECT strategy, COUNT(*), SUM(CASE WHEN result='win' THEN 1 ELSE 0 END), SUM(CASE WHEN result='loss' THEN 1 ELSE 0 END), SUM(pnl), SUM(amount_usd) FROM trades GROUP BY strategy ORDER BY SUM(pnl) DESC")
-    rows = cursor.fetchall()
-    print("\nBy strategy:")
-    for r in rows:
-        dec = r[2] + r[3]
-        wr = f"{r[2]/dec*100:.0f}%" if dec > 0 else "N/A"
-        print(f"  {r[0]}: {r[1]} trades | {r[2]}W/{r[3]}L | WR:{wr} | Wagered:{r[5]} | P&L:{r[4]}")
-    
-    # By date
-    cursor.execute("SELECT DATE(created_at), COUNT(*), SUM(CASE WHEN result='win' THEN 1 ELSE 0 END), SUM(CASE WHEN result='loss' THEN 1 ELSE 0 END), SUM(pnl) FROM trades GROUP BY DATE(created_at) ORDER BY DATE(created_at)")
-    rows = cursor.fetchall()
-    print("\nBy date:")
-    for r in rows:
-        dec = r[2] + r[3]
-        wr = f"{r[2]/dec*100:.0f}%" if dec > 0 else "N/A"
-        print(f"  {r[0]}: {r[1]} trades | {r[2]}W/{r[3]}L | WR:{wr} | P&L:{r[4]}")
+        d = dict(r)
+        print(f"  #{d['id']} | market={d.get('market_question','')[:60]} | side={d.get('side')} | status={d.get('status')} | result={d.get('result','pending')}")
+except Exception as e:
+    print(f"trades error: {e}")
 
-    # Print ALL trades
-    cursor.execute("SELECT created_at, result, side, entry_price, amount_usd, pnl, strategy, market_question FROM trades ORDER BY created_at")
-    rows = cursor.fetchall()
-    print(f"\n{'='*70}")
-    print("ALL TRADES (chronological)")
-    print(f"{'='*70}")
-    for r in rows:
-        sym = "WIN" if r[1] == 'win' else "LOSS" if r[1] == 'loss' else (r[1] or 'PEND')
-        q = (r[7] or '')[:55]
-        print(f"  [{(r[0] or '')[:16]}] {sym:>4} | {r[2]} @{r[3]:.3f} | bet=${r[4]:.2f} | P&L=${r[5]:+.2f} | {r[6]} | {q}")
+# Check demo_trades table
+try:
+    rows2 = conn.execute("SELECT * FROM demo_trades ORDER BY id DESC LIMIT 10").fetchall()
+    print(f"\ndemo_trades table: {len(rows2)} rows")
+    for r in rows2:
+        d = dict(r)
+        print(f"  #{d['id']} | market={d.get('market_question','')[:60]} | side={d.get('side')} | result={d.get('result','pending')} | slug={d.get('market_slug','')[:50]}")
+        print(f"    token_id={d.get('token_id','')[:50]} | created={d.get('created_at')} | resolved={d.get('resolved_at')}")
+except Exception as e:
+    print(f"demo_trades error: {e}")
+
+# Check outcomes
+try:
+    rows3 = conn.execute("SELECT * FROM outcomes ORDER BY id DESC LIMIT 10").fetchall()
+    print(f"\noutcomes table: {len(rows3)} rows")
+    for r in rows3:
+        d = dict(r)
+        print(f"  trade_id={d.get('trade_id')} | result={d.get('result')} | pnl={d.get('pnl')} | resolved={d.get('resolved_at')}")
+except Exception as e:
+    print(f"outcomes error: {e}")
+
+# Check recent trades with resolution info
+try:
+    rows4 = conn.execute("""
+        SELECT d.id, d.market_question, d.market_slug, d.token_id, d.side, 
+               d.entry_price, d.bet_amount, d.result, d.pnl, d.created_at, d.resolved_at,
+               d.market_id
+        FROM demo_trades d
+        ORDER BY d.id DESC LIMIT 10
+    """).fetchall()
+    print(f"\n=== RECENT DEMO_TRADES (with details) ===")
+    for r in rows4:
+        d = dict(r)
+        print(f"\n  Trade #{d['id']}:")
+        print(f"    Question: {d['market_question'][:80]}")
+        print(f"    Slug: {d.get('market_slug','')}")
+        print(f"    Market ID: {d.get('market_id','')}")
+        print(f"    Token ID: {d.get('token_id','')}")
+        print(f"    Side: {d['side']} | Price: {d['entry_price']} | Bet: ${d['bet_amount']}")
+        print(f"    Result: {d['result']} | PnL: {d.get('pnl',0)}")
+        print(f"    Created: {d['created_at']} | Resolved: {d.get('resolved_at')}")
+except Exception as e:
+    print(f"detailed trades error: {e}")
 
 conn.close()

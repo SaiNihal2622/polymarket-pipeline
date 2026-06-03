@@ -2,6 +2,7 @@
 Configuration settings for Polymarket trading pipeline.
 V2: Added multi-signal analysis, consensus, RRF scoring, dynamic weights.
 V3: Hardened thresholds for accuracy — materiality ≠ probability.
+V4: Updated for Polymarket CLOB V2 — deposit wallet flow required.
 """
 import os
 from pathlib import Path
@@ -24,6 +25,14 @@ POLYMARKET_API_KEY    = os.getenv("POLYMARKET_API_KEY", os.getenv("POLY_API_KEY"
 POLYMARKET_PRIVATE_KEY = os.getenv("POLYMARKET_PRIVATE_KEY", os.getenv("POLY_PRIVATE_KEY", ""))
 POLYMARKET_API_SECRET = os.getenv("POLYMARKET_API_SECRET", os.getenv("POLY_SECRET", ""))
 POLYMARKET_API_PASSPHRASE = os.getenv("POLYMARKET_API_PASSPHRASE", os.getenv("POLY_PASSPHRASE", ""))
+
+# ─── CLOB V2: Deposit Wallet (required) ─────────────────────────────────────
+# Polymarket CLOB V2 requires a deposit/proxy wallet (smart contract wallet)
+# as the maker address. This is DIFFERENT from your EOA address.
+# Create one at https://polymarket.com — Polymarket auto-creates it when you
+# connect your wallet and go to "Deposit".
+POLYMARKET_DEPOSIT_WALLET = os.getenv("POLYMARKET_DEPOSIT_WALLET", "0x390b653efa68e83d6509e064e8b07a536036daeb")
+
 GEMINI_API_KEY      = os.getenv("GEMINI_API_KEY", "")
 GROQ_API_KEY        = os.getenv("GROQ_API_KEY", "")
 NVIDIA_API_KEY      = os.getenv("NVIDIA_API_KEY", "")

@@ -74,11 +74,20 @@ log = logging.getLogger("poly_bot")
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _get_clob_client():
-    """Build py-clob-client with stored credentials."""
-    from py_clob_client.client import ClobClient
-    from py_clob_client.clob_types import ApiCreds
+    """Build py-clob-client V2 with stored credentials (deposit wallet flow)."""
+    from py_clob_client_v2.client import ClobClient
+    from py_clob_client_v2.clob_types import ApiCreds
+    import config as _cfg
     if not PRIVATE_KEY:
         raise RuntimeError("POLY_PRIVATE_KEY not set")
+    
+    priv_key = PRIVATE_KEY
+    if not priv_key.startswith("0x"):
+        priv_key = "0x" + priv_key
+    
+    # V2: Use deposit wallet as funder
+    deposit_wallet = _cfg.POLYMARKET_DEPOSIT_WALLET
+    
     creds = None
     if API_KEY:
         creds = ApiCreds(
@@ -89,8 +98,9 @@ def _get_clob_client():
     return ClobClient(
         host=CLOB_URL,
         chain_id=CHAIN_ID,
-        private_key=PRIVATE_KEY,
+        key=priv_key,
         creds=creds,
+        funder=deposit_wallet,
     )
 
 
@@ -231,27 +241,29 @@ async def refresh_prices(markets: list) -> list:
 
 def place_order_sync(token_id: str, price: float, size_usdc: float, side: str = "BUY") -> dict:
     """
-    Place a limit order on Polymarket CLOB.
+    Place a limit order on Polymarket CLOB V2 (deposit wallet flow).
     price: 0.0–1.0 (probability / USDC per share)
     size_usdc: dollar amount to spend
     side: "BUY" or "SELL"
     Returns order response dict.
     """
-    from py_clob_client.clob_types import OrderArgs, OrderType
-    from py_clob_client.constants import BUY, SELL
+    from py_clob_client_v2.clob_types import OrderArgs, OrderType, PartialCreateOrderOptions
+    from py_clob_client_v2.order_utils.model.side import Side
     client = _get_clob_client()
-    side_const = BUY if side == "BUY" else SELL
+    side_val = Side.BUY if side == "BUY" else Side.SELL
     # size in shares = USDC_amount / price_per_share
     size_shares = round(size_usdc / price, 2) if price > 0 else size_usdc
     order_args = OrderArgs(
         token_id=token_id,
         price=round(price, 4),
         size=size_shares,
-        side=side_const,
-        order_type=OrderType.FOK,   # Fill-or-Kill for immediacy
+        side=side_val,
     )
-    signed = client.create_order(order_args)
-    resp   = client.post_order(signed, orderType=OrderType.FOK)
+    resp = client.create_and_post_order(
+        order_args=order_args,
+        options=PartialCreateOrderOptions(tick_size="0.01"),
+        order_type=OrderType.FOK,  # Fill-or-Kill for immediacy
+    )
     return resp if isinstance(resp, dict) else {"error": str(resp)}
 
 

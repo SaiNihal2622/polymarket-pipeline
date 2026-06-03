@@ -4,8 +4,8 @@
   "openAiCompatibleApiKey": "tp-smb26vqnngif8xfg9yumoj1npvc0cr0jjy0csju1rnbc83zz",
   "openAiCompatibleModelId": "mimo-v2.5-pro",
   "openAiCompatibleModelInfo": {
-    "maxTokens": 32768,
-    "contextWindow": 128000,
+    "maxTokens": 65536,
+    "contextWindow": 1000000,
     "supportsImages": true,
     "supportsComputerUse": false,
     "supportsPromptCache": false,

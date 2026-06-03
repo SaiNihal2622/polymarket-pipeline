@@ -28,27 +28,38 @@ async def execute_trade_async(signal: Signal) -> dict:
 
 
 def _execute_live(signal: Signal, token_id: str | None) -> dict:
-    """Place a real order via Polymarket CLOB client."""
+    """Place a real order via Polymarket CLOB V2 client (deposit wallet flow)."""
     try:
-        from py_clob_client.client import ClobClient
-        from py_clob_client.clob_types import OrderArgs, OrderType
+        from py_clob_client_v2.client import ClobClient
+        from py_clob_client_v2.clob_types import OrderArgs, OrderType, ApiCreds, PartialCreateOrderOptions
 
         priv_key = config.POLYMARKET_PRIVATE_KEY
         if priv_key and not priv_key.startswith("0x"):
             priv_key = "0x" + priv_key
 
+        # Use the V2 SDK with deposit wallet as funder
+        deposit_wallet = config.POLYMARKET_DEPOSIT_WALLET
         client = ClobClient(
             host=config.POLYMARKET_HOST,
             key=priv_key,
             chain_id=137,
-            funder=priv_key,
+            funder=deposit_wallet,  # V2: deposit/proxy wallet required
         )
 
-        client.set_api_creds({
-            "apiKey": config.POLYMARKET_API_KEY,
-            "secret": config.POLYMARKET_API_SECRET,
-            "passphrase": config.POLYMARKET_API_PASSPHRASE,
-        })
+        api_key = config.POLYMARKET_API_KEY
+        api_secret = config.POLYMARKET_API_SECRET
+        api_passphrase = config.POLYMARKET_API_PASSPHRASE
+
+        if api_key and api_key != "derive" and api_secret and api_secret != "derive" and api_passphrase and api_passphrase != "derive":
+            creds = ApiCreds(
+                api_key=api_key,
+                api_secret=api_secret,
+                api_passphrase=api_passphrase,
+            )
+            client.set_api_creds(creds)
+        else:
+            creds = client.create_or_derive_api_key()
+            client.set_api_creds(creds)
 
         # token_id already passed in
         if not token_id:
@@ -60,14 +71,17 @@ def _execute_live(signal: Signal, token_id: str | None) -> dict:
             price=price,
             size=signal.bet_amount,
             side="BUY",
-            token_id=token_id,
+            token_id=str(token_id),
         )
 
-        signed_order = client.create_order(order_args)
-        resp = client.post_order(signed_order, OrderType.GTC)
+        resp = client.create_and_post_order(
+            order_args=order_args,
+            options=PartialCreateOrderOptions(tick_size="0.01"),
+            order_type=OrderType.GTC,
+        )
 
         order_id = resp.get("orderID", resp.get("id", "unknown"))
-        return _log_and_return(signal, status="executed", order_id=order_id)
+        return _log_and_return(signal, status="executed", order_id=order_id, token_id=token_id)
 
     except ImportError:
         return _log_and_return(signal, status="error_no_clob_client", order_id=None)

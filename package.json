@@ -1,0 +1,27 @@
+{
+  "name": "polymarket-pipeline",
+  "version": "1.0.0",
+  "description": "An AI-powered breaking news detector that classifies events against prediction markets and trades automatically when it finds edge.",
+  "main": "cf_worker.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SaiNihal2622/polymarket-pipeline.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/SaiNihal2622/polymarket-pipeline/issues"
+  },
+  "homepage": "https://github.com/SaiNihal2622/polymarket-pipeline#readme",
+  "dependencies": {
+    "@polymarket/clob-client": "^5.8.1",
+    "@polymarket/order-utils": "^3.0.1",
+    "ethers": "^6.16.0",
+    "viem": "^2.52.0"
+  }
+}
